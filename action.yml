@@ -1,0 +1,19 @@
+name: 'c4o-core'
+description: 'Unified EDA Toolchain for Chip Design'
+author: 'c4o'
+
+inputs:
+  command:
+    description: 'The subcommand to run (lint, synth, test)'
+    required: true
+  files:
+    description: 'Path to Verilog files'
+    required: true
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  args:
+    - ${{ inputs.command }}
+    - '--files'
+    - ${{ inputs.files }}

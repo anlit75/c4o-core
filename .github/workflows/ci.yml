@@ -1,0 +1,63 @@
+name: c4o-core CI
+
+on:
+  push:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t c4o-core:test .
+
+      - name: Run Lint check
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test lint --files tests/smoke/counter.v
+
+      - name: Run Synthesis check
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test synth --files tests/smoke/counter.v
+          ls -l build/synthesis.json
+
+      - name: Run Simulation check
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test test --files tests/smoke/tb_counter.v tests/smoke/counter.v
+
+      - name: Upload Docker Build Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-docker-build
+          path: build/
+
+  test-action-interface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Synthesis via Action
+        uses: ./
+        with:
+          command: synth
+          files: tests/smoke/counter.v
+
+      - name: Verify Synthesis Artifact
+        run: ls -l build/synthesis.json
+
+      - name: Run Smoke Test via Action
+        uses: ./
+        with:
+          command: test
+          files: tests/smoke/tb_counter.v tests/smoke/counter.v
+
+      - name: Upload Action Test Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-action-test
+          path: build/

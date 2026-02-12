@@ -1,0 +1,6 @@
+build/
+*.vcd
+*.vvp
+*.json
+__pycache__/
+*.pyc
