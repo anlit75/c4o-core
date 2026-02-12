@@ -23,10 +23,13 @@ RUN pip3 install --no-cache-dir \
     volare
 
 # Create the application directory
-WORKDIR /c4o
+WORKDIR /opt/c4o-core
 
 # Copy the repository contents into the container
-COPY . /c4o
+COPY . /opt/c4o-core
+
+# Set the working directory for the user
+WORKDIR /workspace
 
 # Set the entrypoint to the Python wrapper script
-ENTRYPOINT ["python3", "/c4o/scripts/entrypoint.py"]
+ENTRYPOINT ["python3", "/opt/c4o-core/scripts/entrypoint.py"]

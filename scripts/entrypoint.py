@@ -37,8 +37,8 @@ def ensure_build_dir():
         log_info("Created build/ directory")
 
 def load_config():
-    """Loads configuration from src/config.json if it exists."""
-    config_path = os.path.join(os.getcwd(), "src", "config.json")
+    """Loads configuration from config.json if it exists."""
+    config_path = os.path.join(os.getcwd(), "config.json")
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r') as f:
@@ -133,7 +133,7 @@ def cmd_gds(args, config):
     log_info("GDS configuration verified successfully.")
 
 def cmd_pdk(args, config):
-    pdk_root = "/c4o/pdks"
+    pdk_root = os.path.join(os.getcwd(), "pdks")
     if not os.path.exists(pdk_root):
         log_info(f"Creating PDK root directory: {pdk_root}")
         os.makedirs(pdk_root)
