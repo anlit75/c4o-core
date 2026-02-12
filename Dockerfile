@@ -19,7 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pin cocotb to major version 1.8 to prevent breaking changes
 RUN pip3 install --no-cache-dir \
     "cocotb==1.8.*" \
-    pytest
+    pytest \
+    volare
 
 # Create the application directory
 WORKDIR /c4o

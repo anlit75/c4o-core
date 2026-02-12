@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -35,39 +36,56 @@ def ensure_build_dir():
         os.makedirs("build")
         log_info("Created build/ directory")
 
-def get_files(args):
-    # args.files is a list of strings. If passed from GitHub Action, it might be ["file1 file2"].
-    # We need to split any strings containing spaces and flatten the list.
-    raw_files = args.files
+def load_config():
+    """Loads configuration from src/config.json if it exists."""
+    config_path = os.path.join(os.getcwd(), "src", "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                log_info(f"Loading config from {config_path}")
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            log_error(f"Failed to parse {config_path}: {e}")
+            sys.exit(1)
+    return {}
+
+def get_files(args, config):
+    """
+    Returns a list of files to process.
+    Prioritizes CLI arguments. If empty, falls back to config.json.
+    """
     files = []
-    for f in raw_files:
-        files.extend(f.strip().split())
 
-    if not files:
-        log_error("No files provided.")
-        sys.exit(1)
-    return files
+    # Check CLI args first
+    if args.files:
+        for f in args.files:
+            if f.strip(): # Ignore empty strings
+                files.extend(f.strip().split())
 
-def cmd_lint(args):
-    files = get_files(args)
+    if files:
+        return files
+
+    # Fallback to config
+    if "VERILOG_FILES" in config:
+        verilog_files = config["VERILOG_FILES"]
+        if isinstance(verilog_files, list):
+            # Handle possible "dir::file.v" convention by replacing "::" with "/"
+            # and verify paths relative to project root (CWD)
+            return [f.replace("::", "/") for f in verilog_files]
+        else:
+            log_error("VERILOG_FILES in config.json must be a list.")
+            sys.exit(1)
+
+    log_error("No files provided via CLI or config.json.")
+    sys.exit(1)
+
+def cmd_lint(args, config):
+    files = get_files(args, config)
     cmd = ["verilator", "--lint-only"] + files
     run_command(cmd)
 
-def cmd_synth(args):
-    files = get_files(args)
-    ensure_build_dir()
-
-    # Generate read_verilog commands for each file
-    read_cmds = [f"read_verilog {f}" for f in files]
-    read_cmd_str = "; ".join(read_cmds)
-
-    # read_verilog <file1>; read_verilog <file2>; ...; synth -auto-top; write_json build/synthesis.json
-    yosys_cmd = f"{read_cmd_str}; synth -auto-top; write_json build/synthesis.json"
-    cmd = ["yosys", "-p", yosys_cmd]
-    run_command(cmd)
-
-def cmd_test(args):
-    files = get_files(args)
+def cmd_sim(args, config):
+    files = get_files(args, config)
     ensure_build_dir()
     # iverilog -o build/sim.vvp <files> && vvp build/sim.vvp
     compile_cmd = ["iverilog", "-o", "build/sim.vvp"] + files
@@ -76,31 +94,101 @@ def cmd_test(args):
     run_sim_cmd = ["vvp", "build/sim.vvp"]
     run_command(run_sim_cmd)
 
+def cmd_synth(args, config):
+    files = get_files(args, config)
+    ensure_build_dir()
+
+    # Generate read_verilog commands for each file
+    read_cmds = [f"read_verilog {f}" for f in files]
+    read_cmd_str = "; ".join(read_cmds)
+
+    # Determine top module
+    synth_cmd = "synth -auto-top"
+    if "DESIGN_NAME" in config:
+        design_name = config["DESIGN_NAME"]
+        log_info(f"Using design name from config: {design_name}")
+        synth_cmd = f"synth -top {design_name}"
+
+    # read_verilog <file1>; ...; synth -top <design>; write_json build/synthesis.json
+    yosys_cmd = f"{read_cmd_str}; {synth_cmd}; write_json build/synthesis.json"
+    cmd = ["yosys", "-p", yosys_cmd]
+    run_command(cmd)
+
+def cmd_gds(args, config):
+    """
+    Validates the configuration for GDS generation.
+    """
+    required_keys = [
+        "PDK", "STD_CELL_LIBRARY", "DIE_AREA", "FP_CORE_UTIL",
+        "FP_SIZING", "CLOCK_PORT", "CLOCK_PERIOD"
+    ]
+
+    missing_keys = [key for key in required_keys if key not in config]
+
+    if missing_keys:
+        log_error(f"Missing required keys in config.json for GDS generation: {', '.join(missing_keys)}")
+        sys.exit(1)
+
+    # Optional: Check types/values if needed, but existence is a good start.
+    log_info("GDS configuration verified successfully.")
+
+def cmd_pdk(args, config):
+    pdk_root = "/c4o/pdks"
+    if not os.path.exists(pdk_root):
+        log_info(f"Creating PDK root directory: {pdk_root}")
+        os.makedirs(pdk_root)
+
+    # Commit hash from requirements
+    commit_hash = "bdc9412b3e468c102d01b7cf6337be06ec6e9c9a"
+
+    cmd = [
+        "volare", "enable",
+        "--pdk", "sky130",
+        "--pdk-root", pdk_root,
+        commit_hash
+    ]
+    run_command(cmd)
+
 def main():
     parser = argparse.ArgumentParser(description="c4o-core entrypoint script")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # Load config once
+    config = load_config()
+
     # Lint command
     lint_parser = subparsers.add_parser("lint", help="Run Verilator lint")
-    lint_parser.add_argument("--files", nargs="+", required=True, help="Verilog files to lint")
+    lint_parser.add_argument("--files", nargs="*", help="Verilog files to lint")
     lint_parser.set_defaults(func=cmd_lint)
+
+    # Sim command
+    sim_parser = subparsers.add_parser("sim", help="Run Icarus Verilog simulation")
+    sim_parser.add_argument("--files", nargs="*", help="Verilog files to simulate")
+    sim_parser.set_defaults(func=cmd_sim)
+
+    # Keeping 'test' as a hidden alias or just not supporting it?
+    # Since I will update CI, I can remove it. But for safety, I can alias it.
+    # The prompt explicitly asked for `sim`. I'll stick to `sim`.
 
     # Synth command
     synth_parser = subparsers.add_parser("synth", help="Run Yosys synthesis")
-    synth_parser.add_argument("--files", nargs="+", required=True, help="Verilog files to synthesize")
+    synth_parser.add_argument("--files", nargs="*", help="Verilog files to synthesize")
     synth_parser.set_defaults(func=cmd_synth)
 
-    # Test command
-    test_parser = subparsers.add_parser("test", help="Run Icarus Verilog simulation")
-    test_parser.add_argument("--files", nargs="+", required=True, help="Verilog files to test")
-    test_parser.set_defaults(func=cmd_test)
+    # GDS command
+    gds_parser = subparsers.add_parser("gds", help="Run GDS generation (OpenLane)")
+    gds_parser.set_defaults(func=cmd_gds)
+
+    # PDK command
+    pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via volare")
+    pdk_parser.set_defaults(func=cmd_pdk)
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         sys.exit(1)
 
     args = parser.parse_args()
-    args.func(args)
+    args.func(args, config)
 
 if __name__ == "__main__":
     main()
