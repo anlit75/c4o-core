@@ -15,18 +15,46 @@ jobs:
       - name: Build Docker image
         run: docker build -t c4o-core:test .
 
-      - name: Run Lint check
+      # Explicit Files Tests
+      - name: Run Lint check (CLI)
         run: |
           docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test lint --files tests/smoke/counter.v
 
-      - name: Run Synthesis check
+      - name: Run Synthesis check (CLI)
         run: |
           docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test synth --files tests/smoke/counter.v
           ls -l build/synthesis.json
 
-      - name: Run Simulation check
+      - name: Run Simulation check (CLI)
         run: |
-          docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test test --files tests/smoke/tb_counter.v tests/smoke/counter.v
+          docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test sim --files tests/smoke/tb_counter.v tests/smoke/counter.v
+
+      # Config Based Tests
+      - name: Create Config for Synthesis
+        run: |
+          mkdir -p src
+          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > src/config.json
+
+      - name: Run Lint check (Config)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test lint
+
+      - name: Run Synthesis check (Config)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test synth
+          ls -l build/synthesis.json
+
+      - name: Run GDS check (Config)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test gds
+
+      - name: Update Config for Simulation
+        run: |
+          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/tb_counter.v", "tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > src/config.json
+
+      - name: Run Simulation check (Config)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test sim
 
       - name: Upload Docker Build Artifacts
         if: always()
@@ -52,7 +80,7 @@ jobs:
       - name: Run Smoke Test via Action
         uses: ./
         with:
-          command: test
+          command: sim
           files: tests/smoke/tb_counter.v tests/smoke/counter.v
 
       - name: Upload Action Test Artifacts

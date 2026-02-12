@@ -4,11 +4,12 @@ author: 'c4o'
 
 inputs:
   command:
-    description: 'The subcommand to run (lint, synth, test)'
+    description: 'The subcommand to run (lint, sim, synth, gds)'
     required: true
   files:
-    description: 'Path to Verilog files'
-    required: true
+    description: 'Path to Verilog files (optional if using src/config.json)'
+    required: false
+    default: ''
 
 runs:
   using: 'docker'
