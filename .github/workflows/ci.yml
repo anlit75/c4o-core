@@ -48,6 +48,10 @@ jobs:
         run: |
           docker run --rm -v ${{ github.workspace }}:/c4o c4o-core:test gds
 
+      - name: Verify PDK Command Interface
+        run: |
+          docker run --rm c4o-core:test pdk --help
+
       - name: Update Config for Simulation
         run: |
           echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/tb_counter.v", "tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > src/config.json

@@ -132,6 +132,23 @@ def cmd_gds(args, config):
     # Optional: Check types/values if needed, but existence is a good start.
     log_info("GDS configuration verified successfully.")
 
+def cmd_pdk(args, config):
+    pdk_root = "/c4o/pdks"
+    if not os.path.exists(pdk_root):
+        log_info(f"Creating PDK root directory: {pdk_root}")
+        os.makedirs(pdk_root)
+
+    # Commit hash from requirements
+    commit_hash = "bdc9412b3e468c102d01b7cf6337be06ec6e9c9a"
+
+    cmd = [
+        "volare", "enable",
+        "--pdk", "sky130",
+        "--pdk-root", pdk_root,
+        commit_hash
+    ]
+    run_command(cmd)
+
 def main():
     parser = argparse.ArgumentParser(description="c4o-core entrypoint script")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -161,6 +178,10 @@ def main():
     # GDS command
     gds_parser = subparsers.add_parser("gds", help="Run GDS generation (OpenLane)")
     gds_parser.set_defaults(func=cmd_gds)
+
+    # PDK command
+    pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via volare")
+    pdk_parser.set_defaults(func=cmd_pdk)
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
