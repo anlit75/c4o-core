@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -53,42 +54,74 @@ def get_files(args, config):
     """
     Returns a list of files to process.
     Prioritizes CLI arguments. If empty, falls back to config.json.
+    Supports globbing (e.g. src/**/*.v).
     """
-    files = []
+    initial_files = []
 
     # Check CLI args first
     if args.files:
         for f in args.files:
             if f.strip(): # Ignore empty strings
-                files.extend(f.strip().split())
-
-    if files:
-        return files
+                initial_files.extend(f.strip().split())
 
     # Fallback to config
-    if "VERILOG_FILES" in config:
+    elif "VERILOG_FILES" in config:
         verilog_files = config["VERILOG_FILES"]
         if isinstance(verilog_files, list):
             # Handle possible "dir::file.v" convention by replacing "::" with "/"
             # and verify paths relative to project root (CWD)
-            return [f.replace("::", "/") for f in verilog_files]
+            initial_files = [f.replace("::", "/") for f in verilog_files]
         else:
             log_error("VERILOG_FILES in config.json must be a list.")
             sys.exit(1)
 
-    log_error("No files provided via CLI or config.json.")
-    sys.exit(1)
+    if not initial_files:
+        log_error("No files provided via CLI or config.json.")
+        sys.exit(1)
+
+    # Expand globs and deduplicate
+    final_files = set()
+    for pattern in initial_files:
+        # Use recursive globbing
+        matched = glob.glob(pattern, recursive=True)
+        if matched:
+            final_files.update(matched)
+        else:
+            # Optional: warn if a pattern matched nothing?
+            # For now, we strictly follow glob behavior (omit if not found)
+            pass
+
+    sorted_files = sorted(list(final_files))
+
+    if not sorted_files:
+        log_warn("No files found after glob expansion.")
+
+    return sorted_files
 
 def cmd_lint(args, config):
     files = get_files(args, config)
-    cmd = ["verilator", "--lint-only"] + files
+    cmd = ["verilator", "--lint-only"]
+
+    # Add include directories
+    include_dirs = config.get("INCLUDE_DIRS", [])
+    for inc in include_dirs:
+        cmd.append(f"-I{inc}")
+
+    cmd += files
     run_command(cmd)
 
 def cmd_sim(args, config):
     files = get_files(args, config)
     ensure_build_dir()
     # iverilog -o build/sim.vvp <files> && vvp build/sim.vvp
-    compile_cmd = ["iverilog", "-o", "build/sim.vvp"] + files
+    compile_cmd = ["iverilog", "-o", "build/sim.vvp"]
+
+    # Add include directories
+    include_dirs = config.get("INCLUDE_DIRS", [])
+    for inc in include_dirs:
+        compile_cmd.append(f"-I{inc}")
+
+    compile_cmd += files
     run_command(compile_cmd)
 
     run_sim_cmd = ["vvp", "build/sim.vvp"]
@@ -98,9 +131,21 @@ def cmd_synth(args, config):
     files = get_files(args, config)
     ensure_build_dir()
 
+    # Generate include commands
+    include_cmds = []
+    include_dirs = config.get("INCLUDE_DIRS", [])
+    for inc in include_dirs:
+        include_cmds.append(f"verilog_defaults -add -I{inc}")
+
     # Generate read_verilog commands for each file
     read_cmds = [f"read_verilog {f}" for f in files]
-    read_cmd_str = "; ".join(read_cmds)
+
+    # Combine commands
+    parts = []
+    if include_cmds:
+        parts.append("; ".join(include_cmds))
+    if read_cmds:
+        parts.append("; ".join(read_cmds))
 
     # Determine top module
     synth_cmd = "synth -auto-top"
@@ -109,8 +154,10 @@ def cmd_synth(args, config):
         log_info(f"Using design name from config: {design_name}")
         synth_cmd = f"synth -top {design_name}"
 
-    # read_verilog <file1>; ...; synth -top <design>; write_json build/synthesis.json
-    yosys_cmd = f"{read_cmd_str}; {synth_cmd}; write_json build/synthesis.json"
+    parts.append(synth_cmd)
+    parts.append("write_json build/synthesis.json")
+
+    yosys_cmd = "; ".join(parts)
     cmd = ["yosys", "-p", yosys_cmd]
     run_command(cmd)
 
@@ -165,10 +212,6 @@ def main():
     sim_parser = subparsers.add_parser("sim", help="Run Icarus Verilog simulation")
     sim_parser.add_argument("--files", nargs="*", help="Verilog files to simulate")
     sim_parser.set_defaults(func=cmd_sim)
-
-    # Keeping 'test' as a hidden alias or just not supporting it?
-    # Since I will update CI, I can remove it. But for safety, I can alias it.
-    # The prompt explicitly asked for `sim`. I'll stick to `sim`.
 
     # Synth command
     synth_parser = subparsers.add_parser("synth", help="Run Yosys synthesis")

@@ -19,6 +19,9 @@ jobs:
       - name: Build Docker image
         run: docker build -t c4o-core:test .
 
+      - name: Run Python Unit Tests
+        run: docker run --rm c4o-core:test python3 -m unittest tests/test_entrypoint.py
+
       # Explicit Files Tests
       - name: Run Lint check (CLI)
         run: |
