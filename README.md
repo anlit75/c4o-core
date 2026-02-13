@@ -1,7 +1,6 @@
 # c4o-core (ChipForAll Engine)
 
 ![CI Status](https://github.com/anlit75/c4o-core/actions/workflows/ci.yml/badge.svg)
-![Docker Pulls](https://img.shields.io/badge/docker-pull-blue)
 
 **c4o-core** is the underlying EDA toolchain engine for the [ChipForAll](https://github.com/anlit75/ChipForAll) project.
 It packages open-source silicon tools into a unified, Python-driven Docker container.
@@ -11,10 +10,10 @@ It packages open-source silicon tools into a unified, Python-driven Docker conta
 ## 🚀 Quick Start
 
 You can run `c4o-core` directly via Docker.
-Mount your current directory (`$(PWD)`) to `/c4o` (or any workspace path) to persist artifacts.
+Mount your current directory (`$(PWD)`) to `/workspace` (or any workspace path) to persist artifacts.
 
 ```bash
-docker run --rm -v $(PWD):/c4o -w /c4o ghcr.io/anlit75/c4o-core:latest <command>
+docker run --rm -v $(PWD):/workspace -w /workspace ghcr.io/anlit75/c4o-core:latest <command>
 ```
 
 ## 🛠 Command Reference
@@ -63,7 +62,7 @@ Required for `make gds` / OpenLane flow.
 ## 🏗 Architecture
 
 *   **System Path**: The EDA tools and python scripts are installed in `/opt/c4o-core`.
-*   **User Path**: Users should mount their workspace to `/c4o` (or `/workspace`).
+*   **User Path**: Users should mount their workspace to `/workspace`.
 *   **PDK Path**: The `pdk` command installs artifacts into the user's volume (`./pdks`), ensuring persistence across container runs.
 
 ## 📦 Included Tools
@@ -73,3 +72,8 @@ Required for `make gds` / OpenLane flow.
 *   **Icarus Verilog**: Verilog simulation and synthesis tool
 *   **Volare**: PDK Version Manager
 *   **Cocotb**: Coroutine based cosimulation library
+
+## License
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+*Note: This framework invokes various third-party open-source EDA tools (Yosys, Verilator, OpenLane, etc.), which are distributed under their respective licenses.*
