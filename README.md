@@ -1,6 +1,8 @@
 # c4o-core (ChipForAll Engine)
 
 ![CI Status](https://github.com/anlit75/c4o-core/actions/workflows/ci.yml/badge.svg)
+![Docker Image Version](https://img.shields.io/github/v/release/anlit75/c4o-core?label=version)
+[![License](https://img.shields.io/github/license/anlit75/c4o-core)](LICENSE)
 
 **c4o-core** is the underlying EDA toolchain engine for the [ChipForAll](https://github.com/anlit75/ChipForAll) project.
 It packages open-source silicon tools into a unified, Python-driven Docker container.

@@ -2,6 +2,10 @@ name: c4o-core CI
 
 on:
   push:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
