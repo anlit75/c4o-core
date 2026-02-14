@@ -50,34 +50,57 @@ def load_config():
             sys.exit(1)
     return {}
 
-def get_files(args, config):
+def get_files(args, config, key="RTL_FILES"):
     """
     Returns a list of files to process.
     Prioritizes CLI arguments. If empty, falls back to config.json.
     Supports globbing (e.g. src/**/*.v).
+
+    Args:
+        args: Parsed arguments (may contain .files)
+        config: Config dictionary
+        key: The config key to look up (default: RTL_FILES)
     """
     initial_files = []
 
-    # Check CLI args first
+    # Check CLI args first - if present, they override config
     if args.files:
         for f in args.files:
             if f.strip(): # Ignore empty strings
                 initial_files.extend(f.strip().split())
+        # If args provided, we return just them, no config lookup.
+        # But we need to handle globbing on them too.
+        # Logic below handles globbing.
+        pass
 
     # Fallback to config
-    elif "VERILOG_FILES" in config:
-        verilog_files = config["VERILOG_FILES"]
-        if isinstance(verilog_files, list):
+    elif key in config:
+        config_files = config[key]
+        if isinstance(config_files, list):
             # Handle possible "dir::file.v" convention by replacing "::" with "/"
-            # and verify paths relative to project root (CWD)
-            initial_files = [f.replace("::", "/") for f in verilog_files]
+            initial_files = [f.replace("::", "/") for f in config_files]
+        else:
+            log_error(f"{key} in config.json must be a list.")
+            sys.exit(1)
+
+    # Backwards compatibility: if looking for RTL_FILES but not found, check VERILOG_FILES
+    elif key == "RTL_FILES" and "VERILOG_FILES" in config:
+        log_warn("RTL_FILES not found in config.json. Falling back to VERILOG_FILES.")
+        config_files = config["VERILOG_FILES"]
+        if isinstance(config_files, list):
+            initial_files = [f.replace("::", "/") for f in config_files]
         else:
             log_error("VERILOG_FILES in config.json must be a list.")
             sys.exit(1)
 
+    # If asking for TEST_FILES and not found, return empty list (unless CLI args were expected but not present?)
+
     if not initial_files:
-        log_error("No files provided via CLI or config.json.")
-        sys.exit(1)
+        if key == "RTL_FILES" and not args.files:
+             log_error("No RTL files provided via CLI or config.json (RTL_FILES or VERILOG_FILES).")
+             sys.exit(1)
+        # If TEST_FILES is empty, that's fine
+        return []
 
     # Expand globs and deduplicate
     final_files = set()
@@ -88,18 +111,18 @@ def get_files(args, config):
             final_files.update(matched)
         else:
             # Optional: warn if a pattern matched nothing?
-            # For now, we strictly follow glob behavior (omit if not found)
             pass
 
     sorted_files = sorted(list(final_files))
 
-    if not sorted_files:
-        log_warn("No files found after glob expansion.")
+    if not sorted_files and key == "RTL_FILES":
+        log_warn("No files found after glob expansion for RTL_FILES.")
 
     return sorted_files
 
 def cmd_lint(args, config):
-    files = get_files(args, config)
+    # Lint only checks RTL
+    files = get_files(args, config, key="RTL_FILES")
     cmd = ["verilator", "--lint-only"]
 
     # Add include directories
@@ -111,7 +134,16 @@ def cmd_lint(args, config):
     run_command(cmd)
 
 def cmd_sim(args, config):
-    files = get_files(args, config)
+    # Sim needs RTL + TEST
+
+    # If CLI args are provided, they override the concept of keys completely.
+    if args.files:
+        files = get_files(args, config, key="RTL_FILES") # key doesn't matter if args.files is set
+    else:
+        rtl_files = get_files(args, config, key="RTL_FILES")
+        test_files = get_files(args, config, key="TEST_FILES")
+        files = rtl_files + test_files
+
     ensure_build_dir()
     # iverilog -o build/sim.vvp <files> && vvp build/sim.vvp
     compile_cmd = ["iverilog", "-o", "build/sim.vvp"]
@@ -128,7 +160,8 @@ def cmd_sim(args, config):
     run_command(run_sim_cmd)
 
 def cmd_synth(args, config):
-    files = get_files(args, config)
+    # Synth only checks RTL
+    files = get_files(args, config, key="RTL_FILES")
     ensure_build_dir()
 
     # Generate include commands
@@ -176,7 +209,12 @@ def cmd_gds(args, config):
         log_error(f"Missing required keys in config.json for GDS generation: {', '.join(missing_keys)}")
         sys.exit(1)
 
-    # Optional: Check types/values if needed, but existence is a good start.
+    # Validate that we have RTL files
+    files = get_files(args, config, key="RTL_FILES")
+    if not files:
+        log_error("No RTL files found. GDS generation requires valid RTL.")
+        sys.exit(1)
+
     log_info("GDS configuration verified successfully.")
 
 def cmd_pdk(args, config):
