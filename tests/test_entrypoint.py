@@ -173,8 +173,18 @@ class TestEntrypoint(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            args = MagicMock()
-            args.files = None
+            # Create a Mock args object that behaves like Namespace but might lack attributes
+            # Standard MagicMock allows attribute access, returning new Mocks.
+            # We want to ensure access to 'files' returns None if not set, or we want to verify
+            # behavior when 'files' is accessed.
+            # In Python's argparse, if an argument is not present in the parser, it won't be in the Namespace.
+            # So accessing args.files would raise AttributeError.
+
+            # Let's mock a Namespace-like object that raises AttributeError for 'files'
+            class MockArgs:
+                pass
+
+            args = MockArgs() # No attributes
 
             # Should exit with code 1 due to no matching files
             with self.assertRaises(SystemExit) as cm:

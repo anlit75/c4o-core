@@ -64,8 +64,10 @@ def get_files(args, config, key="RTL_FILES"):
     initial_files = []
 
     # Check CLI args first - if present, they override config
-    if args.files:
-        for f in args.files:
+    # Use getattr because not all parsers have 'files' argument (e.g., cmd_gds)
+    cli_files = getattr(args, "files", None)
+    if cli_files:
+        for f in cli_files:
             if f.strip(): # Ignore empty strings
                 initial_files.extend(f.strip().split())
         # If args provided, we return just them, no config lookup.
@@ -77,8 +79,8 @@ def get_files(args, config, key="RTL_FILES"):
     elif key in config:
         config_files = config[key]
         if isinstance(config_files, list):
-            # Handle possible "dir::file.v" convention by replacing "::" with "/"
-            initial_files = [f.replace("::", "/") for f in config_files]
+            # Standard relative paths supported. Removed legacy :: replacement logic.
+            initial_files = config_files
         else:
             log_error(f"{key} in config.json must be a list.")
             sys.exit(1)
@@ -88,7 +90,7 @@ def get_files(args, config, key="RTL_FILES"):
         log_warn("RTL_FILES not found in config.json. Falling back to VERILOG_FILES.")
         config_files = config["VERILOG_FILES"]
         if isinstance(config_files, list):
-            initial_files = [f.replace("::", "/") for f in config_files]
+            initial_files = config_files
         else:
             log_error("VERILOG_FILES in config.json must be a list.")
             sys.exit(1)
@@ -96,7 +98,11 @@ def get_files(args, config, key="RTL_FILES"):
     # If asking for TEST_FILES and not found, return empty list (unless CLI args were expected but not present?)
 
     if not initial_files:
-        if key == "RTL_FILES" and not args.files:
+        # Check if we failed to find RTL files when explicitly requested via key or fallback
+        # Note: if CLI args were empty but attribute existed, we fall here too if config was also empty.
+
+        # If the user intended to provide files via CLI but didn't, or config was missing...
+        if key == "RTL_FILES" and not cli_files:
              log_error("No RTL files provided via CLI or config.json (RTL_FILES or VERILOG_FILES).")
              sys.exit(1)
         # If TEST_FILES is empty, that's fine
@@ -137,7 +143,7 @@ def cmd_sim(args, config):
     # Sim needs RTL + TEST
 
     # If CLI args are provided, they override the concept of keys completely.
-    if args.files:
+    if getattr(args, "files", None):
         files = get_files(args, config, key="RTL_FILES") # key doesn't matter if args.files is set
     else:
         rtl_files = get_files(args, config, key="RTL_FILES")
