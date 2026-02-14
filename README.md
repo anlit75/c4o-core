@@ -24,22 +24,24 @@ The engine supports the following commands via its Python entrypoint:
 
 | Command | Description |
 |---|---|
-| `lint` | Runs Verilator linting checks on the source files. |
-| `sim` | Compiles and runs simulation using Icarus Verilog. |
-| `synth` | Performs logic synthesis using Yosys. Generates `build/synthesis.json`. |
+| `lint` | Runs Verilator linting checks on `RTL_FILES`. |
+| `sim` | Compiles and runs simulation using Icarus Verilog on `RTL_FILES` + `TEST_FILES`. |
+| `synth` | Performs logic synthesis using Yosys on `RTL_FILES` only. Generates `build/synthesis.json`. |
 | `pdk` | Installs/Enables the Sky130 PDK via Volare into `./pdks`. |
-| `gds` | Validates configuration for OpenLane flow (pre-flight check). |
+| `gds` | Validates configuration for OpenLane flow (pre-flight check). Requires valid `RTL_FILES`. |
 
 ## ⚙️ Configuration (config.json)
 
 `c4o-core` looks for a `config.json` file in your workspace to understand your design structure.
 
-### Minimal Example (RTL Only)
+### Minimal Example
 
 ```json
 {
   "DESIGN_NAME": "counter",
-  "VERILOG_FILES": ["src/counter.v", "src/alu.v"]
+  "RTL_FILES": ["src/**/*.v"],
+  "TEST_FILES": ["test/*.v"],
+  "INCLUDE_DIRS": ["include"]
 }
 ```
 
@@ -50,7 +52,9 @@ Required for `make gds` / OpenLane flow.
 ```json
 {
   "DESIGN_NAME": "counter",
-  "VERILOG_FILES": ["src/counter.v"],
+  "RTL_FILES": ["src/counter.v", "src/alu.v"],
+  "TEST_FILES": ["test/tb_counter.v"],
+  "INCLUDE_DIRS": ["src/include"],
   "PDK": "sky130A",
   "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
   "DIE_AREA": "0 0 100 100",
@@ -60,6 +64,14 @@ Required for `make gds` / OpenLane flow.
   "CLOCK_PERIOD": 10.0
 }
 ```
+
+### Key Configuration Options
+
+*   **`RTL_FILES`**: List of synthesizable Verilog source files. Supports glob patterns (e.g., `src/**/*.v`).
+    *   *Note*: The legacy `VERILOG_FILES` key is supported for backward compatibility but is deprecated.
+*   **`TEST_FILES`**: List of simulation testbench files (non-synthesizable). Supports glob patterns.
+*   **`INCLUDE_DIRS`**: List of directories containing Verilog include files (`.vh`, `.h`).
+*   **`DESIGN_NAME`**: Top-level module name for synthesis.
 
 ## 🏗 Architecture
 
