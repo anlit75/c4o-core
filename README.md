@@ -36,10 +36,30 @@ The engine supports the following commands via its Python entrypoint:
 
 ### Minimal Example (RTL Only)
 
+Supports **Glob Patterns**! You can match all files in a directory recursively using `**/*.v`.
+
 ```json
 {
-  "DESIGN_NAME": "counter",
-  "VERILOG_FILES": ["src/counter.v", "src/alu.v"]
+  "DESIGN_NAME": "top_module",
+  // Use wildcards to include all source files automatically
+  "VERILOG_FILES": ["src/**/*.v"]
+}
+```
+
+### Advanced Example (Complex Projects)
+
+For projects with many files and header includes (e.g., ``include "defines.vh"`).
+
+```json
+{
+  "DESIGN_NAME": "cpu_core",
+  "VERILOG_FILES": [
+    "src/core/**/*.v",
+    "src/peripherals/*.v",
+    "src/top.v"
+  ],
+  // Add include directories for headers (.vh / .h)
+  "INCLUDE_DIRS": ["src/include", "src/headers"]
 }
 ```
 
@@ -49,8 +69,9 @@ Required for `make gds` / OpenLane flow.
 
 ```json
 {
-  "DESIGN_NAME": "counter",
-  "VERILOG_FILES": ["src/counter.v"],
+  "DESIGN_NAME": "top_module",
+  "VERILOG_FILES": ["src/**/*.v"],
+  "INCLUDE_DIRS": ["src/include"],
   "PDK": "sky130A",
   "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
   "DIE_AREA": "0 0 100 100",
@@ -78,4 +99,4 @@ Required for `make gds` / OpenLane flow.
 ## License
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-*Note: This framework invokes various third-party open-source EDA tools (Yosys, Verilator, OpenLane, etc.), which are distributed under their respective licenses.*
+*Note: This framework invokes various third-party open-source EDA tools (Yosys, Verilator, etc.), which are distributed under their respective licenses.*

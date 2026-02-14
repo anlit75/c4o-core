@@ -1,4 +1,4 @@
-name: c4o-core CI
+name: c4o-core ci
 
 on:
   push:
