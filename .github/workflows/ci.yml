@@ -72,6 +72,7 @@ jobs:
         with:
           name: artifacts-docker-build
           path: build/
+          retention-days: 5
 
   test-action-interface:
     runs-on: ubuntu-latest
@@ -99,3 +100,4 @@ jobs:
         with:
           name: artifacts-action-test
           path: build/
+          retention-days: 5
