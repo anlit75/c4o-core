@@ -1,4 +1,4 @@
-name: c4o-core CI
+name: c4o-core ci
 
 on:
   push:
@@ -19,6 +19,9 @@ jobs:
       - name: Build Docker image
         run: docker build -t c4o-core:test .
 
+      - name: Run Python Unit Tests
+        run: docker run --rm --entrypoint python3 c4o-core:test /opt/c4o-core/tests/test_entrypoint.py
+
       # Explicit Files Tests
       - name: Run Lint check (CLI)
         run: |
@@ -36,7 +39,7 @@ jobs:
       # Config Based Tests
       - name: Create Config for Synthesis
         run: |
-          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
+          echo '{"DESIGN_NAME": "counter", "RTL_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
 
       - name: Run Lint check (Config)
         run: |
@@ -57,7 +60,7 @@ jobs:
 
       - name: Update Config for Simulation
         run: |
-          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/tb_counter.v", "tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
+          echo '{"DESIGN_NAME": "counter", "RTL_FILES": ["tests/smoke/counter.v"], "TEST_FILES": ["tests/smoke/tb_counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
 
       - name: Run Simulation check (Config)
         run: |

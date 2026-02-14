@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -49,58 +50,141 @@ def load_config():
             sys.exit(1)
     return {}
 
-def get_files(args, config):
+def get_files(args, config, key="RTL_FILES"):
     """
     Returns a list of files to process.
     Prioritizes CLI arguments. If empty, falls back to config.json.
+    Supports globbing (e.g. src/**/*.v).
+
+    Args:
+        args: Parsed arguments (may contain .files)
+        config: Config dictionary
+        key: The config key to look up (default: RTL_FILES)
     """
-    files = []
+    initial_files = []
 
-    # Check CLI args first
-    if args.files:
-        for f in args.files:
+    # Check CLI args first - if present, they override config
+    # Use getattr because not all parsers have 'files' argument (e.g., cmd_gds)
+    cli_files = getattr(args, "files", None)
+    if cli_files:
+        for f in cli_files:
             if f.strip(): # Ignore empty strings
-                files.extend(f.strip().split())
-
-    if files:
-        return files
+                initial_files.extend(f.strip().split())
+        # If args provided, we return just them, no config lookup.
+        # But we need to handle globbing on them too.
+        # Logic below handles globbing.
+        pass
 
     # Fallback to config
-    if "VERILOG_FILES" in config:
-        verilog_files = config["VERILOG_FILES"]
-        if isinstance(verilog_files, list):
-            # Handle possible "dir::file.v" convention by replacing "::" with "/"
-            # and verify paths relative to project root (CWD)
-            return [f.replace("::", "/") for f in verilog_files]
+    elif key in config:
+        config_files = config[key]
+        if isinstance(config_files, list):
+            # Standard relative paths supported. Removed legacy :: replacement logic.
+            initial_files = config_files
+        else:
+            log_error(f"{key} in config.json must be a list.")
+            sys.exit(1)
+
+    # Backwards compatibility: if looking for RTL_FILES but not found, check VERILOG_FILES
+    elif key == "RTL_FILES" and "VERILOG_FILES" in config:
+        log_warn("RTL_FILES not found in config.json. Falling back to VERILOG_FILES.")
+        config_files = config["VERILOG_FILES"]
+        if isinstance(config_files, list):
+            initial_files = config_files
         else:
             log_error("VERILOG_FILES in config.json must be a list.")
             sys.exit(1)
 
-    log_error("No files provided via CLI or config.json.")
-    sys.exit(1)
+    # If asking for TEST_FILES and not found, return empty list (unless CLI args were expected but not present?)
+
+    if not initial_files:
+        # Check if we failed to find RTL files when explicitly requested via key or fallback
+        # Note: if CLI args were empty but attribute existed, we fall here too if config was also empty.
+
+        # If the user intended to provide files via CLI but didn't, or config was missing...
+        if key == "RTL_FILES" and not cli_files:
+             log_error("No RTL files provided via CLI or config.json (RTL_FILES or VERILOG_FILES).")
+             sys.exit(1)
+        # If TEST_FILES is empty, that's fine
+        return []
+
+    # Expand globs and deduplicate
+    final_files = set()
+    for pattern in initial_files:
+        # Use recursive globbing
+        matched = glob.glob(pattern, recursive=True)
+        if matched:
+            final_files.update(matched)
+        else:
+            # Optional: warn if a pattern matched nothing?
+            pass
+
+    sorted_files = sorted(list(final_files))
+
+    if not sorted_files and key == "RTL_FILES":
+        log_warn("No files found after glob expansion for RTL_FILES.")
+
+    return sorted_files
 
 def cmd_lint(args, config):
-    files = get_files(args, config)
-    cmd = ["verilator", "--lint-only"] + files
+    # Lint only checks RTL
+    files = get_files(args, config, key="RTL_FILES")
+    cmd = ["verilator", "--lint-only"]
+
+    # Add include directories
+    include_dirs = config.get("INCLUDE_DIRS", [])
+    for inc in include_dirs:
+        cmd.append(f"-I{inc}")
+
+    cmd += files
     run_command(cmd)
 
 def cmd_sim(args, config):
-    files = get_files(args, config)
+    # Sim needs RTL + TEST
+
+    # If CLI args are provided, they override the concept of keys completely.
+    if getattr(args, "files", None):
+        files = get_files(args, config, key="RTL_FILES") # key doesn't matter if args.files is set
+    else:
+        rtl_files = get_files(args, config, key="RTL_FILES")
+        test_files = get_files(args, config, key="TEST_FILES")
+        files = rtl_files + test_files
+
     ensure_build_dir()
     # iverilog -o build/sim.vvp <files> && vvp build/sim.vvp
-    compile_cmd = ["iverilog", "-o", "build/sim.vvp"] + files
+    compile_cmd = ["iverilog", "-o", "build/sim.vvp"]
+
+    # Add include directories
+    include_dirs = config.get("INCLUDE_DIRS", [])
+    for inc in include_dirs:
+        compile_cmd.append(f"-I{inc}")
+
+    compile_cmd += files
     run_command(compile_cmd)
 
     run_sim_cmd = ["vvp", "build/sim.vvp"]
     run_command(run_sim_cmd)
 
 def cmd_synth(args, config):
-    files = get_files(args, config)
+    # Synth only checks RTL
+    files = get_files(args, config, key="RTL_FILES")
     ensure_build_dir()
+
+    # Generate include commands
+    include_cmds = []
+    include_dirs = config.get("INCLUDE_DIRS", [])
+    for inc in include_dirs:
+        include_cmds.append(f"verilog_defaults -add -I{inc}")
 
     # Generate read_verilog commands for each file
     read_cmds = [f"read_verilog {f}" for f in files]
-    read_cmd_str = "; ".join(read_cmds)
+
+    # Combine commands
+    parts = []
+    if include_cmds:
+        parts.append("; ".join(include_cmds))
+    if read_cmds:
+        parts.append("; ".join(read_cmds))
 
     # Determine top module
     synth_cmd = "synth -auto-top"
@@ -109,8 +193,10 @@ def cmd_synth(args, config):
         log_info(f"Using design name from config: {design_name}")
         synth_cmd = f"synth -top {design_name}"
 
-    # read_verilog <file1>; ...; synth -top <design>; write_json build/synthesis.json
-    yosys_cmd = f"{read_cmd_str}; {synth_cmd}; write_json build/synthesis.json"
+    parts.append(synth_cmd)
+    parts.append("write_json build/synthesis.json")
+
+    yosys_cmd = "; ".join(parts)
     cmd = ["yosys", "-p", yosys_cmd]
     run_command(cmd)
 
@@ -129,7 +215,12 @@ def cmd_gds(args, config):
         log_error(f"Missing required keys in config.json for GDS generation: {', '.join(missing_keys)}")
         sys.exit(1)
 
-    # Optional: Check types/values if needed, but existence is a good start.
+    # Validate that we have RTL files
+    files = get_files(args, config, key="RTL_FILES")
+    if not files:
+        log_error("No RTL files found. GDS generation requires valid RTL.")
+        sys.exit(1)
+
     log_info("GDS configuration verified successfully.")
 
 def cmd_pdk(args, config):
@@ -165,10 +256,6 @@ def main():
     sim_parser = subparsers.add_parser("sim", help="Run Icarus Verilog simulation")
     sim_parser.add_argument("--files", nargs="*", help="Verilog files to simulate")
     sim_parser.set_defaults(func=cmd_sim)
-
-    # Keeping 'test' as a hidden alias or just not supporting it?
-    # Since I will update CI, I can remove it. But for safety, I can alias it.
-    # The prompt explicitly asked for `sim`. I'll stick to `sim`.
 
     # Synth command
     synth_parser = subparsers.add_parser("synth", help="Run Yosys synthesis")
