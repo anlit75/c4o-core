@@ -34,19 +34,34 @@ The engine supports the following commands via its Python entrypoint:
 
 `c4o-core` looks for a `config.json` file in your workspace to understand your design structure.
 
-### Minimal Example
+### Minimal Example (RTL Only)
+Supports **Glob Patterns**! You can match all files in a directory recursively using `**/*.v`.
 
 ```json
 {
   "DESIGN_NAME": "counter",
   "RTL_FILES": ["src/**/*.v"],
-  "TEST_FILES": ["test/*.v"],
-  "INCLUDE_DIRS": ["include"]
+  "TEST_FILES": ["test/*.v"]
+}
+```
+
+### Advanced Example (Complex Projects)
+For projects with many files and header includes (e.g., `` `include "defines.vh" ``).
+
+```json
+{
+  "DESIGN_NAME": "cpu_top",
+  "RTL_FILES": [
+    "src/core/**/*.v",
+    "src/peripherals/*.v",
+    "src/top.v"
+  ],
+  "TEST_FILES": ["test/tb_top.v"],
+  "INCLUDE_DIRS": ["src/include", "src/core/include"]
 }
 ```
 
 ### Full Example (RTL + GDS)
-
 Required for `make gds` / OpenLane flow.
 
 ```json
