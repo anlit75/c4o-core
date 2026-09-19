@@ -2,6 +2,8 @@ name: c4o-core ci
 
 on:
   push:
+    tags-ignore:
+      - '**'
     paths-ignore:
       - '**.md'
       - 'LICENSE'
