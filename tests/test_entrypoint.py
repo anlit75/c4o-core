@@ -197,7 +197,7 @@ class TestEntrypoint(unittest.TestCase):
     @patch('entrypoint.run_command')
     @patch('entrypoint.load_config')
     @patch('entrypoint.ensure_build_dir')
-    def test_gds_missing_rtl(self, mock_ensure, mock_load, mock_run):
+    def test_check_missing_rtl(self, mock_ensure, mock_load, mock_run):
         # Config with required GDS keys but missing RTL files
         gds_config = {
             "PDK": "sky130A",
@@ -229,12 +229,119 @@ class TestEntrypoint(unittest.TestCase):
 
             # Should exit with code 1 due to no matching files
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_gds(args, gds_config)
+                entrypoint.cmd_check(args, gds_config)
 
             self.assertEqual(cm.exception.code, 1)
 
         finally:
             os.chdir(cwd)
+
+    # --- sim must never pass without actually simulating something ---
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_sim_errors_when_test_files_match_nothing(self, mock_ensure, mock_load, mock_run):
+        # This used to be a warning: sim compiled the RTL alone and exited 0,
+        # so a renamed directory or a typo left CI green with nothing verified.
+        config = dict(self.config, TEST_FILES=["test/*.sv"])
+        mock_load.return_value = config
+
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_sim(args, config)
+
+            self.assertEqual(cm.exception.code, 1)
+            mock_run.assert_not_called()
+
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_sim_errors_without_a_testbench(self, mock_ensure, mock_load, mock_run):
+        config = {k: v for k, v in self.config.items() if k != "TEST_FILES"}
+        mock_load.return_value = config
+
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_sim(args, config)
+
+            self.assertEqual(cm.exception.code, 1)
+            mock_run.assert_not_called()
+
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_sim_requires_a_top_for_several_testbenches(self, mock_ensure, mock_load, mock_run):
+        # Icarus roots every uninstantiated module, and the first $finish ends
+        # the run -- so the second testbench was cut off mid-way, silently.
+        with open(os.path.join(self.test_dir, "test/other_tb.v"), "w") as f:
+            f.write("module other_tb; endmodule")
+        mock_load.return_value = self.config
+
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_sim(args, self.config)
+
+            self.assertEqual(cm.exception.code, 1)
+            mock_run.assert_not_called()
+
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_sim_top_selects_the_root(self, mock_ensure, mock_load, mock_run):
+        with open(os.path.join(self.test_dir, "test/other_tb.v"), "w") as f:
+            f.write("module other_tb; endmodule")
+        # Written the way a shared LibreLane config has to spell it.
+        config = dict(self.config)
+        config["//SIM_TOP"] = "top_tb"
+        mock_load.return_value = config
+
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+
+            entrypoint.cmd_sim(args, config)
+
+            compile_cmd = mock_run.call_args_list[0][0][0]
+            self.assertIn("-s", compile_cmd)
+            self.assertEqual(compile_cmd[compile_cmd.index("-s") + 1], "top_tb")
+            # Both testbenches still compile; -s picks which one is the root.
+            self.assertTrue(any("test/other_tb.v" in arg for arg in compile_cmd))
+
+        finally:
+            os.chdir(cwd)
+
+    def test_check_is_reachable_under_both_names(self):
+        parser_args = entrypoint.build_parser().parse_args(["gds"])
+        self.assertIs(parser_args.func, entrypoint.cmd_check)
+        parser_args = entrypoint.build_parser().parse_args(["check"])
+        self.assertIs(parser_args.func, entrypoint.cmd_check)
 
 if __name__ == '__main__':
     unittest.main()

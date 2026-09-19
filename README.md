@@ -3,6 +3,7 @@
 ![CI Status](https://github.com/anlit75/c4o-core/actions/workflows/ci.yml/badge.svg)
 ![Docker Image Version](https://img.shields.io/github/v/release/anlit75/c4o-core?label=version)
 [![License](https://img.shields.io/github/license/anlit75/c4o-core)](LICENSE)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/anlit75/c4o-core)
 
 **c4o-core** is the underlying EDA toolchain engine for the [ChipForAll](https://github.com/anlit75/ChipForAll) project.
 It packages open-source silicon tools into a unified, Python-driven Docker container.
@@ -28,7 +29,7 @@ The engine supports the following commands via its Python entrypoint:
 | `sim` | Compiles and runs simulation using Icarus Verilog on `VERILOG_FILES` + `TEST_FILES`. |
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
-| `gds` | Validates configuration for the physical design flow (pre-flight check). Requires valid `VERILOG_FILES`. |
+| `check` | Validates the configuration for the physical design flow. Produces no layout — LibreLane does that. Available as `gds` too, the name it had before. |
 
 ## ⚙️ Configuration
 
@@ -79,8 +80,32 @@ FP_SIZING: absolute
 
 *   **`VERILOG_FILES`**: List of synthesizable Verilog source files. Supports glob patterns.
 *   **`//TEST_FILES`**: List of simulation testbench files (non-synthesizable). Plain `TEST_FILES` is also read, but only the prefixed spelling is silent under LibreLane's strict validation.
+*   **`//SIM_TOP`**: Testbench module to elaborate as the simulation root. Required once `//TEST_FILES` resolves to more than one file — see below.
 *   **`VERILOG_INCLUDE_DIRS`**: List of directories containing Verilog include files (`.vh`, `.h`).
 *   **`DESIGN_NAME`**: Top-level module name for synthesis.
+
+### A pattern that matches nothing is an error
+
+Every configured pattern must match at least one file. A renamed directory or a
+typo used to be a warning, and `sim` would compile the RTL alone and exit 0 —
+green CI, nothing verified. It now fails.
+
+For the same reason, `sim` refuses to run without a testbench at all.
+
+### More than one testbench
+
+Icarus elaborates every module nobody instantiates as its own root, and the
+first `$finish` ends the whole simulation — so a second testbench ran partway
+and was cut off, with nothing in the exit code to show for it. Name the one to
+run and it is passed to `iverilog -s`:
+
+```yaml
+"//TEST_FILES":
+  - dir::test/*.v
+"//SIM_TOP": tb_counter
+```
+
+With a single testbench file, `//SIM_TOP` is optional.
 
 Everything else in the file belongs to LibreLane; see its documentation for the full list.
 
@@ -101,4 +126,4 @@ Everything else in the file belongs to LibreLane; see its documentation for the 
 ## License
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-*Note: This framework invokes various third-party open-source EDA tools (Yosys, Verilator, OpenLane, etc.), which are distributed under their respective licenses.*
+*Note: This framework invokes various third-party open-source EDA tools (Yosys, Verilator, LibreLane, etc.), which are distributed under their respective licenses.*
