@@ -110,7 +110,8 @@ def get_files(args, config, key="VERILOG_FILES"):
             initial_files = config_files
 
     if not initial_files:
-        # An empty TEST_FILES is fine; RTL is not optional.
+        # A key that is simply absent is the caller's problem to judge; RTL is
+        # the one thing no command can do without.
         if key == "VERILOG_FILES":
             log_error("No Verilog files provided via CLI or VERILOG_FILES in the config file.")
             sys.exit(1)
@@ -126,8 +127,13 @@ def get_files(args, config, key="VERILOG_FILES"):
 
     sorted_files = sorted(list(final_files))
 
+    # A configured pattern that matches nothing is a mistake -- a renamed
+    # directory, a typo, a file that never got committed. Continuing with what
+    # is left means lint or sim quietly covers less than the config says it
+    # does, and passes. That silence is the bug; say so and stop.
     if not sorted_files:
-        log_warn(f"No files found after glob expansion for {key}.")
+        log_error(f"{key} matched no files: {', '.join(initial_files)}")
+        sys.exit(1)
 
     return sorted_files
 
@@ -153,14 +159,37 @@ def cmd_sim(args, config):
     # If CLI args are provided, they override the concept of keys completely.
     if getattr(args, "files", None):
         files = get_files(args, config) # key doesn't matter if args.files is set
+        test_files = []
     else:
         rtl_files = get_files(args, config, key="VERILOG_FILES")
         test_files = get_files(args, config, key="TEST_FILES")
+        if not test_files:
+            log_error(
+                "sim has no testbench: set TEST_FILES (or \"//TEST_FILES\") in the "
+                "config, or pass --files."
+            )
+            sys.exit(1)
         files = rtl_files + test_files
 
     ensure_build_dir()
     # iverilog -o build/sim.vvp <files> && vvp build/sim.vvp
     compile_cmd = ["iverilog", "-o", "build/sim.vvp"]
+
+    # Icarus elaborates every module nobody instantiates as its own root, and
+    # the first $finish ends the whole simulation -- so a second testbench runs
+    # partway and is cut off, with nothing in the exit code to show for it.
+    # -s names the one root to elaborate, which is why it is required as soon as
+    # there is more than one file it could be hiding in.
+    sim_top = config_get(config, "SIM_TOP")
+    if sim_top:
+        compile_cmd += ["-s", sim_top]
+    elif len(test_files) > 1:
+        log_error(
+            "More than one testbench file, so the top module is ambiguous: "
+            f"{', '.join(test_files)}. Set SIM_TOP (or \"//SIM_TOP\") to the "
+            "testbench module to run."
+        )
+        sys.exit(1)
 
     # Add include directories
     for inc in get_include_dirs(config):
@@ -206,9 +235,11 @@ def cmd_synth(args, config):
     cmd = ["yosys", "-p", yosys_cmd]
     run_command(cmd)
 
-def cmd_gds(args, config):
+def cmd_check(args, config):
     """
-    Validates the configuration for GDS generation.
+    Validates that the configuration is complete enough for the physical design
+    flow. It produces no layout of its own -- LibreLane does that -- so this is
+    a pre-flight check, which is what the command is named after.
     """
     required_keys = [
         "PDK", "STD_CELL_LIBRARY", "DIE_AREA", "FP_CORE_UTIL",
@@ -227,7 +258,7 @@ def cmd_gds(args, config):
         log_error("No RTL files found. GDS generation requires valid RTL.")
         sys.exit(1)
 
-    log_info("GDS configuration verified successfully.")
+    log_info("Configuration verified for the physical design flow.")
 
 def cmd_pdk(args, config):
     pdk_root = os.path.join(os.getcwd(), "pdks")
@@ -247,12 +278,9 @@ def cmd_pdk(args, config):
     ]
     run_command(cmd)
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description="c4o-core entrypoint script")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # Load config once
-    config = load_config()
 
     # Lint command
     lint_parser = subparsers.add_parser("lint", help="Run Verilator lint")
@@ -269,20 +297,31 @@ def main():
     synth_parser.add_argument("--files", nargs="*", help="Verilog files to synthesize")
     synth_parser.set_defaults(func=cmd_synth)
 
-    # GDS command
-    gds_parser = subparsers.add_parser("gds", help="Run GDS generation (OpenLane)")
-    gds_parser.set_defaults(func=cmd_gds)
+    # Check command. 'gds' is kept as an alias: it is what this command was
+    # called before, and dropping it would break every pinned caller for a
+    # rename.
+    check_parser = subparsers.add_parser(
+        "check",
+        aliases=["gds"],
+        help="Validate the config for the physical design flow (pre-flight only)",
+    )
+    check_parser.set_defaults(func=cmd_check)
 
     # PDK command
     pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via Ciel")
     pdk_parser.set_defaults(func=cmd_pdk)
+
+    return parser
+
+def main():
+    parser = build_parser()
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         sys.exit(1)
 
     args = parser.parse_args()
-    args.func(args, config)
+    args.func(args, load_config())
 
 if __name__ == "__main__":
     main()

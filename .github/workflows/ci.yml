@@ -52,7 +52,13 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test synth
           ls -l build/synthesis.json
 
-      - name: Run GDS check (Config)
+      - name: Run pre-flight check (Config)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
+
+      # 'check' was called 'gds' until it was renamed for not producing one.
+      # The old name stays reachable so pinned callers keep working.
+      - name: The gds alias still reaches the same command
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gds
 
@@ -98,9 +104,35 @@ jobs:
 
       - name: Run all checks (YAML config)
         run: |
-          for cmd in lint synth sim gds; do
+          for cmd in lint synth sim check; do
             docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test $cmd
           done
+
+      # The failures below are the whole point of the command, so assert they
+      # happen. Each of these used to exit 0 while verifying nothing.
+      - name: A testbench pattern that matches nothing fails sim
+        run: |
+          sed 's|tb_counter.v|*.sv|' config.yaml > /tmp/broken.yaml
+          cp /tmp/broken.yaml config.yaml
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test sim
+
+      - name: A second testbench without SIM_TOP fails sim
+        run: |
+          printf 'module tb_other; initial $finish; endmodule\n' > tests/smoke/tb_other.v
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::tests/smoke/counter.v
+          "//TEST_FILES":
+            - dir::tests/smoke/tb_counter.v
+            - dir::tests/smoke/tb_other.v
+          EOF
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test sim
+
+      - name: SIM_TOP names the root and sim runs
+        run: |
+          echo '"//SIM_TOP": tb_counter' >> config.yaml
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test sim
 
       - name: Upload Docker Build Artifacts
         if: always()
