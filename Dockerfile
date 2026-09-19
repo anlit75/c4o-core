@@ -21,16 +21,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 24.04 marks its Python installation as externally managed (PEP 668), so the
 # Python tooling lives in a venv rather than fighting apt over site-packages.
-# Putting the venv first on PATH also keeps `volare` resolvable for `c4o-core pdk`.
+# Putting the venv first on PATH also keeps `ciel` resolvable for `c4o-core pdk`.
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Python libraries
 # cocotb 1.8 predates Python 3.12 support; 1.9 is the first line that carries it.
+# Ciel supersedes Volare as the PDK manager and is what LibreLane itself uses.
+# pyyaml arrives transitively via Ciel, but the entrypoint imports it directly,
+# so it is pinned here rather than left to another package's dependency tree.
 RUN pip install --no-cache-dir \
     "cocotb==1.9.*" \
     "pytest==8.*" \
-    "volare==0.20.6"
+    "ciel==2.6.1" \
+    "pyyaml==6.0.*"
 
 # Create the application directory
 WORKDIR /opt/c4o-core

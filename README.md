@@ -24,69 +24,65 @@ The engine supports the following commands via its Python entrypoint:
 
 | Command | Description |
 |---|---|
-| `lint` | Runs Verilator linting checks on `RTL_FILES`. |
-| `sim` | Compiles and runs simulation using Icarus Verilog on `RTL_FILES` + `TEST_FILES`. |
-| `synth` | Performs logic synthesis using Yosys on `RTL_FILES` only. Generates `build/synthesis.json`. |
-| `pdk` | Installs/Enables the Sky130 PDK via Volare into `./pdks`. |
-| `gds` | Validates configuration for OpenLane flow (pre-flight check). Requires valid `RTL_FILES`. |
+| `lint` | Runs Verilator linting checks on `VERILOG_FILES`. |
+| `sim` | Compiles and runs simulation using Icarus Verilog on `VERILOG_FILES` + `TEST_FILES`. |
+| `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
+| `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
+| `gds` | Validates configuration for the physical design flow (pre-flight check). Requires valid `VERILOG_FILES`. |
 
-## ⚙️ Configuration (config.json)
+## ⚙️ Configuration
 
-`c4o-core` looks for a `config.json` file in your workspace to understand your design structure.
+`c4o-core` looks for `config.yaml`, `config.yml`, or `config.json` in your workspace, in that order.
 
-### Minimal Example (RTL Only)
-Supports **Glob Patterns**! You can match all files in a directory recursively using `**/*.v`.
+**This is a [LibreLane](https://github.com/librelane/librelane) configuration file.** The same file drives both this engine and the physical design flow, so the variable names are LibreLane's — not a parallel vocabulary of our own. `c4o-core` simply reads the subset it needs.
 
-```json
-{
-  "DESIGN_NAME": "counter",
-  "RTL_FILES": ["src/**/*.v"],
-  "TEST_FILES": ["test/*.v"]
-}
+Simulation is outside LibreLane's scope, so testbenches are the one thing it has no variable for. That key is written with a `//` prefix, which LibreLane ignores outright, keeping the shared file valid under its validation:
+
+```yaml
+DESIGN_NAME: counter
+VERILOG_FILES:
+  - dir::src/**/*.v
+
+# Simulation only. The '//' prefix is what makes LibreLane skip this key.
+"//TEST_FILES":
+  - dir::test/*.v
 ```
 
-### Advanced Example (Complex Projects)
-For projects with many files and header includes (e.g., `` `include "defines.vh" ``).
-
-```json
-{
-  "DESIGN_NAME": "cpu_top",
-  "RTL_FILES": [
-    "src/core/**/*.v",
-    "src/peripherals/*.v",
-    "src/top.v"
-  ],
-  "TEST_FILES": ["test/tb_top.v"],
-  "INCLUDE_DIRS": ["src/include", "src/core/include"]
-}
-```
+Glob patterns work (`**/*.v` matches recursively), as does LibreLane's `dir::` prefix, which marks a path as relative to the design directory.
 
 ### Full Example (RTL + GDS)
-Required for `make gds` / OpenLane flow.
 
-```json
-{
-  "DESIGN_NAME": "counter",
-  "RTL_FILES": ["src/counter.v", "src/alu.v"],
-  "TEST_FILES": ["test/tb_counter.v"],
-  "INCLUDE_DIRS": ["src/include"],
-  "PDK": "sky130A",
-  "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
-  "DIE_AREA": "0 0 100 100",
-  "FP_CORE_UTIL": 40,
-  "FP_SIZING": "absolute",
-  "CLOCK_PORT": "clk",
-  "CLOCK_PERIOD": 10.0
-}
+Everything the physical design flow needs. YAML is preferred because it takes comments; JSON works too, with the same keys.
+
+```yaml
+# ---- what you normally change ----
+DESIGN_NAME: counter
+VERILOG_FILES:
+  - dir::src/counter.v
+  - dir::src/alu.v
+"//TEST_FILES":
+  - dir::test/tb_counter.v
+VERILOG_INCLUDE_DIRS:
+  - dir::src/include
+CLOCK_PORT: clk
+CLOCK_PERIOD: 10.0
+
+# ---- keep these unless you know what you are doing ----
+PDK: sky130A
+STD_CELL_LIBRARY: sky130_fd_sc_hd
+DIE_AREA: [0, 0, 100, 100]
+FP_CORE_UTIL: 40
+FP_SIZING: absolute
 ```
 
 ### Key Configuration Options
 
-*   **`RTL_FILES`**: List of synthesizable Verilog source files. Supports glob patterns (e.g., `src/**/*.v`).
-    *   *Note*: The legacy `VERILOG_FILES` key is supported for backward compatibility but is deprecated.
-*   **`TEST_FILES`**: List of simulation testbench files (non-synthesizable). Supports glob patterns.
-*   **`INCLUDE_DIRS`**: List of directories containing Verilog include files (`.vh`, `.h`).
+*   **`VERILOG_FILES`**: List of synthesizable Verilog source files. Supports glob patterns.
+*   **`//TEST_FILES`**: List of simulation testbench files (non-synthesizable). Plain `TEST_FILES` is also read, but only the prefixed spelling is silent under LibreLane's strict validation.
+*   **`VERILOG_INCLUDE_DIRS`**: List of directories containing Verilog include files (`.vh`, `.h`).
 *   **`DESIGN_NAME`**: Top-level module name for synthesis.
+
+Everything else in the file belongs to LibreLane; see its documentation for the full list.
 
 ## 🏗 Architecture
 
@@ -99,7 +95,7 @@ Required for `make gds` / OpenLane flow.
 *   **Yosys**: Open Synthesis Suite
 *   **Verilator**: High-performance Verilog simulator/linter
 *   **Icarus Verilog**: Verilog simulation and synthesis tool
-*   **Volare**: PDK Version Manager
+*   **Ciel**: PDK Version Manager
 *   **Cocotb**: Coroutine based cosimulation library
 
 ## License

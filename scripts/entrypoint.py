@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 
+import yaml
+
 # ANSI color codes
 GREEN = '\033[92m'
 RED = '\033[91m'
@@ -37,103 +39,109 @@ def ensure_build_dir():
         os.makedirs("build")
         log_info("Created build/ directory")
 
+# Searched in order. These are the names LibreLane uses for its own configs,
+# so the same file can be handed to both this engine and the GDS flow.
+CONFIG_FILENAMES = ["config.yaml", "config.yml", "config.json"]
+
 def load_config():
-    """Loads configuration from config.json if it exists."""
-    config_path = os.path.join(os.getcwd(), "config.json")
-    if os.path.exists(config_path):
+    """Loads the first configuration file found in the working directory."""
+    for name in CONFIG_FILENAMES:
+        config_path = os.path.join(os.getcwd(), name)
+        if not os.path.exists(config_path):
+            continue
+        log_info(f"Loading config from {config_path}")
         try:
             with open(config_path, 'r') as f:
-                log_info(f"Loading config from {config_path}")
-                return json.load(f)
-        except json.JSONDecodeError as e:
+                if name.endswith(".json"):
+                    return json.load(f) or {}
+                return yaml.safe_load(f) or {}
+        except (json.JSONDecodeError, yaml.YAMLError) as e:
             log_error(f"Failed to parse {config_path}: {e}")
             sys.exit(1)
     return {}
 
-def get_files(args, config, key="RTL_FILES"):
+def config_get(config, key, default=None):
+    """
+    Reads a config key, also accepting it under a '//' prefix.
+
+    LibreLane ignores keys beginning with '//' outright, so prefixing the keys
+    it does not own is what keeps a shared config file valid under its strict
+    validation (which is the default for .yaml). Both spellings work here.
+    """
+    if key in config:
+        return config[key]
+    return config.get(f"//{key}", default)
+
+def strip_path_prefix(pattern):
+    """
+    Drops LibreLane's 'dir::' prefix, which marks a path as relative to the
+    design directory. Commands run with the workspace as the working directory,
+    so the remainder globs correctly as-is.
+    """
+    return pattern[len("dir::"):] if pattern.startswith("dir::") else pattern
+
+def get_files(args, config, key="VERILOG_FILES"):
     """
     Returns a list of files to process.
-    Prioritizes CLI arguments. If empty, falls back to config.json.
+    Prioritizes CLI arguments. If empty, falls back to the config file.
     Supports globbing (e.g. src/**/*.v).
 
     Args:
         args: Parsed arguments (may contain .files)
         config: Config dictionary
-        key: The config key to look up (default: RTL_FILES)
+        key: The config key to look up (default: VERILOG_FILES)
     """
     initial_files = []
 
-    # Check CLI args first - if present, they override config
-    # Use getattr because not all parsers have 'files' argument (e.g., cmd_gds)
-    cli_files = getattr(args, "files", None)
+    # CLI args override the config entirely. Use getattr because not all parsers
+    # have a 'files' argument (e.g., cmd_gds), and drop empty strings so that a
+    # blank --files does not shadow the config.
+    cli_files = [f for f in (getattr(args, "files", None) or []) if f.strip()]
+
     if cli_files:
         for f in cli_files:
-            if f.strip(): # Ignore empty strings
-                initial_files.extend(f.strip().split())
-        # If args provided, we return just them, no config lookup.
-        # But we need to handle globbing on them too.
-        # Logic below handles globbing.
-        pass
-
-    # Fallback to config
-    elif key in config:
-        config_files = config[key]
-        if isinstance(config_files, list):
-            # Standard relative paths supported. Removed legacy :: replacement logic.
+            initial_files.extend(f.strip().split())
+    else:
+        config_files = config_get(config, key)
+        if config_files is not None:
+            if not isinstance(config_files, list):
+                log_error(f"{key} in the config file must be a list.")
+                sys.exit(1)
             initial_files = config_files
-        else:
-            log_error(f"{key} in config.json must be a list.")
-            sys.exit(1)
-
-    # Backwards compatibility: if looking for RTL_FILES but not found, check VERILOG_FILES
-    elif key == "RTL_FILES" and "VERILOG_FILES" in config:
-        log_warn("RTL_FILES not found in config.json. Falling back to VERILOG_FILES.")
-        config_files = config["VERILOG_FILES"]
-        if isinstance(config_files, list):
-            initial_files = config_files
-        else:
-            log_error("VERILOG_FILES in config.json must be a list.")
-            sys.exit(1)
-
-    # If asking for TEST_FILES and not found, return empty list (unless CLI args were expected but not present?)
 
     if not initial_files:
-        # Check if we failed to find RTL files when explicitly requested via key or fallback
-        # Note: if CLI args were empty but attribute existed, we fall here too if config was also empty.
-
-        # If the user intended to provide files via CLI but didn't, or config was missing...
-        if key == "RTL_FILES" and not cli_files:
-             log_error("No RTL files provided via CLI or config.json (RTL_FILES or VERILOG_FILES).")
-             sys.exit(1)
-        # If TEST_FILES is empty, that's fine
+        # An empty TEST_FILES is fine; RTL is not optional.
+        if key == "VERILOG_FILES":
+            log_error("No Verilog files provided via CLI or VERILOG_FILES in the config file.")
+            sys.exit(1)
         return []
 
     # Expand globs and deduplicate
     final_files = set()
     for pattern in initial_files:
         # Use recursive globbing
-        matched = glob.glob(pattern, recursive=True)
+        matched = glob.glob(strip_path_prefix(pattern), recursive=True)
         if matched:
             final_files.update(matched)
-        else:
-            # Optional: warn if a pattern matched nothing?
-            pass
 
     sorted_files = sorted(list(final_files))
 
-    if not sorted_files and key == "RTL_FILES":
-        log_warn("No files found after glob expansion for RTL_FILES.")
+    if not sorted_files:
+        log_warn(f"No files found after glob expansion for {key}.")
 
     return sorted_files
 
+def get_include_dirs(config):
+    """Verilog include directories, with LibreLane's 'dir::' prefix removed."""
+    return [strip_path_prefix(d) for d in config_get(config, "VERILOG_INCLUDE_DIRS", [])]
+
 def cmd_lint(args, config):
     # Lint only checks RTL
-    files = get_files(args, config, key="RTL_FILES")
+    files = get_files(args, config, key="VERILOG_FILES")
     cmd = ["verilator", "--lint-only"]
 
     # Add include directories
-    include_dirs = config.get("INCLUDE_DIRS", [])
-    for inc in include_dirs:
+    for inc in get_include_dirs(config):
         cmd.append(f"-I{inc}")
 
     cmd += files
@@ -144,9 +152,9 @@ def cmd_sim(args, config):
 
     # If CLI args are provided, they override the concept of keys completely.
     if getattr(args, "files", None):
-        files = get_files(args, config, key="RTL_FILES") # key doesn't matter if args.files is set
+        files = get_files(args, config) # key doesn't matter if args.files is set
     else:
-        rtl_files = get_files(args, config, key="RTL_FILES")
+        rtl_files = get_files(args, config, key="VERILOG_FILES")
         test_files = get_files(args, config, key="TEST_FILES")
         files = rtl_files + test_files
 
@@ -155,8 +163,7 @@ def cmd_sim(args, config):
     compile_cmd = ["iverilog", "-o", "build/sim.vvp"]
 
     # Add include directories
-    include_dirs = config.get("INCLUDE_DIRS", [])
-    for inc in include_dirs:
+    for inc in get_include_dirs(config):
         compile_cmd.append(f"-I{inc}")
 
     compile_cmd += files
@@ -167,13 +174,12 @@ def cmd_sim(args, config):
 
 def cmd_synth(args, config):
     # Synth only checks RTL
-    files = get_files(args, config, key="RTL_FILES")
+    files = get_files(args, config, key="VERILOG_FILES")
     ensure_build_dir()
 
     # Generate include commands
     include_cmds = []
-    include_dirs = config.get("INCLUDE_DIRS", [])
-    for inc in include_dirs:
+    for inc in get_include_dirs(config):
         include_cmds.append(f"verilog_defaults -add -I{inc}")
 
     # Generate read_verilog commands for each file
@@ -212,11 +218,11 @@ def cmd_gds(args, config):
     missing_keys = [key for key in required_keys if key not in config]
 
     if missing_keys:
-        log_error(f"Missing required keys in config.json for GDS generation: {', '.join(missing_keys)}")
+        log_error(f"Missing required keys in the config file for GDS generation: {', '.join(missing_keys)}")
         sys.exit(1)
 
     # Validate that we have RTL files
-    files = get_files(args, config, key="RTL_FILES")
+    files = get_files(args, config, key="VERILOG_FILES")
     if not files:
         log_error("No RTL files found. GDS generation requires valid RTL.")
         sys.exit(1)
@@ -232,8 +238,9 @@ def cmd_pdk(args, config):
     # Commit hash from requirements
     commit_hash = "bdc9412b3e468c102d01b7cf6337be06ec6e9c9a"
 
+    # Ciel is Volare's successor and takes the same arguments.
     cmd = [
-        "volare", "enable",
+        "ciel", "enable",
         "--pdk", "sky130",
         "--pdk-root", pdk_root,
         commit_hash
@@ -267,7 +274,7 @@ def main():
     gds_parser.set_defaults(func=cmd_gds)
 
     # PDK command
-    pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via volare")
+    pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via Ciel")
     pdk_parser.set_defaults(func=cmd_pdk)
 
     if len(sys.argv) == 1:

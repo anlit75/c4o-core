@@ -16,7 +16,7 @@ jobs:
   build-and-test-image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build Docker image
         run: docker build -t c4o-core:test .
@@ -41,7 +41,7 @@ jobs:
       # Config Based Tests
       - name: Create Config for Synthesis
         run: |
-          echo '{"DESIGN_NAME": "counter", "RTL_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
+          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
 
       - name: Run Lint check (Config)
         run: |
@@ -60,17 +60,51 @@ jobs:
         run: |
           docker run --rm c4o-core:test pdk --help
 
+      # The PDK version is pinned in cmd_pdk. Volare's releases did not all move
+      # to Ciel's index, so check the pin still resolves rather than finding out
+      # during a real `pdk` run.
+      - name: Verify the pinned PDK version is published
+        run: |
+          docker run --rm --entrypoint ciel c4o-core:test ls-remote --pdk sky130 \
+            | grep -q bdc9412b3e468c102d01b7cf6337be06ec6e9c9a
+
       - name: Update Config for Simulation
         run: |
-          echo '{"DESIGN_NAME": "counter", "RTL_FILES": ["tests/smoke/counter.v"], "TEST_FILES": ["tests/smoke/tb_counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
+          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "TEST_FILES": ["tests/smoke/tb_counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
 
       - name: Run Simulation check (Config)
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test sim
 
+      # Same design, written the way LibreLane expects: YAML, 'dir::' paths, and
+      # the key LibreLane does not own behind a '//' prefix.
+      - name: Create LibreLane-dialect config.yaml
+        run: |
+          rm -f config.json
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::tests/smoke/counter.v
+          "//TEST_FILES":
+            - dir::tests/smoke/tb_counter.v
+          PDK: sky130A
+          STD_CELL_LIBRARY: sky130_fd_sc_hd
+          DIE_AREA: [0, 0, 100, 100]
+          FP_CORE_UTIL: 40
+          FP_SIZING: absolute
+          CLOCK_PORT: clk
+          CLOCK_PERIOD: 10.0
+          EOF
+
+      - name: Run all checks (YAML config)
+        run: |
+          for cmd in lint synth sim gds; do
+            docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test $cmd
+          done
+
       - name: Upload Docker Build Artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: artifacts-docker-build
           path: build/
