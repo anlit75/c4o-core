@@ -1,26 +1,36 @@
-# Use Ubuntu 22.04 LTS as the base image
-FROM ubuntu:22.04
+# Ubuntu 24.04 LTS, pinned by digest so every rebuild resolves to this exact base
+FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Update package lists and install dependencies
+# The EDA tools are pinned to the versions 24.04 ships. 22.04 carried Yosys 0.9
+# (2019), Verilator 4.038 and Icarus 11.0; these are 0.33, 5.020 and 12.0.
+# A pin that stops resolving fails the build loudly, which is the point -- an
+# unpinned install drifts silently instead.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    python3-pip \
+    python3-venv \
     make \
     git \
-    yosys \
-    verilator \
-    iverilog \
+    yosys=0.33-5build2 \
+    verilator=5.020-1 \
+    iverilog=12.0-2build2 \
     && rm -rf /var/lib/apt/lists/*
 
+# 24.04 marks its Python installation as externally managed (PEP 668), so the
+# Python tooling lives in a venv rather than fighting apt over site-packages.
+# Putting the venv first on PATH also keeps `volare` resolvable for `c4o-core pdk`.
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 # Install Python libraries
-# Pin cocotb to major version 1.8 to prevent breaking changes
-RUN pip3 install --no-cache-dir \
-    "cocotb==1.8.*" \
-    pytest \
-    volare
+# cocotb 1.8 predates Python 3.12 support; 1.9 is the first line that carries it.
+RUN pip install --no-cache-dir \
+    "cocotb==1.9.*" \
+    "pytest==8.*" \
+    "volare==0.20.6"
 
 # Create the application directory
 WORKDIR /opt/c4o-core
