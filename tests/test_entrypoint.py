@@ -30,9 +30,9 @@ class TestEntrypoint(unittest.TestCase):
             f.write("module top_tb; endmodule")
 
         self.config = {
-            "RTL_FILES": ["src/**/*.v"],
+            "VERILOG_FILES": ["src/**/*.v"],
             "TEST_FILES": ["test/*.v"],
-            "INCLUDE_DIRS": ["include"],
+            "VERILOG_INCLUDE_DIRS": ["include"],
             "DESIGN_NAME": "top"
         }
 
@@ -127,13 +127,16 @@ class TestEntrypoint(unittest.TestCase):
     @patch('entrypoint.run_command')
     @patch('entrypoint.load_config')
     @patch('entrypoint.ensure_build_dir')
-    def test_synth_backwards_compatibility(self, mock_ensure, mock_load, mock_run):
-        # Create old config format
-        old_config = {
-            "VERILOG_FILES": ["src/**/*.v"],
+    def test_sim_librelane_dialect(self, mock_ensure, mock_load, mock_run):
+        # A config written the way LibreLane expects: 'dir::' paths, and the
+        # key LibreLane does not own hidden behind a '//' prefix so that its
+        # strict validation ignores it.
+        config = {
+            "VERILOG_FILES": ["dir::src/**/*.v"],
+            "//TEST_FILES": ["dir::test/*.v"],
             "DESIGN_NAME": "top"
         }
-        mock_load.return_value = old_config
+        mock_load.return_value = config
 
         cwd = os.getcwd()
         os.chdir(self.test_dir)
@@ -141,14 +144,52 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_synth(args, old_config)
+            entrypoint.cmd_sim(args, config)
+
+            compile_cmd = mock_run.call_args_list[0][0][0]
+            self.assertTrue(any("src/top.v" in arg for arg in compile_cmd))
+            self.assertTrue(any("test/top_tb.v" in arg for arg in compile_cmd))
+            # The prefix must not survive into the tool invocation
+            self.assertFalse(any(arg.startswith("dir::") for arg in compile_cmd))
+
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_blank_cli_files_does_not_shadow_config(self, mock_ensure, mock_load, mock_run):
+        # An empty --files used to win over the config file, leaving the tool
+        # with no inputs at all.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = [""]
+
+            entrypoint.cmd_lint(args, self.config)
 
             call_args = mock_run.call_args[0][0]
-            yosys_cmd = call_args[2]
+            self.assertTrue(any("src/top.v" in arg for arg in call_args))
 
-            # Verify files from VERILOG_FILES are used
-            self.assertIn("read_verilog src/sub/sub.v", yosys_cmd)
-            self.assertIn("read_verilog src/top.v", yosys_cmd)
+        finally:
+            os.chdir(cwd)
+
+    def test_load_config_prefers_yaml(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with open("config.json", "w") as f:
+                f.write('{"DESIGN_NAME": "from_json"}')
+            with open("config.yaml", "w") as f:
+                f.write("DESIGN_NAME: from_yaml\nVERILOG_FILES:\n  - dir::src/*.v\n")
+
+            config = entrypoint.load_config()
+            self.assertEqual(config["DESIGN_NAME"], "from_yaml")
+            self.assertEqual(config["VERILOG_FILES"], ["dir::src/*.v"])
+
+            os.remove("config.yaml")
+            self.assertEqual(entrypoint.load_config()["DESIGN_NAME"], "from_json")
 
         finally:
             os.chdir(cwd)
@@ -166,7 +207,7 @@ class TestEntrypoint(unittest.TestCase):
             "FP_SIZING": "absolute",
             "CLOCK_PORT": "clk",
             "CLOCK_PERIOD": 10.0,
-            "RTL_FILES": ["non_existent.v"]
+            "VERILOG_FILES": ["non_existent.v"]
         }
         mock_load.return_value = gds_config
 
