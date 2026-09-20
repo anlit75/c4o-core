@@ -27,6 +27,7 @@ The engine supports the following commands via its Python entrypoint:
 |---|---|
 | `lint` | Runs Verilator linting checks on `VERILOG_FILES`. |
 | `sim` | Compiles and runs simulation using Icarus Verilog on `VERILOG_FILES` + `TEST_FILES`. |
+| `cocotb` | Runs cocotb tests — Python coroutines driving the RTL — on `VERILOG_FILES` + `COCOTB_TESTS`. |
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
 | `check` | Validates the configuration for the physical design flow. Produces no layout — LibreLane does that. Available as `gds` too, the name it had before. |
@@ -82,6 +83,7 @@ FP_SIZING: absolute
 *   **`VERILOG_FILES`**: List of synthesizable Verilog source files. Supports glob patterns.
 *   **`//TEST_FILES`**: List of simulation testbench files (non-synthesizable). Plain `TEST_FILES` is also read, but only the prefixed spelling is silent under LibreLane's strict validation.
 *   **`//SIM_TOP`**: Testbench module to elaborate as the simulation root. Required once `//TEST_FILES` resolves to more than one file — see below.
+*   **`//COCOTB_TESTS`**: Python test files for the `cocotb` command. Supports globs.
 *   **`VERILOG_INCLUDE_DIRS`**: List of directories containing Verilog include files (`.vh`, `.h`).
 *   **`DESIGN_NAME`**: Top-level module name for synthesis.
 
@@ -109,6 +111,46 @@ run and it is passed to `iverilog -s`:
 With a single testbench file, `//SIM_TOP` is optional.
 
 Everything else in the file belongs to LibreLane; see its documentation for the full list.
+
+## 🐍 Python testbenches (cocotb)
+
+`sim` runs a Verilog testbench. `cocotb` runs the same design from Python
+instead — useful when the stimulus is easier to express in a real programming
+language than in Verilog:
+
+```yaml
+DESIGN_NAME: counter
+VERILOG_FILES:
+  - dir::src/counter.v
+"//COCOTB_TESTS":
+  - dir::test/*.py
+```
+
+```python
+import cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import RisingEdge
+
+@cocotb.test()
+async def reset_clears_the_count(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    dut.rst.value = 1
+    await RisingEdge(dut.clk)
+    assert dut.count.value == 0
+```
+
+`DESIGN_NAME` is the module cocotb drives, so no testbench wrapper is needed.
+
+Two things worth knowing before you write one:
+
+*   **A failing cocotb test does not fail the simulator.** `vvp` exits 0 whether
+    the tests passed or not; the verdict is only in the results file. This
+    command reads it and exits non-zero itself, which is the difference between
+    a test suite and a decoration.
+*   **Your design needs a `` `timescale ``.** Without one Icarus defaults to
+    1-second precision and every cocotb test dies with
+    `Unable to accurately represent 10(ns) with the simulator precision of 1e0`.
+    Adding `` `timescale 1ns/1ps `` to the top of the file fixes it.
 
 ## 📊 Reading a finished run
 
@@ -155,7 +197,7 @@ does not treat a violation as fatal either.
 *   **Verilator**: High-performance Verilog simulator/linter
 *   **Icarus Verilog**: Verilog simulation and synthesis tool
 *   **Ciel**: PDK Version Manager
-*   **Cocotb**: Coroutine based cosimulation library
+*   **Cocotb**: Coroutine based cosimulation library (see the `cocotb` command)
 
 ## License
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.

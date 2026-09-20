@@ -134,6 +134,40 @@ jobs:
           echo '"//SIM_TOP": tb_counter' >> config.yaml
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test sim
 
+      # cocotb drives the same design from Python instead of a Verilog
+      # testbench. The negative case matters more than the positive one: vvp
+      # exits 0 even when every cocotb test failed, so without reading the
+      # results file this would be green no matter what the tests did.
+      - name: Run cocotb tests (Python testbench)
+        run: |
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::tests/smoke/counter.v
+          "//COCOTB_TESTS":
+            - dir::tests/smoke/test_counter_cocotb.py
+          EOF
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test cocotb
+
+      - name: A failing cocotb test fails the command
+        run: |
+          cat > tests/smoke/test_failing_cocotb.py <<'EOF'
+          import cocotb
+
+          @cocotb.test()
+          async def always_fails(dut):
+              assert False, "deliberate"
+          EOF
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::tests/smoke/counter.v
+          "//COCOTB_TESTS":
+            - dir::tests/smoke/test_failing_cocotb.py
+          EOF
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test cocotb
+          rm tests/smoke/test_failing_cocotb.py
+
       # The fixture holds the real metrics of a real blinky run, so this asserts
       # the numbers the report prints, not just that it exits 0.
       - name: Report reads a LibreLane run's metrics
