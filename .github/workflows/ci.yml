@@ -34,6 +34,20 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test synth --files tests/smoke/counter.v
           ls -l build/synthesis.json
 
+      # The only place a real yosys runs this: no yosys outside the image, so
+      # the flag combination `show` needs (-format svg -viewer none -prefix)
+      # is checked here rather than asserted from its documentation.
+      - name: Run Schematic check (CLI)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test schematic --files tests/smoke/counter.v
+          ls -l build/schematic.svg
+          [ -s build/schematic.svg ] || { echo "schematic.svg is empty"; exit 1; }
+          # An SVG, not a dot file yosys failed to render, and it should carry
+          # the design's own names rather than technology cells.
+          head -c 200 build/schematic.svg
+          grep -qF "<svg" build/schematic.svg || { echo "not an SVG"; exit 1; }
+          grep -qF "counter" build/schematic.svg || { echo "the design's name is not in the drawing"; exit 1; }
+
       - name: Run Simulation check (CLI)
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test sim --files tests/smoke/tb_counter.v tests/smoke/counter.v
