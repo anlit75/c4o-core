@@ -339,6 +339,57 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    # --- schematic: the picture, not the netlist ---
+
+    def _schematic_script(self, config, files=None):
+        """Runs cmd_schematic with yosys stubbed and returns the -p script."""
+        args = MagicMock()
+        args.files = files
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with patch("entrypoint.run_command") as run:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    entrypoint.cmd_schematic(args, config)
+            cmd = run.call_args[0][0]
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(cmd[0], "yosys")
+        self.assertEqual(cmd[1], "-p")
+        return cmd[2]
+
+    def test_schematic_stops_before_synthesis(self):
+        # The whole point. `synth` would leave a wall of technology cells;
+        # proc and opt leave flops, adders and muxes with the source's names.
+        script = self._schematic_script(self.config)
+
+        self.assertIn("proc", script)
+        self.assertIn("opt", script)
+        self.assertNotIn("synth", script)
+
+    def test_schematic_draws_the_top_the_config_names(self):
+        self.assertIn("hierarchy -top top", self._schematic_script(self.config))
+
+    def test_schematic_falls_back_to_auto_top(self):
+        config = {k: v for k, v in self.config.items() if k != "DESIGN_NAME"}
+        self.assertIn("hierarchy -auto-top", self._schematic_script(config))
+
+    def test_schematic_does_not_try_to_open_a_window(self):
+        # Without -viewer none, yosys launches a picture viewer for the file
+        # it just wrote, which inside a container is an error on the way out.
+        script = self._schematic_script(self.config)
+
+        self.assertIn("-viewer none", script)
+        self.assertIn(f"-prefix {entrypoint.SCHEMATIC_PREFIX}", script)
+
+    def test_schematic_ignores_testbenches(self):
+        # A testbench in the picture is noise, and TEST_FILES is in the config
+        # this runs against.
+        script = self._schematic_script(self.config)
+
+        self.assertIn("src/top.v", script)
+        self.assertNotIn("top_tb.v", script)
+
     # --- check: values, not just that the keys are there ---
 
     def _gds_config(self, **overrides):

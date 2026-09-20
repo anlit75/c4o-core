@@ -11,6 +11,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # --libpython finds nothing and the simulator runs no tests while exiting 0.
 # Left unpinned so apt matches whatever python3 it resolves; the 't64' is the
 # 64-bit time_t transition, not a typo.
+# graphviz supplies the `dot` that yosys's `show` shells out to for the
+# `schematic` command. Unpinned, like libpython above and unlike the EDA
+# tools: it renders a picture of the design rather than deciding anything
+# about it, so a newer dot draws the same circuit with slightly different
+# splines. Pinning it would buy reproducibility nobody is checking.
 # The EDA tools are pinned to the versions 24.04 ships. 22.04 carried Yosys 0.9
 # (2019), Verilator 4.038 and Icarus 11.0; these are 0.33, 5.020 and 12.0.
 # A pin that stops resolving fails the build loudly, which is the point -- an
@@ -24,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     yosys=0.33-5build2 \
     verilator=5.020-1 \
     iverilog=12.0-2build2 \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 # 24.04 marks its Python installation as externally managed (PEP 668), so the

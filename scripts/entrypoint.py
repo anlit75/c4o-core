@@ -492,6 +492,51 @@ def die_area_error(value):
         )
     return None
 
+# yosys writes <prefix>.dot and, with -format svg, runs dot over it to produce
+# <prefix>.svg beside it.
+SCHEMATIC_PREFIX = "build/schematic"
+
+def cmd_schematic(args, config):
+    """
+    Draws the circuit the RTL describes, as build/schematic.svg.
+
+    Deliberately not `synth`'s yosys script. A fully synthesised netlist is a
+    wall of technology cells -- blinky alone is 243 of them -- and the picture
+    teaches nobody anything. Stopping after `proc; opt` leaves the design at
+    the level it was written: flops, adders, muxes, with the names from the
+    source still on them.
+
+    SVG rather than the Yosys JSON `synth` already writes, because a file any
+    browser and editor opens beats one that needs a particular extension. The
+    extension ChipForAll used to point at for that JSON was pulled from the
+    marketplace, which is how that lesson arrived.
+    """
+    files = get_files(args, config, key="VERILOG_FILES")
+    ensure_build_dir()
+
+    parts = [f"verilog_defaults -add -I{inc}" for inc in get_include_dirs(config)]
+    parts += [f"read_verilog {f}" for f in files]
+
+    design_name = config_get(config, "DESIGN_NAME")
+    if design_name:
+        log_info(f"Using design name from config: {design_name}")
+        parts.append(f"hierarchy -top {design_name}")
+    else:
+        parts.append("hierarchy -auto-top")
+
+    # proc turns always blocks into registers and muxes; opt clears the
+    # obvious clutter. Anything past this and the picture stops resembling
+    # the code it came from.
+    parts += ["proc", "opt"]
+
+    # -viewer none because yosys otherwise tries to launch a picture viewer
+    # for the file it just wrote, which inside a container is an error on the
+    # way out rather than a window.
+    parts.append(f"show -format svg -viewer none -prefix {SCHEMATIC_PREFIX}")
+
+    run_command(["yosys", "-p", "; ".join(parts)])
+    log_info(f"Wrote {SCHEMATIC_PREFIX}.svg")
+
 def cmd_check(args, config):
     """
     Validates that the configuration is complete enough for the physical design
@@ -784,6 +829,13 @@ def build_parser():
     # Check command. 'gds' is kept as an alias: it is what this command was
     # called before, and dropping it would break every pinned caller for a
     # rename.
+    schematic_parser = subparsers.add_parser(
+        "schematic",
+        help="Draw the circuit as build/schematic.svg (RTL level, not the netlist)",
+    )
+    schematic_parser.add_argument("--files", nargs='*', help="Verilog files to draw")
+    schematic_parser.set_defaults(func=cmd_schematic)
+
     check_parser = subparsers.add_parser(
         "check",
         aliases=["gds"],

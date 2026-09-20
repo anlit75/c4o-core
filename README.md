@@ -30,6 +30,7 @@ The engine supports the following commands via its Python entrypoint:
 | `cocotb` | Runs cocotb tests — Python coroutines driving the RTL — on `VERILOG_FILES` + `COCOTB_TESTS`. |
 | `gatesim` | Simulates the **synthesised netlist** against the PDK cell models, on `GATE_TESTS`. |
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
+| `schematic` | Draws the circuit as `build/schematic.svg` — the RTL as written, not the synthesised netlist. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
 | `check` | Validates the configuration for the physical design flow, values included. Produces no layout — LibreLane does that. Available as `gds` too, the name it had before. |
 | `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power, and the DRC/LVS/antenna signoff result. |
@@ -193,6 +194,36 @@ Two consequences worth planning for:
 *   Bound the run in the testbench itself, so it reports what it got to rather
     than hanging with no output.
 
+## 🖼 Seeing the circuit (schematic)
+
+```console
+$ c4o-core schematic
+[INFO] Wrote build/schematic.svg
+```
+
+An SVG of the design: flops, adders, muxes, carrying the names from your
+source. Any browser or editor opens it, and GitHub renders it inline.
+
+**It is not `synth`'s output.** That command runs a full synthesis and leaves
+a Yosys JSON netlist — hundreds of technology cells, from which nobody has
+ever learned anything about their own design. `schematic` stops after
+`proc; opt`, which is where the design still looks like the code it came
+from:
+
+```
+read_verilog <VERILOG_FILES>; hierarchy -top <DESIGN_NAME>; proc; opt;
+show -format svg -viewer none -prefix build/schematic
+```
+
+`hierarchy -auto-top` is used when `DESIGN_NAME` is absent. Testbenches are
+not drawn — `schematic` reads `VERILOG_FILES` only, as `synth` and `lint` do.
+
+SVG rather than the JSON, deliberately: a file everything opens beats a file
+that needs one particular editor extension. ChipForAll used to ship a Dev
+Container extension for that JSON, and it was pulled from the marketplace
+without anything noticing — a listed extension that no longer exists does not
+fail a container build, it just never installs.
+
 ## ✈️ Before the three-minute run (check)
 
 `check` is the pre-flight for the physical design flow. It reads values, not
@@ -323,6 +354,7 @@ already had their say by the time this runs.
 *   **Yosys**: Open Synthesis Suite
 *   **Verilator**: High-performance Verilog simulator/linter
 *   **Icarus Verilog**: Verilog simulation and synthesis tool
+*   **Graphviz**: renders the `schematic` command's SVG (yosys `show` shells out to `dot`)
 *   **Ciel**: PDK Version Manager
 *   **Cocotb**: Coroutine based cosimulation library (see the `cocotb` command)
 
