@@ -138,6 +138,30 @@ jobs:
       # testbench. The negative case matters more than the positive one: vvp
       # exits 0 even when every cocotb test failed, so without reading the
       # results file this would be green no matter what the tests did.
+      # gatesim needs a netlist and a 3GB PDK, neither of which this job has,
+      # so what is checkable here is the interface: that it refuses clearly
+      # rather than running something meaningless. ChipForAll exercises the
+      # real thing, where a LibreLane run and the PDK both exist.
+      - name: gatesim refuses when there is no netlist
+        run: |
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gatesim
+
+      - name: gatesim refuses when the cell models are absent
+        run: |
+          mkdir -p build/runs/r/final/nl && touch build/runs/r/final/nl/counter.nl.v
+          mkdir -p gate && printf 'module tb_gl; endmodule\n' > gate/tb_gl.v
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::tests/smoke/counter.v
+          PDK: sky130A
+          STD_CELL_LIBRARY: sky130_fd_sc_hd
+          "//GATE_TESTS":
+            - dir::gate/*.v
+          EOF
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gatesim
+          rm -rf gate build/runs
+
       # cocotb dlopens libpython at runtime. When it is absent the simulator
       # runs nothing and still exits 0, so assert it resolves here where the
       # error names the cause.
