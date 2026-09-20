@@ -428,7 +428,7 @@ class TestEntrypoint(unittest.TestCase):
                         ' "magic__drc_error__count": 0,'
                         ' "klayout__drc_error__count": 0,'
                         ' "design__lvs_error__count": 0,'
-                        ' "klayout__antenna_error__count": 0,'
+                        ' "route__antenna_violation__count": 0,'
                         ' "design__xor_difference__count": 0}')
 
             out = self._report("clean.json")
@@ -457,17 +457,44 @@ class TestEntrypoint(unittest.TestCase):
         self.assertNotIn("signoff", self._report(self.FIXTURE))
 
     def test_find_render_prefers_the_copy_under_final(self):
+        # Directory and filename both taken from a real LibreLane 3.0.14 run:
+        # KLAYOUT_RENDER registers extension "png" and folder "render", so the
+        # file is <design>.png, not <design>.klayout.png.
         run = os.path.join(self.test_dir, "runs", "blinky_run")
         step = os.path.join(run, "42-klayout-render")
-        final = os.path.join(run, "final", "klayout_render")
+        final = os.path.join(run, "final", "render")
         os.makedirs(step)
         os.makedirs(final)
         for d in (step, final):
-            open(os.path.join(d, "blinky.klayout.png"), "w").close()
+            open(os.path.join(d, "blinky.png"), "w").close()
 
         found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
 
-        self.assertEqual(found, os.path.join(final, "blinky.klayout.png"))
+        self.assertEqual(found, os.path.join(final, "blinky.png"))
+
+    def test_find_render_falls_back_to_the_step_directory(self):
+        run = os.path.join(self.test_dir, "runs", "blinky_run")
+        step = os.path.join(run, "42-klayout-render")
+        os.makedirs(step)
+        os.makedirs(os.path.join(run, "final"))
+        open(os.path.join(step, "blinky.png"), "w").close()
+
+        found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+
+        self.assertEqual(found, os.path.join(step, "blinky.png"))
+
+    def test_find_render_ignores_a_png_some_other_step_wrote(self):
+        # Globbing the whole run for *.png would report an IR-drop heatmap, or
+        # anything else a step happens to draw, as the layout.
+        run = os.path.join(self.test_dir, "runs", "blinky_run")
+        other = os.path.join(run, "77-openroad-irdropreport")
+        os.makedirs(other)
+        os.makedirs(os.path.join(run, "final"))
+        open(os.path.join(other, "irdrop.png"), "w").close()
+
+        self.assertIsNone(
+            entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+        )
 
     def test_find_render_returns_none_when_the_flow_rendered_nothing(self):
         run = os.path.join(self.test_dir, "runs", "blinky_run")
@@ -483,7 +510,7 @@ class TestEntrypoint(unittest.TestCase):
         # different run entirely.
         stray = os.path.join(self.test_dir, "elsewhere")
         os.makedirs(stray)
-        open(os.path.join(stray, "blinky.klayout.png"), "w").close()
+        open(os.path.join(stray, "blinky.png"), "w").close()
 
         self.assertIsNone(
             entrypoint.find_render(os.path.join(stray, "metrics.json"))
