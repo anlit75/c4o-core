@@ -146,7 +146,8 @@ Two things worth knowing before you write one:
 *   **A failing cocotb test does not fail the simulator.** `vvp` exits 0 whether
     the tests passed or not; the verdict is only in the results file. This
     command reads it and exits non-zero itself, which is the difference between
-    a test suite and a decoration.
+    a test suite and a decoration. The same silence hides a cocotb that could
+    not start at all, so a run that writes no results is a failure too.
 *   **Your design needs a `` `timescale ``.** Without one Icarus defaults to
     1-second precision and every cocotb test dies with
     `Unable to accurately represent 10(ns) with the simulator precision of 1e0`.

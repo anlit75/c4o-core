@@ -247,17 +247,36 @@ def cmd_cocotb(args, config):
     modules = [os.path.splitext(os.path.basename(f))[0] for f in test_files]
     search = [os.path.dirname(os.path.abspath(f)) for f in test_files]
 
+    # cocotb's GPI dlopens libpython at runtime and cannot find it by itself
+    # here: this image has libpython3.12.so.1.0 but not the unversioned symlink,
+    # which only the -dev package ships. Without LIBPYTHON_LOC the simulator
+    # prints "Unable to open lib libpython3.12.so" and then exits 0 having run
+    # nothing. cocotb's own Makefile sets this; so do we.
+    libpython = cocotb_config("--libpython")
+    if not os.path.exists(libpython):
+        log_error(
+            f"cocotb points at {libpython} for libpython, and it is not there. "
+            "Install the matching libpython package in the image."
+        )
+        sys.exit(1)
+
+    lib_dir = cocotb_config("--lib-dir")
+
     env = dict(os.environ)
     env.update({
         "MODULE": ",".join(modules),
         "TOPLEVEL": toplevel,
         "TOPLEVEL_LANG": "verilog",
         "COCOTB_RESULTS_FILE": results,
+        "LIBPYTHON_LOC": libpython,
         "PYTHONPATH": os.pathsep.join(dict.fromkeys(search + [os.getcwd()])),
+        "LD_LIBRARY_PATH": os.pathsep.join(
+            [lib_dir] + ([os.environ["LD_LIBRARY_PATH"]] if "LD_LIBRARY_PATH" in os.environ else [])
+        ),
     })
 
     run_command(
-        ["vvp", "-M", cocotb_config("--lib-dir"),
+        ["vvp", "-M", lib_dir,
          "-m", cocotb_config("--lib-name", "vpi", "icarus"), vvp_file],
         env=env,
     )

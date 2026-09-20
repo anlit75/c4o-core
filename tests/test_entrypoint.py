@@ -504,8 +504,40 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    @patch('entrypoint.cocotb_config', return_value="/no/such/libpython.so")
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_errors_when_libpython_is_missing(
+        self, mock_ensure, mock_load, mock_run, mock_cfg
+    ):
+        # Without LIBPYTHON_LOC the simulator prints an opaque GPI error and
+        # then exits 0 having run nothing. Say what is wrong instead.
+        os.makedirs(os.path.join(self.test_dir, "pytests"))
+        with open(os.path.join(self.test_dir, "pytests/test_top.py"), "w") as f:
+            f.write("")
+        config = {
+            "VERILOG_FILES": ["src/**/*.v"],
+            "//COCOTB_TESTS": ["dir::pytests/*.py"],
+            "DESIGN_NAME": "top",
+        }
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_cocotb(args, config)
+            self.assertEqual(cm.exception.code, 1)
+            # It must stop before handing anything to the simulator.
+            self.assertEqual(
+                [c for c in mock_run.call_args_list if c[0][0][0] == "vvp"], []
+            )
+        finally:
+            os.chdir(cwd)
+
     @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value="/libs")
+    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
     @patch('entrypoint.run_command')
     @patch('entrypoint.load_config')
     @patch('entrypoint.ensure_build_dir')
@@ -536,6 +568,7 @@ class TestEntrypoint(unittest.TestCase):
 
             env = mock_run.call_args_list[1][1]["env"]
             self.assertEqual(env["MODULE"], "test_top")
+            self.assertIn("LIBPYTHON_LOC", env)
             self.assertEqual(env["TOPLEVEL"], "top")
             self.assertIn("pytests", env["PYTHONPATH"])
             # The verdict is always read back, never assumed.
