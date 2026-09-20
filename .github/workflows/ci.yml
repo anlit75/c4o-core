@@ -134,6 +134,21 @@ jobs:
           echo '"//SIM_TOP": tb_counter' >> config.yaml
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test sim
 
+      # The fixture holds the real metrics of a real blinky run, so this asserts
+      # the numbers the report prints, not just that it exits 0.
+      - name: Report reads a LibreLane run's metrics
+        run: |
+          out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test \
+                  report tests/fixtures/metrics.json)
+          echo "$out"
+          for expected in "100 x 100 um" "29.2%" "243" "+4.69 ns" "0.292 mW"; do
+            echo "$out" | grep -qF "$expected" || { echo "missing: $expected"; exit 1; }
+          done
+
+      - name: Report fails when there is no run to read
+        run: |
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test report
+
       - name: Upload Docker Build Artifacts
         if: always()
         uses: actions/upload-artifact@v6

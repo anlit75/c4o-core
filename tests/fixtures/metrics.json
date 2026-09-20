@@ -1,0 +1,15 @@
+{
+    "design__die__bbox": "0.0 0.0 100.0 100.0",
+    "design__die__area": 10000,
+    "design__instance__utilization": 0.291636,
+    "design__instance__count__stdcell": 243,
+    "timing__setup__ws": 4.688715326484959,
+    "timing__setup_vio__count": 0,
+    "timing__hold__ws": 0.10639583959452878,
+    "timing__hold_vio__count": 0,
+    "power__total": 0.0002922994608525187,
+    "design__lint_warning__count": 441,
+    "timing__setup__ws__corner:nom_tt_025C_1v80": 6.546511074086406,
+    "design__instance__count": 787,
+    "route__wirelength": 2276
+}

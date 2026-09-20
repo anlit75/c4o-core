@@ -30,6 +30,7 @@ The engine supports the following commands via its Python entrypoint:
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
 | `check` | Validates the configuration for the physical design flow. Produces no layout — LibreLane does that. Available as `gds` too, the name it had before. |
+| `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power. |
 
 ## ⚙️ Configuration
 
@@ -108,6 +109,39 @@ run and it is passed to `iverilog -s`:
 With a single testbench file, `//SIM_TOP` is optional.
 
 Everything else in the file belongs to LibreLane; see its documentation for the full list.
+
+## 📊 Reading a finished run
+
+LibreLane computes area, timing, power and much else, then writes all of it to a
+single 300-key `metrics.json` that nobody opens. `report` pulls out the handful
+that answer *is my design any good*:
+
+```console
+$ c4o-core report
+
+  blinky
+
+  die              100 x 100 um  (10000 um^2)
+  utilization      29.2%
+  standard cells   243
+  setup slack      +4.69 ns  (0 violations)
+  hold slack       +0.11 ns  (0 violations)
+  power            0.292 mW
+  lint warnings    441
+```
+
+With no argument it takes the newest `metrics.json` under `runs/` or
+`build/runs/`; name a file to pick a different run. Two details worth knowing:
+
+*   **Slack is the worst corner.** LibreLane writes every timing metric once per
+    corner and again with no `__corner:` suffix; the bare key is already the
+    worst of them, and that is what is shown.
+*   **Cell count excludes filler.** `design__instance__count` counted 787 for the
+    run above, but 544 of those were fill cells. The 243 is
+    `design__instance__count__stdcell`.
+
+It is informational and never fails: closing timing is iterative, and LibreLane
+does not treat a violation as fatal either.
 
 ## 🏗 Architecture
 

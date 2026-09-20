@@ -1,5 +1,7 @@
 import sys
 import os
+import io
+import contextlib
 import unittest
 import tempfile
 import shutil
@@ -342,6 +344,99 @@ class TestEntrypoint(unittest.TestCase):
         self.assertIs(parser_args.func, entrypoint.cmd_check)
         parser_args = entrypoint.build_parser().parse_args(["check"])
         self.assertIs(parser_args.func, entrypoint.cmd_check)
+
+    # --- report: the numbers the flow computes and then throws away ---
+
+    FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "metrics.json")
+
+    def _report(self, path):
+        """Runs cmd_report and returns what it printed."""
+        args = MagicMock()
+        args.metrics = path
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            entrypoint.cmd_report(args, {"DESIGN_NAME": "blinky"})
+        return out.getvalue()
+
+    def test_report_reads_a_real_metrics_file(self):
+        # Values are from an actual blinky run, not invented.
+        out = self._report(self.FIXTURE)
+
+        self.assertIn("blinky", out)
+        self.assertIn("100 x 100 um", out)
+        self.assertIn("10000 um^2", out)
+        self.assertIn("29.2%", out)
+        self.assertIn("243", out)
+        self.assertIn("+4.69 ns", out)
+        self.assertIn("+0.11 ns", out)
+        self.assertIn("0.292 mW", out)
+        self.assertIn("441", out)
+
+    def test_report_ignores_per_corner_and_fill_inflated_metrics(self):
+        out = self._report(self.FIXTURE)
+
+        # The bare key is already the worst corner; the nom_tt value is better
+        # and must not be the one reported.
+        self.assertNotIn("+6.55", out)
+        # design__instance__count is 787 because 544 of them are fill cells.
+        self.assertNotIn("787", out)
+
+    def test_report_survives_a_file_missing_most_metrics(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with open("partial.json", "w") as f:
+                f.write('{"design__die__area": 10000, "design__die__bbox": "0 0 100 100"}')
+
+            out = self._report("partial.json")
+
+            self.assertIn("100 x 100 um", out)
+            self.assertNotIn("slack", out)
+        finally:
+            os.chdir(cwd)
+
+    def test_report_errors_when_no_metric_it_reads_is_present(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with open("other.json", "w") as f:
+                f.write('{"route__wirelength": 2276}')
+
+            with self.assertRaises(SystemExit) as cm:
+                self._report("other.json")
+
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            os.chdir(cwd)
+
+    def test_find_metrics_picks_the_newest_run(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            for tag, mtime in (("old_run", 1_000_000), ("new_run", 2_000_000)):
+                path = os.path.join("build", "runs", tag, "final")
+                os.makedirs(path)
+                metrics = os.path.join(path, "metrics.json")
+                with open(metrics, "w") as f:
+                    f.write("{}")
+                os.utime(metrics, (mtime, mtime))
+
+            self.assertIn("new_run", entrypoint.find_metrics(None))
+            # An explicit path always wins.
+            self.assertEqual(entrypoint.find_metrics("named.json"), "named.json")
+        finally:
+            os.chdir(cwd)
+
+    def test_find_metrics_errors_when_no_run_exists(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.find_metrics(None)
+
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            os.chdir(cwd)
 
 if __name__ == '__main__':
     unittest.main()
