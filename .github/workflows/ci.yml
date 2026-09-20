@@ -212,6 +212,24 @@ jobs:
             echo "$out" | grep -qF "$expected" || { echo "missing: $expected"; exit 1; }
           done
 
+      # The fixture above predates the signoff keys, so it also proves the
+      # other half: a check the run never reported must not print as a pass.
+      - name: Report says nothing about signoff when the run reported none
+        run: |
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test \
+              report tests/fixtures/metrics.json | grep -q signoff
+
+      - name: Report names the signoff checks that failed
+        run: |
+          out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test \
+                  report tests/fixtures/metrics-signoff-dirty.json)
+          echo "$out"
+          echo "$out" | grep -qF "2 Magic DRC" || { echo "missing: 2 Magic DRC"; exit 1; }
+          echo "$out" | grep -qF "1 LVS" || { echo "missing: 1 LVS"; exit 1; }
+          # A zero must not be listed alongside them, and nothing here is clean.
+          ! echo "$out" | grep -qF "0 antenna"
+          ! echo "$out" | grep -qF "clean"
+
       - name: Report fails when there is no run to read
         run: |
           ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test report

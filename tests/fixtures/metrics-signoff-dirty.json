@@ -1,0 +1,9 @@
+{
+    "design__die__bbox": "0.0 0.0 100.0 100.0",
+    "design__die__area": 10000,
+    "magic__drc_error__count": 2,
+    "klayout__drc_error__count": 0,
+    "design__lvs_error__count": 1,
+    "klayout__antenna_error__count": 0,
+    "design__xor_difference__count": 0
+}

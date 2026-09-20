@@ -409,6 +409,86 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    # --- report: the signoff checks, which say whether it can be made ---
+
+    DIRTY_FIXTURE = os.path.join(
+        os.path.dirname(__file__), "fixtures", "metrics-signoff-dirty.json"
+    )
+
+    def test_report_names_a_clean_signoff(self):
+        # Zeroes rather than a real run's file because a real run cannot carry
+        # anything else: LibreLane errors on every one of these checks by
+        # default, so a finished run has passed them all by construction.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with open("clean.json", "w") as f:
+                f.write('{"design__die__area": 10000,'
+                        ' "design__die__bbox": "0 0 100 100",'
+                        ' "magic__drc_error__count": 0,'
+                        ' "klayout__drc_error__count": 0,'
+                        ' "design__lvs_error__count": 0,'
+                        ' "klayout__antenna_error__count": 0,'
+                        ' "design__xor_difference__count": 0}')
+
+            out = self._report("clean.json")
+
+            self.assertIn("signoff", out)
+            self.assertIn("clean", out)
+            # 'clean' is only as strong as the list of what was checked.
+            for label in ("Magic DRC", "KLayout DRC", "LVS", "antenna", "XOR"):
+                self.assertIn(label, out)
+        finally:
+            os.chdir(cwd)
+
+    def test_report_names_what_failed_rather_than_listing_zeroes(self):
+        out = self._report(self.DIRTY_FIXTURE)
+
+        self.assertIn("2 Magic DRC", out)
+        self.assertIn("1 LVS", out)
+        # The whole point: a column of zeroes with one non-zero buried in it is
+        # what this replaces.
+        self.assertNotIn("clean", out)
+        self.assertNotIn("0 antenna", out)
+
+    def test_report_omits_signoff_when_the_run_reported_none(self):
+        # The flow's own fixture predates these keys. A missing check is not a
+        # passing one, so it must not print a signoff line at all.
+        self.assertNotIn("signoff", self._report(self.FIXTURE))
+
+    def test_find_render_prefers_the_copy_under_final(self):
+        run = os.path.join(self.test_dir, "runs", "blinky_run")
+        step = os.path.join(run, "42-klayout-render")
+        final = os.path.join(run, "final", "klayout_render")
+        os.makedirs(step)
+        os.makedirs(final)
+        for d in (step, final):
+            open(os.path.join(d, "blinky.klayout.png"), "w").close()
+
+        found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+
+        self.assertEqual(found, os.path.join(final, "blinky.klayout.png"))
+
+    def test_find_render_returns_none_when_the_flow_rendered_nothing(self):
+        run = os.path.join(self.test_dir, "runs", "blinky_run")
+        os.makedirs(os.path.join(run, "final"))
+
+        self.assertIsNone(
+            entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+        )
+
+    def test_find_render_ignores_a_metrics_file_outside_a_run(self):
+        # Two directories up from an arbitrary path is an arbitrary tree. It
+        # once reached out of the test's temp directory and found a PNG from a
+        # different run entirely.
+        stray = os.path.join(self.test_dir, "elsewhere")
+        os.makedirs(stray)
+        open(os.path.join(stray, "blinky.klayout.png"), "w").close()
+
+        self.assertIsNone(
+            entrypoint.find_render(os.path.join(stray, "metrics.json"))
+        )
+
     def test_find_metrics_picks_the_newest_run(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)

@@ -32,7 +32,7 @@ The engine supports the following commands via its Python entrypoint:
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
 | `check` | Validates the configuration for the physical design flow. Produces no layout — LibreLane does that. Available as `gds` too, the name it had before. |
-| `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power. |
+| `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power, and the DRC/LVS/antenna signoff result. |
 
 ## ⚙️ Configuration
 
@@ -210,11 +210,46 @@ $ c4o-core report
   setup slack      +4.69 ns  (0 violations)
   hold slack       +0.11 ns  (0 violations)
   power            0.292 mW
+  signoff          clean  (Magic DRC, KLayout DRC, LVS, antenna, XOR)
   lint warnings    441
+  layout           runs/blinky_run/final/klayout_render/blinky.klayout.png
 ```
 
 With no argument it takes the newest `metrics.json` under `runs/` or
-`build/runs/`; name a file to pick a different run. Two details worth knowing:
+`build/runs/`; name a file to pick a different run. A row it has no metric for
+is left out rather than printed as a blank or a zero.
+
+### Can it be made?
+
+The numbers above answer *is my design any good*. The `signoff` row answers the
+other half — *can it be manufactured* — by reading the checks LibreLane's
+Classic flow runs after routing: Magic DRC, KLayout DRC, LVS, antenna and XOR.
+
+Every one of those errors the flow by default (`ERROR_ON_MAGIC_DRC` and its
+siblings all default to `True`), so a run that got as far as writing a
+`metrics.json` has already passed them. That is exactly why the row is worth
+printing: without it nothing states the result, and the reader is left
+inferring it from the absence of a crash.
+
+When something *is* wrong — a run stopped part-way, or the checks were turned
+down to warnings — it names what, instead of printing a column of zeroes with
+one non-zero buried in it:
+
+```console
+  signoff   2 Magic DRC, 1 LVS
+```
+
+`clean` lists the checks it actually saw, because the word is only as strong as
+that list. A check the run never reported is not a check that passed.
+
+### The layout it drew
+
+`KLayout.Render` produces a PNG of the finished layout on every run and leaves
+it in the run directory, where nobody goes looking. The `layout` row is its
+path. It appears only when the `metrics.json` sits where a run left it, at
+`<run>/final/metrics.json`.
+
+Two more details worth knowing:
 
 *   **Slack is the worst corner.** LibreLane writes every timing metric once per
     corner and again with no `__corner:` suffix; the bare key is already the
@@ -223,8 +258,9 @@ With no argument it takes the newest `metrics.json` under `runs/` or
     run above, but 544 of those were fill cells. The 243 is
     `design__instance__count__stdcell`.
 
-It is informational and never fails: closing timing is iterative, and LibreLane
-does not treat a violation as fatal either.
+It is informational and never fails: closing timing is iterative, LibreLane does
+not treat a violation as fatal either, and the checks that *are* fatal have
+already had their say by the time this runs.
 
 ## 🏗 Architecture
 
