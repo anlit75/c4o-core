@@ -493,7 +493,7 @@ SIGNOFF_CHECKS = [
     ("Magic DRC", "magic__drc_error__count"),
     ("KLayout DRC", "klayout__drc_error__count"),
     ("LVS", "design__lvs_error__count"),
-    ("antenna", "klayout__antenna_error__count"),
+    ("antenna", "route__antenna_violation__count"),
     ("XOR", "design__xor_difference__count"),
 ]
 
@@ -522,14 +522,25 @@ def signoff_row(metrics):
     # Name the checks that actually ran: 'clean' is only as strong as its list.
     return ("signoff", "clean  (" + ", ".join(label for label, _ in present) + ")")
 
+# KLAYOUT_RENDER is registered with extension "png" and folder "render", so the
+# file is <design>.png -- not <design>.klayout.png, which is what the format's
+# name suggests and what this first looked for. Confirmed against a real
+# LibreLane 3.0.14 run, not inferred from the step's f-string.
+RENDER_GLOBS = ["final/render/*.png", "*-klayout-render/*.png"]
+
 def find_render(metrics_path):
     """
     The PNG KLayout.Render drew of the finished layout.
 
-    The Classic flow renders one on every run, names it after the design
-    (<design>.klayout.png) and leaves it in the run directory, where nobody
-    goes looking. Globbing for the extension beats rebuilding the path from
-    DESIGN_NAME and the step number, neither of which this command knows.
+    The Classic flow renders one on every run and leaves it in the run
+    directory, where nobody goes looking. It lands twice: in the step's own
+    directory, and again under final/ in the folder KLAYOUT_RENDER is
+    registered with. final/ is the copy worth pointing at, so it is tried
+    first.
+
+    Both patterns name the directory rather than globbing the whole run for
+    *.png, so an unrelated image a step happens to write cannot be reported as
+    the layout.
 
     Only looked for when the file sits where a run leaves it, at
     <run>/final/metrics.json. A metrics.json named on the command line can be
@@ -542,17 +553,14 @@ def find_render(metrics_path):
         return None
 
     run_dir = os.path.dirname(final_dir)
-    found = glob.glob(os.path.join(run_dir, "**", "*.klayout.png"), recursive=True)
-    if not found:
-        return None
-    # The same image exists in the step directory and again under final/ once
-    # the flow copies its views there. final/ is the one worth pointing at.
-    final = [p for p in found if f"{os.sep}final{os.sep}" in p]
-    path = sorted(final or found)[0]
-
-    # Printed for a human to open, so spell it the way they would type it.
-    relative = os.path.relpath(path)
-    return path if relative.startswith(os.pardir) else relative
+    for pattern in RENDER_GLOBS:
+        found = sorted(glob.glob(os.path.join(run_dir, pattern)))
+        if not found:
+            continue
+        # Printed for a human to open, so spell it the way they would type it.
+        relative = os.path.relpath(found[0])
+        return found[0] if relative.startswith(os.pardir) else relative
+    return None
 
 def cmd_report(args, config):
     """

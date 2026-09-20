@@ -212,7 +212,7 @@ $ c4o-core report
   power            0.292 mW
   signoff          clean  (Magic DRC, KLayout DRC, LVS, antenna, XOR)
   lint warnings    441
-  layout           runs/blinky_run/final/klayout_render/blinky.klayout.png
+  layout           runs/blinky_run/final/render/blinky.png
 ```
 
 With no argument it takes the newest `metrics.json` under `runs/` or
@@ -227,7 +227,13 @@ Classic flow runs after routing: Magic DRC, KLayout DRC, LVS, antenna and XOR.
 
 Every one of those errors the flow by default (`ERROR_ON_MAGIC_DRC` and its
 siblings all default to `True`), so a run that got as far as writing a
-`metrics.json` has already passed them. That is exactly why the row is worth
+`metrics.json` has already passed them.
+
+The keys are the ones a real LibreLane 3.0.14 run emits, checked against one
+rather than inferred from the checker classes: antenna comes from
+`OpenROAD.CheckAntennas` (`route__antenna_violation__count`), not from
+`Checker.KLayoutAntenna`, which exists in LibreLane but is not in the Classic
+flow at all. That is exactly why the row is worth
 printing: without it nothing states the result, and the reader is left
 inferring it from the absence of a crash.
 
@@ -246,8 +252,13 @@ that list. A check the run never reported is not a check that passed.
 
 `KLayout.Render` produces a PNG of the finished layout on every run and leaves
 it in the run directory, where nobody goes looking. The `layout` row is its
-path. It appears only when the `metrics.json` sits where a run left it, at
-`<run>/final/metrics.json`.
+path — `final/render/<design>.png`, falling back to the render step's own
+directory. It appears only when the `metrics.json` sits where a run left it,
+at `<run>/final/metrics.json`.
+
+Note the name: the format is registered with extension `png` and folder
+`render`, so the file is `blinky.png`. `blinky.klayout.png` is what the
+format's *name* suggests, and it is wrong.
 
 Two more details worth knowing:
 
