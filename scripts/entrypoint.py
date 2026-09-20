@@ -483,6 +483,77 @@ def find_metrics(explicit):
         sys.exit(1)
     return max(found, key=os.path.getmtime)
 
+# The manufacturability checks LibreLane's Classic flow runs after routing.
+# Every one of them errors the flow by default (ERROR_ON_MAGIC_DRC and friends
+# all default to True), so a run that produced a metrics.json has already
+# passed them -- which is exactly why they are worth printing. The other rows
+# answer 'is my design any good'; without these, nothing answers 'can it be
+# made', and the reader is left inferring it from the absence of a crash.
+SIGNOFF_CHECKS = [
+    ("Magic DRC", "magic__drc_error__count"),
+    ("KLayout DRC", "klayout__drc_error__count"),
+    ("LVS", "design__lvs_error__count"),
+    ("antenna", "klayout__antenna_error__count"),
+    ("XOR", "design__xor_difference__count"),
+]
+
+def signoff_row(metrics):
+    """
+    One line summarising the checks above, or None when the run reported none.
+
+    Named rather than counted when something is wrong -- '2 Magic DRC, 1 LVS'
+    is the sentence you want; a column of zeroes with one non-zero hidden in it
+    is not.
+
+    A key present but null is not a check that passed, so it does not count
+    towards 'clean' either.
+    """
+    present = [
+        (label, metrics[key])
+        for label, key in SIGNOFF_CHECKS
+        if metrics.get(key) is not None
+    ]
+    if not present:
+        return None
+
+    failed = [f"{count} {label}" for label, count in present if count]
+    if failed:
+        return ("signoff", ", ".join(failed))
+    # Name the checks that actually ran: 'clean' is only as strong as its list.
+    return ("signoff", "clean  (" + ", ".join(label for label, _ in present) + ")")
+
+def find_render(metrics_path):
+    """
+    The PNG KLayout.Render drew of the finished layout.
+
+    The Classic flow renders one on every run, names it after the design
+    (<design>.klayout.png) and leaves it in the run directory, where nobody
+    goes looking. Globbing for the extension beats rebuilding the path from
+    DESIGN_NAME and the step number, neither of which this command knows.
+
+    Only looked for when the file sits where a run leaves it, at
+    <run>/final/metrics.json. A metrics.json named on the command line can be
+    anywhere, and globbing two directories up from an arbitrary path is how a
+    report ends up pointing at a PNG from an unrelated run -- or walking
+    someone's entire home directory to find one.
+    """
+    final_dir = os.path.dirname(os.path.abspath(metrics_path))
+    if os.path.basename(final_dir) != "final":
+        return None
+
+    run_dir = os.path.dirname(final_dir)
+    found = glob.glob(os.path.join(run_dir, "**", "*.klayout.png"), recursive=True)
+    if not found:
+        return None
+    # The same image exists in the step directory and again under final/ once
+    # the flow copies its views there. final/ is the one worth pointing at.
+    final = [p for p in found if f"{os.sep}final{os.sep}" in p]
+    path = sorted(final or found)[0]
+
+    # Printed for a human to open, so spell it the way they would type it.
+    relative = os.path.relpath(path)
+    return path if relative.startswith(os.pardir) else relative
+
 def cmd_report(args, config):
     """
     Prints the handful of numbers that answer 'is my design any good' -- how big
@@ -532,10 +603,19 @@ def cmd_report(args, config):
     if power is not None:
         rows.append(("power", f"{power * 1e3:.3f} mW"))  # OpenSTA reports watts
 
+    signoff = signoff_row(metrics)
+    if signoff:
+        rows.append(signoff)
+
     # Not fatal, and invisible everywhere else.
     warnings = metrics.get("design__lint_warning__count")
     if warnings is not None:
         rows.append(("lint warnings", str(warnings)))
+
+    # Last because it is a pointer, not a measurement.
+    render = find_render(path)
+    if render:
+        rows.append(("layout", render))
 
     if not rows:
         log_error(f"{path} carried none of the metrics this report reads.")
