@@ -31,7 +31,7 @@ The engine supports the following commands via its Python entrypoint:
 | `gatesim` | Simulates the **synthesised netlist** against the PDK cell models, on `GATE_TESTS`. |
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
-| `check` | Validates the configuration for the physical design flow. Produces no layout — LibreLane does that. Available as `gds` too, the name it had before. |
+| `check` | Validates the configuration for the physical design flow, values included. Produces no layout — LibreLane does that. Available as `gds` too, the name it had before. |
 | `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power, and the DRC/LVS/antenna signoff result. |
 
 ## ⚙️ Configuration
@@ -192,6 +192,45 @@ Two consequences worth planning for:
     loudly rather than quietly spend an hour.
 *   Bound the run in the testbench itself, so it reports what it got to rather
     than hanging with no output.
+
+## ✈️ Before the three-minute run (check)
+
+`check` is the pre-flight for the physical design flow. It reads values, not
+just key names, because the mistakes worth catching are all in the values:
+
+```console
+$ c4o-core check
+[ERROR] DESIGN_NAME is 'my_cpu', but no module by that name is declared in
+        VERILOG_FILES. Declared there: counter.
+```
+
+That is the first wall anyone hits after putting their own design into a
+template. Without this it surfaces minutes later, as a Yosys error about a
+module it cannot find, or as a LibreLane run that dies partway through.
+
+Three checks, and the third is deliberately weaker than the other two:
+
+| Check | On failure |
+|---|---|
+| `DESIGN_NAME` names a module declared in `VERILOG_FILES` | **error** |
+| `DIE_AREA` is four numbers, second corner larger | **error** |
+| `CLOCK_PORT` appears somewhere in `VERILOG_FILES` | **warning** |
+
+**A false alarm here is worse than no check**, because it blocks a design that
+would have built. So only the two things decidable without parsing Verilog
+properly are errors. Proving a name really *is* a port means reading a port
+list — which spans lines, carries attributes, and can come out of a macro. What
+can be said without a parser is that a name absent from the RTL entirely is not
+a port of it, and that is the typo the warning catches:
+
+```console
+[WARN] CLOCK_PORT is 'wall_clock', which does not appear anywhere in
+       VERILOG_FILES. The flow will not find a clock to constrain.
+[INFO] Configuration verified for the physical design flow.
+```
+
+Module detection strips comments first, so a commented-out module does not
+count as one.
 
 ## 📊 Reading a finished run
 

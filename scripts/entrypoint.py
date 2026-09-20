@@ -3,6 +3,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 from xml.etree import ElementTree
@@ -439,11 +440,72 @@ def cmd_synth(args, config):
     cmd = ["yosys", "-p", yosys_cmd]
     run_command(cmd)
 
+def declared_modules(paths):
+    """
+    The module names the given Verilog files declare.
+
+    Comments are stripped first, so a commented-out module does not count as
+    one. A string literal containing '//' could in principle confuse this, but
+    only near a module header, and the failure direction is safe: it would let
+    a check pass that should have failed, never the reverse.
+    """
+    names = set()
+    for path in paths:
+        try:
+            with open(path, errors="replace") as f:
+                text = f.read()
+        except OSError as e:
+            log_error(f"Could not read {path}: {e}")
+            sys.exit(1)
+        text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+        text = re.sub(r"//[^\n]*", " ", text)
+        names.update(re.findall(r"\bmodule\s+([A-Za-z_][A-Za-z0-9_$]*)", text))
+    return names
+
+def die_area_error(value):
+    """
+    The sentence to print when DIE_AREA is unusable, or None when it is fine.
+
+    LibreLane accepts it as a list or as a space-separated string, so both are
+    read here. Pure arithmetic, no Verilog parsing, so this can be an error
+    rather than a warning.
+    """
+    if isinstance(value, str):
+        parts = value.split()
+    elif isinstance(value, (list, tuple)):
+        parts = list(value)
+    else:
+        return f"DIE_AREA must be four numbers (x0 y0 x1 y1), got {value!r}."
+
+    if len(parts) != 4:
+        return f"DIE_AREA needs four numbers (x0 y0 x1 y1), got {len(parts)}: {value!r}."
+
+    try:
+        x0, y0, x1, y1 = (float(p) for p in parts)
+    except (TypeError, ValueError):
+        return f"DIE_AREA must be four numbers (x0 y0 x1 y1), got {value!r}."
+
+    if x1 <= x0 or y1 <= y0:
+        return (
+            f"DIE_AREA has no area: x {x0} to {x1}, y {y0} to {y1}. "
+            "The order is x0 y0 x1 y1, and the second corner must be the larger one."
+        )
+    return None
+
 def cmd_check(args, config):
     """
     Validates that the configuration is complete enough for the physical design
     flow. It produces no layout of its own -- LibreLane does that -- so this is
     a pre-flight check, which is what the command is named after.
+
+    It checks values, not just that keys are present. A DESIGN_NAME that names
+    no module is the first wall anyone hits after putting their own design in
+    the template, and without this it surfaces minutes later as a Yosys error,
+    or as a LibreLane run that dies partway through.
+
+    A false alarm here is worse than no check, since it blocks a design that
+    would have built. So only the two things that can be decided without
+    parsing Verilog properly are errors; the port check, which cannot, warns.
     """
     required_keys = [
         "PDK", "STD_CELL_LIBRARY", "DIE_AREA", "FP_CORE_UTIL",
@@ -461,6 +523,33 @@ def cmd_check(args, config):
     if not files:
         log_error("No RTL files found. GDS generation requires valid RTL.")
         sys.exit(1)
+
+    error = die_area_error(config_get(config, "DIE_AREA"))
+    if error:
+        log_error(error)
+        sys.exit(1)
+
+    design_name = config_get(config, "DESIGN_NAME")
+    modules = declared_modules(files)
+    if design_name not in modules:
+        log_error(
+            f"DESIGN_NAME is '{design_name}', but no module by that name is "
+            f"declared in VERILOG_FILES. Declared there: "
+            f"{', '.join(sorted(modules)) or 'nothing'}."
+        )
+        sys.exit(1)
+
+    # A warning, not an error: finding a port properly means parsing a port
+    # list, which spans lines, carries attributes and can come from a macro.
+    # What is safe to say is that a name absent from the RTL entirely is not a
+    # port of it -- which is the typo this catches.
+    clock_port = config_get(config, "CLOCK_PORT")
+    if clock_port and not re.search(rf"\b{re.escape(str(clock_port))}\b", "\n".join(
+            open(f, errors="replace").read() for f in files)):
+        log_warn(
+            f"CLOCK_PORT is '{clock_port}', which does not appear anywhere in "
+            "VERILOG_FILES. The flow will not find a clock to constrain."
+        )
 
     log_info("Configuration verified for the physical design flow.")
 

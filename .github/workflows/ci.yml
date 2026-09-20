@@ -56,6 +56,32 @@ jobs:
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
 
+      # The checks that make 'check' worth running before a three-minute
+      # LibreLane run rather than after it. Each is the mistake it names.
+      - name: A DESIGN_NAME that names no module fails the pre-flight check
+        run: |
+          echo '{"DESIGN_NAME": "my_cpu", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
+
+      - name: A DIE_AREA with no area fails the pre-flight check
+        run: |
+          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 0", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
+
+      # A warning, not an error -- proving a name is a port needs a real
+      # parser. So assert both halves: it says something, and it still passes.
+      - name: A CLOCK_PORT absent from the RTL warns but still passes
+        run: |
+          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "wall_clock", "CLOCK_PERIOD": 10.0}' > config.json
+          out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check)
+          echo "$out"
+          echo "$out" | grep -qF "wall_clock" || { echo "no warning named the port"; exit 1; }
+          echo "$out" | grep -qF "verified" || { echo "a warning must not fail the check"; exit 1; }
+
+      - name: Restore the config the later steps expect
+        run: |
+          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
+
       # 'check' was called 'gds' until it was renamed for not producing one.
       # The old name stays reachable so pinned callers keep working.
       - name: The gds alias still reaches the same command
