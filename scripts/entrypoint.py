@@ -260,6 +260,91 @@ def cmd_check(args, config):
 
     log_info("Configuration verified for the physical design flow.")
 
+# LibreLane writes each timing metric once per corner and again with no
+# '__corner:' suffix. The bare key already holds the worst value across every
+# corner -- verified against a real run, where timing__setup__ws equalled the
+# minimum of its nine per-corner values -- so the bare key is the one to report.
+METRICS_GLOBS = ["runs/*/final/metrics.json", "build/runs/*/final/metrics.json"]
+
+def find_metrics(explicit):
+    """The newest metrics.json a LibreLane run left behind, unless named."""
+    if explicit:
+        return explicit
+    found = [path for pattern in METRICS_GLOBS for path in glob.glob(pattern)]
+    if not found:
+        log_error(
+            "No metrics.json found under runs/ or build/runs/. Run the physical "
+            "design flow first, or name the file: report <path>."
+        )
+        sys.exit(1)
+    return max(found, key=os.path.getmtime)
+
+def cmd_report(args, config):
+    """
+    Prints the handful of numbers that answer 'is my design any good' -- how big
+    it is, whether it makes timing, what it burns. The flow computes all of this
+    and then leaves it in a 300-key JSON file nobody opens.
+
+    Informational only. It does not fail on a timing violation: closing timing
+    is iterative, and LibreLane does not treat it as fatal either.
+    """
+    path = find_metrics(getattr(args, "metrics", None))
+    log_info(f"Reading metrics from {path}")
+    try:
+        with open(path) as f:
+            metrics = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        log_error(f"Failed to read {path}: {e}")
+        sys.exit(1)
+
+    rows = []
+
+    bbox = metrics.get("design__die__bbox")
+    area = metrics.get("design__die__area")
+    if bbox and area is not None:
+        x0, y0, x1, y1 = (float(v) for v in bbox.split())
+        rows.append(("die", f"{x1 - x0:g} x {y1 - y0:g} um  ({area:g} um^2)"))
+
+    utilization = metrics.get("design__instance__utilization")
+    if utilization is not None:
+        rows.append(("utilization", f"{utilization * 100:.1f}%"))
+
+    # Not design__instance__count: that one counts fill and tap cells, which say
+    # nothing about the design -- 544 of this run's 787 instances were fill.
+    cells = metrics.get("design__instance__count__stdcell")
+    if cells is not None:
+        rows.append(("standard cells", str(cells)))
+
+    for label, slack_key, violation_key in (
+        ("setup slack", "timing__setup__ws", "timing__setup_vio__count"),
+        ("hold slack", "timing__hold__ws", "timing__hold_vio__count"),
+    ):
+        slack = metrics.get(slack_key)
+        if slack is not None:
+            violations = metrics.get(violation_key, "?")
+            rows.append((label, f"{slack:+.2f} ns  ({violations} violations)"))
+
+    power = metrics.get("power__total")
+    if power is not None:
+        rows.append(("power", f"{power * 1e3:.3f} mW"))  # OpenSTA reports watts
+
+    # Not fatal, and invisible everywhere else.
+    warnings = metrics.get("design__lint_warning__count")
+    if warnings is not None:
+        rows.append(("lint warnings", str(warnings)))
+
+    if not rows:
+        log_error(f"{path} carried none of the metrics this report reads.")
+        sys.exit(1)
+
+    label_width = max(len(label) for label, _ in rows)
+    print()
+    print(f"  {config_get(config, 'DESIGN_NAME', 'design')}")
+    print()
+    for label, value in rows:
+        print(f"  {label.ljust(label_width)}   {value}")
+    print()
+
 def cmd_pdk(args, config):
     pdk_root = os.path.join(os.getcwd(), "pdks")
     if not os.path.exists(pdk_root):
@@ -306,6 +391,17 @@ def build_parser():
         help="Validate the config for the physical design flow (pre-flight only)",
     )
     check_parser.set_defaults(func=cmd_check)
+
+    # Report command
+    report_parser = subparsers.add_parser(
+        "report", help="Summarise a LibreLane run's metrics.json"
+    )
+    report_parser.add_argument(
+        "metrics",
+        nargs="?",
+        help="Path to metrics.json (default: the newest under runs/ or build/runs/)",
+    )
+    report_parser.set_defaults(func=cmd_report)
 
     # PDK command
     pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via Ciel")

@@ -3,5 +3,7 @@ pdks/
 *.vcd
 *.vvp
 *.json
+# ...but test fixtures are source, not a local config someone left behind.
+!tests/fixtures/*.json
 __pycache__/
 *.pyc
