@@ -339,6 +339,70 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    # --- check: values, not just that the keys are there ---
+
+    def _gds_config(self, **overrides):
+        config = {
+            "PDK": "sky130A",
+            "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+            "DIE_AREA": [0, 0, 100, 100],
+            "FP_CORE_UTIL": 40,
+            "FP_SIZING": "absolute",
+            "CLOCK_PORT": "clk",
+            "CLOCK_PERIOD": 10.0,
+            "DESIGN_NAME": "top",
+            "VERILOG_FILES": ["src/*.v"],
+        }
+        config.update(overrides)
+        return config
+
+    def _check(self, config):
+        """Runs cmd_check in the temp tree and returns what it printed."""
+        args = MagicMock()
+        args.files = None
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                entrypoint.cmd_check(args, config)
+        finally:
+            os.chdir(cwd)
+        return out.getvalue()
+
+    def test_check_accepts_a_design_that_exists(self):
+        # src/top.v declares 'module top', which is what DESIGN_NAME names.
+        self.assertIn("verified", self._check(self._gds_config()))
+
+    def test_check_rejects_a_design_name_that_names_no_module(self):
+        # The first wall after putting your own design in the template: the
+        # config still says 'top' while the module is called something else.
+        # Without this it surfaces minutes later as a Yosys error.
+        with self.assertRaises(SystemExit) as cm:
+            self._check(self._gds_config(DESIGN_NAME="my_cpu"))
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_check_rejects_a_die_area_with_no_area(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._check(self._gds_config(DIE_AREA=[0, 0, 100, 0]))
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_check_warns_but_passes_on_a_clock_port_absent_from_the_rtl(self):
+        # A warning, not an error: proving a name IS a port means parsing a
+        # port list. Proving it appears nowhere at all does not, and that is
+        # the typo worth catching.
+        out = self._check(self._gds_config(CLOCK_PORT="clock"))
+        self.assertIn("clock", out)
+        self.assertIn("WARN", out)
+        self.assertIn("verified", out)
+
+    def test_declared_modules_ignores_commented_out_modules(self):
+        path = os.path.join(self.test_dir, "commented.v")
+        with open(path, "w") as f:
+            f.write("// module ghost;\n/* module phantom; */\nmodule real_one; endmodule\n")
+
+        self.assertEqual(entrypoint.declared_modules([path]), {"real_one"})
+
     def test_check_is_reachable_under_both_names(self):
         parser_args = entrypoint.build_parser().parse_args(["gds"])
         self.assertIs(parser_args.func, entrypoint.cmd_check)
