@@ -182,13 +182,25 @@ jobs:
       # so what is checkable here is the interface: that it refuses clearly
       # rather than running something meaningless. ChipForAll exercises the
       # real thing, where a LibreLane run and the PDK both exist.
+      # Both of these assert the message, not just a non-zero exit. They used
+      # to assert only the exit code, and the second one was silently testing
+      # the same path as the first: its `mkdir -p build/runs/...` failed with
+      # "Permission denied", because build/ is created inside the container as
+      # root by the earlier steps, so the stub netlist never existed and
+      # gatesim refused for having no netlist rather than no cell models.
+      # Hence runs/ rather than build/runs/ -- gatesim searches both, and this
+      # one the runner can actually create.
       - name: gatesim refuses when there is no netlist
         run: |
-          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gatesim
+          if out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gatesim 2>&1); then
+            echo "expected gatesim to refuse, but it succeeded"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -qF "No netlist found" || { echo "refused for the wrong reason"; exit 1; }
 
       - name: gatesim refuses when the cell models are absent
         run: |
-          mkdir -p build/runs/r/final/nl && touch build/runs/r/final/nl/counter.nl.v
+          mkdir -p runs/r/final/nl && touch runs/r/final/nl/counter.nl.v
           mkdir -p gate && printf 'module tb_gl; endmodule\n' > gate/tb_gl.v
           cat > config.yaml <<'EOF'
           DESIGN_NAME: counter
@@ -199,8 +211,14 @@ jobs:
           "//GATE_TESTS":
             - dir::gate/*.v
           EOF
-          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gatesim
-          rm -rf gate build/runs
+          if out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gatesim 2>&1); then
+            echo "expected gatesim to refuse, but it succeeded"; exit 1
+          fi
+          echo "$out"
+          # The point of this step: it must get past the netlist check first.
+          echo "$out" | grep -qF "Cell models not found" || { echo "refused for the wrong reason"; exit 1; }
+          ! echo "$out" | grep -qF "No netlist found"
+          rm -rf gate runs
 
       # cocotb dlopens libpython at runtime. When it is absent the simulator
       # runs nothing and still exits 0, so assert it resolves here where the
