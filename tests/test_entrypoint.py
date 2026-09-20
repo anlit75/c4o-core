@@ -438,5 +438,143 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    # --- cocotb: vvp exits 0 even when every test failed ---
+
+    def _results(self, xml):
+        path = os.path.join(self.test_dir, "results.xml")
+        with open(path, "w") as f:
+            f.write(xml)
+        return path
+
+    def test_cocotb_results_pass(self):
+        path = self._results(
+            '<testsuites><testsuite><testcase name="ok"/></testsuite></testsuites>'
+        )
+        entrypoint.check_cocotb_results(path)  # must not exit
+
+    def test_cocotb_results_failure_exits_nonzero(self):
+        # This is the whole reason the function exists: the simulator reports
+        # success regardless, so the results file is the only verdict.
+        path = self._results(
+            '<testsuites><testsuite>'
+            '<testcase name="ok"/>'
+            '<testcase name="broken"><failure message="nope"/></testcase>'
+            '</testsuite></testsuites>'
+        )
+        with self.assertRaises(SystemExit) as cm:
+            entrypoint.check_cocotb_results(path)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_cocotb_results_error_element_also_fails(self):
+        path = self._results(
+            '<testsuites><testsuite>'
+            '<testcase name="blew_up"><error message="boom"/></testcase>'
+            '</testsuite></testsuites>'
+        )
+        with self.assertRaises(SystemExit) as cm:
+            entrypoint.check_cocotb_results(path)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_cocotb_missing_results_is_a_failure(self):
+        # A run that died before writing results must not read as success.
+        with self.assertRaises(SystemExit) as cm:
+            entrypoint.check_cocotb_results(os.path.join(self.test_dir, "absent.xml"))
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_cocotb_malformed_results_is_a_failure(self):
+        path = self._results("<testsuites><not closed")
+        with self.assertRaises(SystemExit) as cm:
+            entrypoint.check_cocotb_results(path)
+        self.assertEqual(cm.exception.code, 1)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_errors_without_tests(self, mock_ensure, mock_load, mock_run):
+        config = {"VERILOG_FILES": ["src/**/*.v"], "DESIGN_NAME": "top"}
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_cocotb(args, config)
+            self.assertEqual(cm.exception.code, 1)
+            mock_run.assert_not_called()
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.cocotb_config', return_value="/no/such/libpython.so")
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_errors_when_libpython_is_missing(
+        self, mock_ensure, mock_load, mock_run, mock_cfg
+    ):
+        # Without LIBPYTHON_LOC the simulator prints an opaque GPI error and
+        # then exits 0 having run nothing. Say what is wrong instead.
+        os.makedirs(os.path.join(self.test_dir, "pytests"))
+        with open(os.path.join(self.test_dir, "pytests/test_top.py"), "w") as f:
+            f.write("")
+        config = {
+            "VERILOG_FILES": ["src/**/*.v"],
+            "//COCOTB_TESTS": ["dir::pytests/*.py"],
+            "DESIGN_NAME": "top",
+        }
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_cocotb(args, config)
+            self.assertEqual(cm.exception.code, 1)
+            # It must stop before handing anything to the simulator.
+            self.assertEqual(
+                [c for c in mock_run.call_args_list if c[0][0][0] == "vvp"], []
+            )
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.check_cocotb_results')
+    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_hands_the_module_and_toplevel_to_the_simulator(
+        self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check
+    ):
+        os.makedirs(os.path.join(self.test_dir, "pytests"))
+        with open(os.path.join(self.test_dir, "pytests/test_top.py"), "w") as f:
+            f.write("")
+        config = {
+            "VERILOG_FILES": ["src/**/*.v"],
+            "//COCOTB_TESTS": ["dir::pytests/*.py"],
+            "DESIGN_NAME": "top",
+        }
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+
+            entrypoint.cmd_cocotb(args, config)
+
+            compile_cmd = mock_run.call_args_list[0][0][0]
+            self.assertEqual(compile_cmd[0], "iverilog")
+            # Without a Verilog testbench the DUT has to be named as the root.
+            self.assertEqual(compile_cmd[compile_cmd.index("-s") + 1], "top")
+            self.assertTrue(any("src/top.v" in arg for arg in compile_cmd))
+
+            env = mock_run.call_args_list[1][1]["env"]
+            self.assertEqual(env["MODULE"], "test_top")
+            self.assertIn("LIBPYTHON_LOC", env)
+            self.assertEqual(env["TOPLEVEL"], "top")
+            self.assertIn("pytests", env["PYTHONPATH"])
+            # The verdict is always read back, never assumed.
+            mock_check.assert_called_once()
+        finally:
+            os.chdir(cwd)
+
 if __name__ == '__main__':
     unittest.main()

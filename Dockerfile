@@ -5,6 +5,12 @@ FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffb
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Update package lists and install dependencies
+# libpython3.12t64 carries libpython3.12.so.1.0, which the python3 package does
+# not pull in: nothing in a plain Python install embeds the interpreter. cocotb
+# does -- its GPI dlopens libpython at runtime -- so without this, cocotb-config
+# --libpython finds nothing and the simulator runs no tests while exiting 0.
+# Left unpinned so apt matches whatever python3 it resolves; the 't64' is the
+# 64-bit time_t transition, not a typo.
 # The EDA tools are pinned to the versions 24.04 ships. 22.04 carried Yosys 0.9
 # (2019), Verilator 4.038 and Icarus 11.0; these are 0.33, 5.020 and 12.0.
 # A pin that stops resolving fails the build loudly, which is the point -- an
@@ -12,6 +18,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-venv \
+    libpython3.12t64 \
     make \
     git \
     yosys=0.33-5build2 \

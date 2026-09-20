@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from xml.etree import ElementTree
 
 import yaml
 
@@ -23,13 +24,13 @@ def log_error(msg):
 def log_warn(msg):
     print(f"{YELLOW}[WARN] {msg}{RESET}")
 
-def run_command(cmd, shell=False):
+def run_command(cmd, shell=False, env=None):
     """Runs a command and exits if it fails."""
     # Convert list to string for logging if it's a list
     cmd_str = " ".join(cmd) if isinstance(cmd, list) else cmd
     log_info(f"Running: {cmd_str}")
     try:
-        subprocess.run(cmd, shell=shell, check=True)
+        subprocess.run(cmd, shell=shell, check=True, env=env)
     except subprocess.CalledProcessError as e:
         log_error(f"Command failed with exit code {e.returncode}")
         sys.exit(e.returncode)
@@ -200,6 +201,115 @@ def cmd_sim(args, config):
 
     run_sim_cmd = ["vvp", "build/sim.vvp"]
     run_command(run_sim_cmd)
+
+def cocotb_config(*args):
+    """Asks cocotb where its own files live rather than hardcoding paths."""
+    try:
+        return subprocess.run(
+            ["cocotb-config", *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+    except subprocess.CalledProcessError as e:
+        log_error(
+            f"cocotb-config {' '.join(args)} failed: {e.stderr.strip() or e}"
+        )
+        sys.exit(1)
+    except OSError as e:
+        log_error(f"Could not run cocotb-config: {e}")
+        sys.exit(1)
+
+def cmd_cocotb(args, config):
+    """
+    Runs cocotb tests: Python coroutines driving the RTL, rather than a Verilog
+    testbench. Same simulator underneath, so this is an alternative to `sim`,
+    not a replacement for it.
+    """
+    rtl_files = get_files(args, config, key="VERILOG_FILES")
+
+    test_files = get_files(args, config, key="COCOTB_TESTS")
+    if not test_files:
+        log_error(
+            "No cocotb tests: set COCOTB_TESTS (or \"//COCOTB_TESTS\") to the "
+            "Python test files in the config."
+        )
+        sys.exit(1)
+
+    toplevel = config_get(config, "DESIGN_NAME")
+    if not toplevel:
+        log_error("cocotb needs DESIGN_NAME to know which module to drive.")
+        sys.exit(1)
+
+    ensure_build_dir()
+    vvp_file = "build/cocotb.vvp"
+    results = os.path.join("build", "cocotb-results.xml")
+    if os.path.exists(results):
+        os.remove(results)  # never report a previous run's verdict
+
+    # -s names the DUT as the root: there is no Verilog testbench to elaborate.
+    run_command(["iverilog", "-g2012", "-s", toplevel, "-o", vvp_file] +
+                [f"-I{inc}" for inc in get_include_dirs(config)] + rtl_files)
+
+    # cocotb finds tests by module name on PYTHONPATH, so hand it both.
+    modules = [os.path.splitext(os.path.basename(f))[0] for f in test_files]
+    search = [os.path.dirname(os.path.abspath(f)) for f in test_files]
+
+    # cocotb's GPI dlopens libpython at runtime and cannot find it by itself
+    # here: this image has libpython3.12.so.1.0 but not the unversioned symlink,
+    # which only the -dev package ships. Without LIBPYTHON_LOC the simulator
+    # prints "Unable to open lib libpython3.12.so" and then exits 0 having run
+    # nothing. cocotb's own Makefile sets this; so do we.
+    libpython = cocotb_config("--libpython")
+    if not os.path.exists(libpython):
+        log_error(
+            f"cocotb points at {libpython} for libpython, and it is not there. "
+            "Install the matching libpython package in the image."
+        )
+        sys.exit(1)
+
+    lib_dir = cocotb_config("--lib-dir")
+
+    env = dict(os.environ)
+    env.update({
+        "MODULE": ",".join(modules),
+        "TOPLEVEL": toplevel,
+        "TOPLEVEL_LANG": "verilog",
+        "COCOTB_RESULTS_FILE": results,
+        "LIBPYTHON_LOC": libpython,
+        "PYTHONPATH": os.pathsep.join(dict.fromkeys(search + [os.getcwd()])),
+        "LD_LIBRARY_PATH": os.pathsep.join(
+            [lib_dir] + ([os.environ["LD_LIBRARY_PATH"]] if "LD_LIBRARY_PATH" in os.environ else [])
+        ),
+    })
+
+    run_command(
+        ["vvp", "-M", lib_dir,
+         "-m", cocotb_config("--lib-name", "vpi", "icarus"), vvp_file],
+        env=env,
+    )
+
+    # vvp exits 0 even when every test failed -- verified against cocotb 1.9.
+    # The verdict only exists in the results file, so that is what decides here.
+    check_cocotb_results(results)
+
+def check_cocotb_results(path):
+    """Exits non-zero if the run recorded a failure. vvp will not."""
+    if not os.path.exists(path):
+        log_error(f"cocotb wrote no results to {path}; treating that as a failure.")
+        sys.exit(1)
+    try:
+        cases = ElementTree.parse(path).getroot().iter("testcase")
+    except ElementTree.ParseError as e:
+        log_error(f"Could not read {path}: {e}")
+        sys.exit(1)
+
+    failed = [
+        case.get("name")
+        for case in cases
+        if case.find("failure") is not None or case.find("error") is not None
+    ]
+    if failed:
+        log_error(f"cocotb tests failed: {', '.join(failed)}")
+        sys.exit(1)
+    log_info("All cocotb tests passed.")
 
 def cmd_synth(args, config):
     # Synth only checks RTL
@@ -376,6 +486,13 @@ def build_parser():
     sim_parser = subparsers.add_parser("sim", help="Run Icarus Verilog simulation")
     sim_parser.add_argument("--files", nargs="*", help="Verilog files to simulate")
     sim_parser.set_defaults(func=cmd_sim)
+
+    # Cocotb command
+    cocotb_parser = subparsers.add_parser(
+        "cocotb", help="Run cocotb (Python) tests against the RTL"
+    )
+    cocotb_parser.add_argument("--files", nargs="*", help="Verilog RTL files")
+    cocotb_parser.set_defaults(func=cmd_cocotb)
 
     # Synth command
     synth_parser = subparsers.add_parser("synth", help="Run Yosys synthesis")
