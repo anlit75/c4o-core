@@ -576,5 +576,131 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    # --- gatesim: the netlist, not the RTL ---
+
+    def _gl_workspace(self):
+        """A workspace with a netlist and the two cell-model files."""
+        nl = os.path.join(self.test_dir, "build/runs/r/final/nl")
+        models = os.path.join(self.test_dir, "pdks/sky130A/libs.ref/sky130_fd_sc_hd/verilog")
+        gate = os.path.join(self.test_dir, "gate")
+        for d in (nl, models, gate):
+            os.makedirs(d, exist_ok=True)
+        for f in ("primitives.v", "sky130_fd_sc_hd.v"):
+            open(os.path.join(models, f), "w").close()
+        open(os.path.join(nl, "top.nl.v"), "w").close()
+        open(os.path.join(gate, "tb_top_gl.v"), "w").close()
+        return {
+            "PDK": "sky130A",
+            "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+            "//GATE_TESTS": ["dir::gate/*.v"],
+            "VERILOG_FILES": ["src/**/*.v"],
+            "DESIGN_NAME": "top",
+        }
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_gatesim_builds_the_netlist_against_the_cell_models(
+        self, mock_ensure, mock_load, mock_run
+    ):
+        config = self._gl_workspace()
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.netlist = None
+
+            entrypoint.cmd_gatesim(args, config)
+
+            compile_cmd = mock_run.call_args_list[0][0][0]
+            self.assertEqual(compile_cmd[0], "iverilog")
+            # Both defines are required: verified against sky130_fd_sc_hd, where
+            # neither alone compiles without warnings.
+            self.assertIn("-DFUNCTIONAL", compile_cmd)
+            self.assertIn("-DUNIT_DELAY=#1", compile_cmd)
+            self.assertTrue(any("primitives.v" in a for a in compile_cmd))
+            self.assertTrue(any("sky130_fd_sc_hd.v" in a for a in compile_cmd))
+            self.assertTrue(any("top.nl.v" in a for a in compile_cmd))
+            self.assertTrue(any("tb_top_gl.v" in a for a in compile_cmd))
+            # The RTL is deliberately absent: this simulates the gates.
+            self.assertFalse(any("src/" in a for a in compile_cmd))
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_gatesim_errors_without_a_gate_testbench(self, mock_ensure, mock_load, mock_run):
+        config = self._gl_workspace()
+        del config["//GATE_TESTS"]
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.netlist = None
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_gatesim(args, config)
+            self.assertEqual(cm.exception.code, 1)
+            mock_run.assert_not_called()
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_gatesim_errors_when_the_cell_models_are_absent(
+        self, mock_ensure, mock_load, mock_run
+    ):
+        config = self._gl_workspace()
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.remove("pdks/sky130A/libs.ref/sky130_fd_sc_hd/verilog/primitives.v")
+            args = MagicMock()
+            args.netlist = None
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_gatesim(args, config)
+            self.assertEqual(cm.exception.code, 1)
+            mock_run.assert_not_called()
+        finally:
+            os.chdir(cwd)
+
+    def test_cell_models_come_from_pdk_and_library(self):
+        # Derived rather than configured, so there is no third key to disagree.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._gl_workspace()
+            models = entrypoint.cell_models(
+                {"PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd"}
+            )
+            self.assertTrue(models[0].endswith("sky130A/libs.ref/sky130_fd_sc_hd/verilog/primitives.v"))
+            self.assertTrue(models[1].endswith("sky130_fd_sc_hd/verilog/sky130_fd_sc_hd.v"))
+        finally:
+            os.chdir(cwd)
+
+    def test_find_netlist_prefers_an_explicit_path_and_errors_when_absent(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self.assertEqual(entrypoint.find_netlist("named.v"), "named.v")
+            with self.assertRaises(SystemExit) as cm:
+                entrypoint.find_netlist(None)
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            os.chdir(cwd)
+
+    def test_root_args_is_shared_by_sim_and_gatesim(self):
+        # Both commands hit the same silent-truncation trap, so both use the
+        # same rule rather than one of them growing its own copy.
+        self.assertEqual(entrypoint.root_args({}, ["only.v"], "SIM_TOP"), [])
+        self.assertEqual(
+            entrypoint.root_args({"//GATE_TOP": "tb"}, ["a.v", "b.v"], "GATE_TOP"),
+            ["-s", "tb"],
+        )
+        with self.assertRaises(SystemExit) as cm:
+            entrypoint.root_args({}, ["a.v", "b.v"], "GATE_TOP")
+        self.assertEqual(cm.exception.code, 1)
+
 if __name__ == '__main__':
     unittest.main()

@@ -28,6 +28,7 @@ The engine supports the following commands via its Python entrypoint:
 | `lint` | Runs Verilator linting checks on `VERILOG_FILES`. |
 | `sim` | Compiles and runs simulation using Icarus Verilog on `VERILOG_FILES` + `TEST_FILES`. |
 | `cocotb` | Runs cocotb tests — Python coroutines driving the RTL — on `VERILOG_FILES` + `COCOTB_TESTS`. |
+| `gatesim` | Simulates the **synthesised netlist** against the PDK cell models, on `GATE_TESTS`. |
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
 | `check` | Validates the configuration for the physical design flow. Produces no layout — LibreLane does that. Available as `gds` too, the name it had before. |
@@ -84,6 +85,8 @@ FP_SIZING: absolute
 *   **`//TEST_FILES`**: List of simulation testbench files (non-synthesizable). Plain `TEST_FILES` is also read, but only the prefixed spelling is silent under LibreLane's strict validation.
 *   **`//SIM_TOP`**: Testbench module to elaborate as the simulation root. Required once `//TEST_FILES` resolves to more than one file — see below.
 *   **`//COCOTB_TESTS`**: Python test files for the `cocotb` command. Supports globs.
+*   **`//GATE_TESTS`**: Gate-level testbench files for `gatesim`. Supports globs.
+*   **`//GATE_TOP`**: Gate-level testbench module to elaborate. Required once `//GATE_TESTS` resolves to more than one file.
 *   **`VERILOG_INCLUDE_DIRS`**: List of directories containing Verilog include files (`.vh`, `.h`).
 *   **`DESIGN_NAME`**: Top-level module name for synthesis.
 
@@ -152,6 +155,43 @@ Two things worth knowing before you write one:
     1-second precision and every cocotb test dies with
     `Unable to accurately represent 10(ns) with the simulator precision of 1e0`.
     Adding `` `timescale 1ns/1ps `` to the top of the file fixes it.
+
+## 🔬 Simulating the gates (gatesim)
+
+`sim` shows the RTL behaves. `gatesim` shows the gates synthesis actually
+produced still behave — a different claim, with latch inference, reset handling
+and every ambiguous `always` block sitting between the two.
+
+```yaml
+PDK: sky130A
+STD_CELL_LIBRARY: sky130_fd_sc_hd
+"//GATE_TESTS":
+  - dir::test/*_gl.v
+```
+
+It finds the newest netlist under `runs/` or `build/runs/`, and derives the cell
+models from `PDK` and `STD_CELL_LIBRARY` — no third key to disagree with those
+two. Set `PDK_ROOT` if the PDK lives outside `./pdks`.
+
+**The gate-level testbench has to be a separate file from the RTL one.**
+Synthesis resolves parameters, so a testbench that shrinks the design by
+overriding one — the usual trick for keeping simulations short — has nothing
+left to override. Drive the real ports at their real width.
+
+### It can be slow, and how slow is your design's business
+
+Gate-level cost scales with simulated cycles times cell count, and both can be
+large. Measured on ChipForAll's blinky: **281 seconds**, because its clock
+divider is 26 bits deep and one output toggle takes 2\*\*25 cycles. A deep
+divider is the most common beginner design there is, so this is not an unusual
+case.
+
+Two consequences worth planning for:
+
+*   Put a `timeout-minutes` on the CI job. A runaway simulation should fail
+    loudly rather than quietly spend an hour.
+*   Bound the run in the testbench itself, so it reports what it got to rather
+    than hanging with no output.
 
 ## 📊 Reading a finished run
 

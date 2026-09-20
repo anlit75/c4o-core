@@ -154,6 +154,28 @@ def cmd_lint(args, config):
     cmd += files
     run_command(cmd)
 
+def root_args(config, test_files, key):
+    """
+    The '-s <top>' Icarus needs, or nothing when there is only one candidate.
+
+    Icarus elaborates every module nobody instantiates as its own root, and the
+    first $finish ends the whole simulation -- so a second testbench runs
+    partway and is cut off, with nothing in the exit code to show for it. -s
+    names the one root, which is why it is required as soon as there is more
+    than one file it could be hiding in.
+    """
+    top = config_get(config, key)
+    if top:
+        return ["-s", top]
+    if len(test_files) > 1:
+        log_error(
+            "More than one testbench file, so the top module is ambiguous: "
+            f"{', '.join(test_files)}. Set {key} (or \"//{key}\") to the "
+            "testbench module to run."
+        )
+        sys.exit(1)
+    return []
+
 def cmd_sim(args, config):
     # Sim needs RTL + TEST
 
@@ -176,21 +198,7 @@ def cmd_sim(args, config):
     # iverilog -o build/sim.vvp <files> && vvp build/sim.vvp
     compile_cmd = ["iverilog", "-o", "build/sim.vvp"]
 
-    # Icarus elaborates every module nobody instantiates as its own root, and
-    # the first $finish ends the whole simulation -- so a second testbench runs
-    # partway and is cut off, with nothing in the exit code to show for it.
-    # -s names the one root to elaborate, which is why it is required as soon as
-    # there is more than one file it could be hiding in.
-    sim_top = config_get(config, "SIM_TOP")
-    if sim_top:
-        compile_cmd += ["-s", sim_top]
-    elif len(test_files) > 1:
-        log_error(
-            "More than one testbench file, so the top module is ambiguous: "
-            f"{', '.join(test_files)}. Set SIM_TOP (or \"//SIM_TOP\") to the "
-            "testbench module to run."
-        )
-        sys.exit(1)
+    compile_cmd += root_args(config, test_files, "SIM_TOP")
 
     # Add include directories
     for inc in get_include_dirs(config):
@@ -201,6 +209,92 @@ def cmd_sim(args, config):
 
     run_sim_cmd = ["vvp", "build/sim.vvp"]
     run_command(run_sim_cmd)
+
+# LibreLane writes the synthesised netlist under final/nl/. ChipForAll then
+# moves the whole run into build/, so look in both places.
+NETLIST_GLOBS = ["runs/*/final/nl/*.v", "build/runs/*/final/nl/*.v"]
+
+def find_netlist(explicit):
+    """The newest gate-level netlist a run left behind, unless named."""
+    if explicit:
+        return explicit
+    found = [path for pattern in NETLIST_GLOBS for path in glob.glob(pattern)]
+    if not found:
+        log_error(
+            "No netlist found under runs/ or build/runs/. Run the physical "
+            "design flow first, or name the file: gatesim <path>."
+        )
+        sys.exit(1)
+    return max(found, key=os.path.getmtime)
+
+def cell_models(config):
+    """
+    The PDK's own Verilog models for the cells the netlist instantiates.
+
+    Derived from PDK and STD_CELL_LIBRARY rather than a key of its own: the
+    config already says which PDK and which library, and a third key that had
+    to agree with both would only be somewhere else for them to disagree.
+    """
+    pdk = config_get(config, "PDK")
+    library = config_get(config, "STD_CELL_LIBRARY")
+    if not pdk or not library:
+        log_error("gatesim needs PDK and STD_CELL_LIBRARY to find the cell models.")
+        sys.exit(1)
+
+    pdk_root = os.environ.get("PDK_ROOT") or os.path.join(os.getcwd(), "pdks")
+    verilog = os.path.join(pdk_root, pdk, "libs.ref", library, "verilog")
+    models = [
+        os.path.join(verilog, "primitives.v"),
+        os.path.join(verilog, f"{library}.v"),
+    ]
+
+    missing = [m for m in models if not os.path.exists(m)]
+    if missing:
+        log_error(
+            f"Cell models not found: {', '.join(missing)}. Install the PDK with "
+            "the 'pdk' command, or set PDK_ROOT if it lives elsewhere."
+        )
+        sys.exit(1)
+    return models
+
+def cmd_gatesim(args, config):
+    """
+    Simulates the synthesised netlist against the PDK's own cell models.
+
+    `sim` shows the RTL behaves. This shows the gates synthesis actually
+    produced still behave, which is a different claim -- latch inference, reset
+    handling and how a tool reads an ambiguous always block all sit between the
+    two, and none of them are visible from the RTL.
+
+    The testbench is yours, like TEST_FILES and COCOTB_TESTS. It cannot be the
+    RTL one: synthesis resolves parameters, so a testbench that shrinks the
+    design by overriding one has nothing left to override.
+    """
+    netlist = find_netlist(getattr(args, "netlist", None))
+    log_info(f"Netlist: {netlist}")
+
+    tests = get_files(args, config, key="GATE_TESTS")
+    if not tests:
+        log_error(
+            "No gate-level testbench: set GATE_TESTS (or \"//GATE_TESTS\") in "
+            "the config."
+        )
+        sys.exit(1)
+
+    ensure_build_dir()
+    vvp_file = "build/gatesim.vvp"
+
+    # FUNCTIONAL drops the timing checks Icarus cannot run anyway; without
+    # UNIT_DELAY the models leave every gate at zero delay and warn once per
+    # cell. Both verified against sky130_fd_sc_hd: this pair compiles silently,
+    # neither alone does.
+    compile_cmd = ["iverilog", "-g2012", "-DFUNCTIONAL", "-DUNIT_DELAY=#1",
+                   "-o", vvp_file]
+    compile_cmd += root_args(config, tests, "GATE_TOP")
+    compile_cmd += cell_models(config) + [netlist] + tests
+    run_command(compile_cmd)
+
+    run_command(["vvp", vvp_file])
 
 def cocotb_config(*args):
     """Asks cocotb where its own files live rather than hardcoding paths."""
@@ -493,6 +587,17 @@ def build_parser():
     )
     cocotb_parser.add_argument("--files", nargs="*", help="Verilog RTL files")
     cocotb_parser.set_defaults(func=cmd_cocotb)
+
+    # Gate-level sim command
+    gatesim_parser = subparsers.add_parser(
+        "gatesim", help="Simulate the synthesised netlist against the PDK cell models"
+    )
+    gatesim_parser.add_argument(
+        "netlist",
+        nargs="?",
+        help="Path to the netlist (default: the newest under runs/ or build/runs/)",
+    )
+    gatesim_parser.set_defaults(func=cmd_gatesim)
 
     # Synth command
     synth_parser = subparsers.add_parser("synth", help="Run Yosys synthesis")
