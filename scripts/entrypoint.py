@@ -208,8 +208,13 @@ def cocotb_config(*args):
         return subprocess.run(
             ["cocotb-config", *args], check=True, capture_output=True, text=True
         ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as e:
-        log_error(f"cocotb-config {' '.join(args)} failed: {e}")
+    except subprocess.CalledProcessError as e:
+        log_error(
+            f"cocotb-config {' '.join(args)} failed: {e.stderr.strip() or e}"
+        )
+        sys.exit(1)
+    except OSError as e:
+        log_error(f"Could not run cocotb-config: {e}")
         sys.exit(1)
 
 def cmd_cocotb(args, config):

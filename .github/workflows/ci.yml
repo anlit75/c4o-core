@@ -138,6 +138,15 @@ jobs:
       # testbench. The negative case matters more than the positive one: vvp
       # exits 0 even when every cocotb test failed, so without reading the
       # results file this would be green no matter what the tests did.
+      # cocotb dlopens libpython at runtime. When it is absent the simulator
+      # runs nothing and still exits 0, so assert it resolves here where the
+      # error names the cause.
+      - name: The image can find the libpython cocotb dlopens
+        run: |
+          path=$(docker run --rm --entrypoint cocotb-config c4o-core:test --libpython)
+          echo "libpython: $path"
+          docker run --rm --entrypoint test c4o-core:test -f "$path"
+
       - name: Run cocotb tests (Python testbench)
         run: |
           cat > config.yaml <<'EOF'
