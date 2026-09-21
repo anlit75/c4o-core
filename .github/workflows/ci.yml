@@ -82,6 +82,19 @@ jobs:
           echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 0", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
           ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
 
+      # The sizing swap, both halves. Relative sizing is what a newcomer wants
+      # -- the die resizes itself around whatever design they put in -- and
+      # `check` used to refuse it for a DIE_AREA LibreLane would never read.
+      - name: Relative sizing needs FP_CORE_UTIL, not DIE_AREA
+        run: |
+          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "FP_CORE_UTIL": 40, "FP_SIZING": "relative", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
+
+          echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "FP_SIZING": "relative", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
+          out=$(! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check)
+          echo "$out"
+          echo "$out" | grep -qF "FP_CORE_UTIL" || { echo "the refusal did not name the key that is missing"; exit 1; }
+
       # A warning, not an error -- proving a name is a port needs a real
       # parser. So assert both halves: it says something, and it still passes.
       - name: A CLOCK_PORT absent from the RTL warns but still passes
