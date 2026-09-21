@@ -552,8 +552,20 @@ def cmd_check(args, config):
     would have built. So only the two things that can be decided without
     parsing Verilog properly are errors; the port check, which cannot, warns.
     """
+    # Which floorplan variable is required depends on how the die is sized.
+    # 'absolute' reads DIE_AREA; 'relative' computes the die from FP_CORE_UTIL
+    # and ignores DIE_AREA outright. Demanding both meant a relative config --
+    # the one a newcomer wants, since it resizes itself around their design --
+    # was refused here for a key LibreLane would never have read.
+    #
+    # Anything that is not 'relative' asks for DIE_AREA, which is what this did
+    # before. A value LibreLane does not accept is its error to report; a
+    # second opinion here would only turn a future third sizing mode into a
+    # false alarm.
+    sized_by = "FP_CORE_UTIL" if config_get(config, "FP_SIZING") == "relative" else "DIE_AREA"
+
     required_keys = [
-        "PDK", "STD_CELL_LIBRARY", "DIE_AREA", "FP_CORE_UTIL",
+        "PDK", "STD_CELL_LIBRARY", sized_by,
         "FP_SIZING", "CLOCK_PORT", "CLOCK_PERIOD"
     ]
 
@@ -569,10 +581,14 @@ def cmd_check(args, config):
         log_error("No RTL files found. GDS generation requires valid RTL.")
         sys.exit(1)
 
-    error = die_area_error(config_get(config, "DIE_AREA"))
-    if error:
-        log_error(error)
-        sys.exit(1)
+    # Checked whenever it is there, not only when it is the sizing variable:
+    # LibreLane validates DIE_AREA's shape either way, so a malformed one is an
+    # error it would raise too, three minutes later.
+    if config_get(config, "DIE_AREA") is not None:
+        error = die_area_error(config_get(config, "DIE_AREA"))
+        if error:
+            log_error(error)
+            sys.exit(1)
 
     design_name = config_get(config, "DESIGN_NAME")
     modules = declared_modules(files)

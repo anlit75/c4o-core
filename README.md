@@ -247,6 +247,11 @@ Three checks, and the third is deliberately weaker than the other two:
 | `DIE_AREA` is four numbers, second corner larger | **error** |
 | `CLOCK_PORT` appears somewhere in `VERILOG_FILES` | **warning** |
 
+Which floorplan key is *required* follows `FP_SIZING`: `absolute` needs
+`DIE_AREA`, `relative` needs `FP_CORE_UTIL` and never reads `DIE_AREA`.
+Demanding both refused a config LibreLane would have run. `DIE_AREA` is still
+checked whenever it is present, since LibreLane validates its shape either way.
+
 **A false alarm here is worse than no check**, because it blocks a design that
 would have built. So only the two things decidable without parsing Verilog
 properly are errors. Proving a name really *is* a port means reading a port

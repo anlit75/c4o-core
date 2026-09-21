@@ -419,7 +419,11 @@ class TestEntrypoint(unittest.TestCase):
                 entrypoint.cmd_check(args, config)
         finally:
             os.chdir(cwd)
-        return out.getvalue()
+            # Kept on the instance so a test that expects a refusal can still
+            # read the message. "A key is missing" that does not say which one
+            # is barely better than silence, so the wording is worth asserting.
+            self.check_output = out.getvalue()
+        return self.check_output
 
     def test_check_accepts_a_design_that_exists(self):
         # src/top.v declares 'module top', which is what DESIGN_NAME names.
@@ -436,6 +440,49 @@ class TestEntrypoint(unittest.TestCase):
     def test_check_rejects_a_die_area_with_no_area(self):
         with self.assertRaises(SystemExit) as cm:
             self._check(self._gds_config(DIE_AREA=[0, 0, 100, 0]))
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_check_accepts_relative_sizing_without_a_die_area(self):
+        # FP_SIZING: relative computes the die from FP_CORE_UTIL and never
+        # reads DIE_AREA. Demanding it anyway refused a config LibreLane would
+        # have run -- and relative is the sizing a newcomer wants, since it
+        # resizes itself around whatever design they put in.
+        config = self._gds_config(FP_SIZING="relative")
+        del config["DIE_AREA"]
+
+        self.assertIn("verified", self._check(config))
+
+    def test_check_rejects_relative_sizing_without_a_core_util(self):
+        # The other half of the swap: under relative sizing FP_CORE_UTIL is the
+        # variable that decides the die, so its absence is the real error.
+        config = self._gds_config(FP_SIZING="relative")
+        del config["FP_CORE_UTIL"]
+
+        with self.assertRaises(SystemExit) as cm:
+            self._check(config)
+
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("FP_CORE_UTIL", self.check_output)
+
+    def test_check_rejects_absolute_sizing_without_a_die_area(self):
+        # Unchanged behaviour, and the reason the swap is a swap rather than a
+        # removal: absolute sizing has nothing to floorplan without DIE_AREA.
+        config = self._gds_config()
+        del config["DIE_AREA"]
+
+        with self.assertRaises(SystemExit) as cm:
+            self._check(config)
+
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("DIE_AREA", self.check_output)
+
+    def test_check_rejects_a_malformed_die_area_even_under_relative_sizing(self):
+        # Optional is not unread: LibreLane validates DIE_AREA's shape whatever
+        # the sizing mode, so a malformed one is still an error -- three
+        # minutes later, if this does not say it now.
+        with self.assertRaises(SystemExit) as cm:
+            self._check(self._gds_config(FP_SIZING="relative", DIE_AREA=[0, 0, 100, 0]))
+
         self.assertEqual(cm.exception.code, 1)
 
     def test_check_warns_but_passes_on_a_clock_port_absent_from_the_rtl(self):
