@@ -1,0 +1,74 @@
+# Turns a merge into a release, so that nobody has to push a tag by hand.
+#
+# Merging anything to main updates (or opens) a Release PR holding the next
+# version and the CHANGELOG entry for it. Merging that PR is the release: the
+# tag, the GitHub release and -- through publish.yml -- the image all follow
+# from it. The version comes from the commit titles, which this repository
+# already writes as Conventional Commits.
+#
+# The PR in the middle is not ceremony. A version and a changelog computed from
+# commit messages are worth looking at before they are permanent, and a wrong
+# one is a pull request to close rather than a release to yank.
+name: release
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Two merges in quick succession would otherwise have two runs writing the same
+# Release PR. Queue rather than cancel: the later run has to see the earlier
+# commit, not replace it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # RELEASE_PLEASE_TOKEN is a PAT rather than the automatic GITHUB_TOKEN,
+      # and it is not an optional nicety: a tag pushed with GITHUB_TOKEN does
+      # not trigger other workflows, so publish.yml would never run and the
+      # image would never be built for the release. Checked first so the
+      # failure names the missing secret instead of arriving as a 401 from
+      # inside the action.
+      - name: The release token has to be configured
+        env:
+          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "RELEASE_PLEASE_TOKEN is not set on this repository."
+            echo "It needs a fine-grained PAT scoped to this repo with"
+            echo "Contents: read and write, and Pull requests: read and write."
+            exit 1
+          fi
+
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # publish.yml triggers on 'v*' and metadata-action reads the semver out
+      # of the tag name. A tag of any other shape -- which is what
+      # include-component-in-tag would produce -- means no image is built and
+      # nothing anywhere says so. Assert the shape while there is still a red
+      # run to point at.
+      - name: The tag is the shape publish.yml triggers on
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: |
+          tag='${{ steps.release.outputs.tag_name }}'
+          echo "released: $tag"
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "release-please tagged '$tag', but publish.yml only triggers on v*."
+              echo "Check include-component-in-tag in release-please-config.json."
+              exit 1
+              ;;
+          esac

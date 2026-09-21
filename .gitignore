@@ -5,5 +5,10 @@ pdks/
 *.json
 # ...but test fixtures are source, not a local config someone left behind.
 !tests/fixtures/*.json
+# ...and so is release-please's own configuration. Without these two the action
+# falls back to its defaults and computes a different version from a manifest
+# that is not there.
+!release-please-config.json
+!.release-please-manifest.json
 __pycache__/
 *.pyc
