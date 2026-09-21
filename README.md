@@ -19,6 +19,15 @@ Mount your current directory (`$(PWD)`) to `/workspace` (or any workspace path) 
 docker run --rm -v $(PWD):/workspace -w /workspace ghcr.io/anlit75/c4o-core:latest <command>
 ```
 
+Every release publishes four tags:
+
+| tag | for |
+|---|---|
+| `2.8.0` | a build that will never change under you |
+| `2.8` | **what a repository should pin.** Patches arrive without editing anything; a new behaviour never does |
+| `2` | the current major |
+| `latest` | one-off runs like the line above. Nothing should pin it |
+
 ## 🛠 Command Reference
 
 The engine supports the following commands via its Python entrypoint:

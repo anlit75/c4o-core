@@ -28,6 +28,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Four tags, and the two new ones are the point.
+      #
+      # ChipForAll and c4o-pyuvm each pin this image in three places, so every
+      # release used to mean two pull requests editing six lines by hand, for a
+      # patch that changed nothing about the interface. Publishing X.Y as well
+      # lets them pin the minor: a fix ships to both of them with no pull
+      # request at all, and only a minor or major bump is anyone's work.
+      #
+      # 'latest' stays for one-off `docker run` -- nothing pins it.
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v6
@@ -35,7 +44,34 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
             type=raw,value=latest
+
+      # Asserted rather than assumed: the tag list above is a declaration to an
+      # action, and the thing downstream repositories depend on is what it
+      # actually produced. A pattern that silently stopped expanding would
+      # leave their pins resolving to an image that never gets rebuilt, which
+      # nothing else here would notice.
+      - name: The tag list carries the pins downstream repositories use
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # metadata-action drops {{major}} and {{major}}.{{minor}} for
+          # pre-releases on purpose, so only a plain vX.Y.Z is asserted here.
+          case "$version" in
+            *[!0-9.]*) echo "$GITHUB_REF_NAME is not a plain vX.Y.Z tag; nothing to assert."; exit 0 ;;
+            *.*.*) ;;
+            *) echo "$GITHUB_REF_NAME is not a plain vX.Y.Z tag; nothing to assert."; exit 0 ;;
+          esac
+
+          # metadata-action lowercases the image name; GITHUB_REPOSITORY does not.
+          image=$(echo "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')
+          tags='${{ steps.meta.outputs.tags }}'
+          echo "$tags"
+          for want in "$version" "${version%.*}" "${version%%.*}" latest; do
+            echo "$tags" | grep -qxF "${image}:${want}" \
+              || { echo "missing tag: ${image}:${want}"; exit 1; }
+          done
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
