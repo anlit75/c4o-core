@@ -328,6 +328,67 @@ jobs:
           ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test cocotb
           rm tests/smoke/test_failing_cocotb.py
 
+      # `cocotb --netlist` drives what synthesis produced, with the tests
+      # unchanged. tests/smoke/test_counter_cocotb.py only ever touches clk,
+      # rst and count, which is exactly why it survives the trip -- and is the
+      # claim gatesim cannot make, since its testbench is a separate Verilog
+      # file written for the netlist.
+      #
+      # There is no PDK in this job, so the cell models here are yosys's own
+      # simulation library and the netlist is one yosys has just produced.
+      # That is what a netlist is: cell instances plus a library defining them.
+      # It proves the path, not sky130; ChipForAll exercises the real PDK.
+      - name: cocotb --netlist runs the same tests against the gates
+        run: |
+          mkdir -p gl/tests/smoke gl/runs/counter_run/final/nl
+          mkdir -p gl/pdks/toypdk/libs.ref/toy_lib/verilog
+          cp tests/smoke/counter.v tests/smoke/test_counter_cocotb.py gl/tests/smoke/
+          cat > gl/config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::tests/smoke/counter.v
+          "//COCOTB_TESTS":
+            - dir::tests/smoke/test_counter_cocotb.py
+          PDK: toypdk
+          STD_CELL_LIBRARY: toy_lib
+          EOF
+          # The models carry the timescale, the way the sky130 ones do.
+          printf '`timescale 1ns/1ps\n' > gl/pdks/toypdk/libs.ref/toy_lib/verilog/primitives.v
+
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/gl "$@"; }
+
+          # -noexpr so the netlist holds cell instances rather than operators.
+          run --entrypoint yosys c4o-core:test -p "read_verilog tests/smoke/counter.v; synth -top counter; splitnets; write_verilog -noattr -noexpr runs/counter_run/final/nl/counter.nl.v"
+          run --entrypoint cp c4o-core:test /usr/share/yosys/simcells.v pdks/toypdk/libs.ref/toy_lib/verilog/toy_lib.v
+          grep -q 'DFF' gl/runs/counter_run/final/nl/counter.nl.v || { echo "yosys produced no flip-flop cells"; exit 1; }
+
+          out=$(run c4o-core:test cocotb --netlist)
+          echo "$out"
+          # It has to be the netlist that was compiled. Running the RTL instead
+          # would pass these tests too, and prove nothing.
+          echo "$out" | grep -qF "counter.nl.v" || { echo "the netlist was not compiled"; exit 1; }
+          # -e, or grep reads -DFUNCTIONAL as its own --devices option.
+          echo "$out" | grep -qF -e "-DFUNCTIONAL" || { echo "the cell-model defines are missing"; exit 1; }
+          echo "$out" | grep -q "tests/smoke/counter.v" && { echo "the RTL was compiled as well"; exit 1; }
+          test -s gl/build/cocotb-gl-results.xml
+
+          # The RTL run keeps its own verdict file, so both can be read after.
+          run c4o-core:test cocotb
+          test -s gl/build/cocotb-results.xml
+
+      - name: cocotb --netlist refuses rather than falling back to the RTL
+        run: |
+          # Deleted from inside the image: the run above wrote these as root,
+          # and the runner user cannot remove what root left in build/.
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/gl \
+            --entrypoint rm c4o-core:test -rf runs
+          if out=$(docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/gl \
+                     c4o-core:test cocotb --netlist 2>&1); then
+            echo "expected a refusal, but it ran something"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -qF "No netlist found" || { echo "refused for the wrong reason"; exit 1; }
+
       # The fixture holds the real metrics of a real blinky run, so this asserts
       # the numbers the report prints, not just that it exits 0.
       - name: Report reads a LibreLane run's metrics

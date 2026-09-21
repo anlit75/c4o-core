@@ -902,6 +902,9 @@ class TestEntrypoint(unittest.TestCase):
         try:
             args = MagicMock()
             args.files = None
+            # A MagicMock attribute is truthy, so leaving this out sends the
+            # command down the gate-level path argparse would never pick here.
+            args.netlist = None
 
             entrypoint.cmd_cocotb(args, config)
 
@@ -910,6 +913,7 @@ class TestEntrypoint(unittest.TestCase):
             # Without a Verilog testbench the DUT has to be named as the root.
             self.assertEqual(compile_cmd[compile_cmd.index("-s") + 1], "top")
             self.assertTrue(any("src/top.v" in arg for arg in compile_cmd))
+            self.assertNotIn("-DFUNCTIONAL", compile_cmd)
 
             env = mock_run.call_args_list[1][1]["env"]
             self.assertEqual(env["MODULE"], "test_top")
@@ -918,6 +922,77 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("pytests", env["PYTHONPATH"])
             # The verdict is always read back, never assumed.
             mock_check.assert_called_once()
+        finally:
+            os.chdir(cwd)
+
+    def _gl_cocotb_config(self):
+        """_gl_workspace, plus the Python tests cocotb needs."""
+        os.makedirs(os.path.join(self.test_dir, "pytests"), exist_ok=True)
+        open(os.path.join(self.test_dir, "pytests/test_top.py"), "w").close()
+        config = self._gl_workspace()
+        config["//COCOTB_TESTS"] = ["dir::pytests/*.py"]
+        return config
+
+    @patch('entrypoint.check_cocotb_results')
+    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_drives_the_netlist_when_asked(
+        self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check
+    ):
+        # The same Python tests, run against what synthesis produced. This is
+        # the claim gatesim cannot make: its testbench is a separate Verilog
+        # file written for the netlist, so nothing is shared with the RTL run.
+        config = self._gl_cocotb_config()
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+            args.netlist = ""  # what argparse stores for a bare --netlist
+
+            entrypoint.cmd_cocotb(args, config)
+
+            compile_cmd = mock_run.call_args_list[0][0][0]
+            self.assertIn("-DFUNCTIONAL", compile_cmd)
+            self.assertIn("-DUNIT_DELAY=#1", compile_cmd)
+            self.assertTrue(any("primitives.v" in a for a in compile_cmd))
+            self.assertTrue(any("sky130_fd_sc_hd.v" in a for a in compile_cmd))
+            self.assertTrue(any("top.nl.v" in a for a in compile_cmd))
+            # The RTL is deliberately absent: this simulates the gates.
+            self.assertFalse(any("src/" in a for a in compile_cmd))
+            # Still the DUT as the root -- there is no Verilog testbench here
+            # either, which is the whole point.
+            self.assertEqual(compile_cmd[compile_cmd.index("-s") + 1], "top")
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.check_cocotb_results')
+    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_gate_level_does_not_overwrite_the_rtl_verdict(
+        self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check
+    ):
+        # Running both is the normal thing to do, and a shared results file
+        # would leave the second run's verdict standing for both.
+        config = self._gl_cocotb_config()
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+            args.netlist = ""
+
+            entrypoint.cmd_cocotb(args, config)
+
+            self.assertEqual(
+                mock_check.call_args[0][0], os.path.join("build", "cocotb-gl-results.xml")
+            )
+            compile_cmd = mock_run.call_args_list[0][0][0]
+            self.assertIn("build/cocotb-gl.vvp", compile_cmd)
         finally:
             os.chdir(cwd)
 
