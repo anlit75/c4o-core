@@ -389,6 +389,69 @@ jobs:
           echo "$out"
           echo "$out" | grep -qF "No netlist found" || { echo "refused for the wrong reason"; exit 1; }
 
+      # The generator chain, end to end, in the image that has to run it:
+      # one SystemRDL file becomes a register block, that becomes Verilog-2005,
+      # and that lints and synthesises. Each link is a tool this image gained
+      # for c4o-pyuvm, and a version bump to any of them breaks it here rather
+      # than in somebody's design.
+      #
+      # The middle assertion is the one that explains why sv2v is installed at
+      # all: PeakRDL's SystemVerilog is not something yosys will read, and the
+      # refusal is asserted by its message so that a yosys which one day grows
+      # unpacked-struct support shows up as a changed reason rather than a
+      # silent pass.
+      - name: SystemRDL becomes a register block that synthesises
+        run: |
+          mkdir -p rdlchain/tests/smoke rdlchain/rdl
+          cp tests/smoke/regs.rdl rdlchain/tests/smoke/
+          cat > rdlchain/config.yaml <<'EOF'
+          DESIGN_NAME: regs
+          VERILOG_FILES:
+            - dir::rdl/regs.v
+          LINTER_DISABLE_WARNINGS: [WIDTHEXPAND]
+          EOF
+
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/rdlchain "$@"; }
+
+          run --entrypoint peakrdl c4o-core:test regblock tests/smoke/regs.rdl -o rdl --cpuif apb3-flat
+          test -s rdlchain/rdl/regs.sv
+          test -s rdlchain/rdl/regs_pkg.sv
+
+          if out=$(run --entrypoint yosys c4o-core:test -p "read_verilog -sv rdl/regs_pkg.sv rdl/regs.sv" 2>&1); then
+            echo "yosys accepted the raw SystemVerilog -- sv2v may no longer be needed, check before removing it"; exit 1
+          fi
+          echo "$out" | grep -qF "Only PACKED supported" || { echo "yosys refused for some other reason"; exit 1; }
+
+          run --entrypoint sh c4o-core:test -c "sv2v rdl/regs_pkg.sv rdl/regs.sv > rdl/regs.v"
+          test -s rdlchain/rdl/regs.v
+
+          # LINTER_DISABLE_WARNINGS is doing real work here: sv2v writes signed
+          # one-bit zeroes into wider assignments, and verilator calls that
+          # WIDTHEXPAND. Without the waiver this lint is red.
+          run c4o-core:test lint
+          run c4o-core:test synth
+          test -s rdlchain/build/synthesis.json
+
+      # The other half of the same source file. A hand-written RAL that drifts
+      # from the RTL is a bug no testbench catches -- both sides agree with each
+      # other and neither agrees with the design -- so the point is that these
+      # two came out of one .rdl.
+      - name: The same SystemRDL generates a pyuvm register model
+        run: |
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/rdlchain "$@"; }
+          run --entrypoint peakrdl c4o-core:test pyuvm tests/smoke/regs.rdl -o rdl/regs_ral.py
+          out=$(run --entrypoint python3 c4o-core:test -c "
+          import sys; sys.path.insert(0, 'rdl')
+          import pyuvm, regs_ral
+          block = regs_ral.regs('regs')
+          print('pyuvm', pyuvm.__version__, type(block).__name__, sorted(n for n in dir(regs_ral) if n.startswith('regs__')))
+          ")
+          echo "$out"
+          # Importable is not enough: the model has to carry the registers the
+          # .rdl declares, or the generator quietly produced an empty block.
+          echo "$out" | grep -qF "regs__CTRL" || { echo "the register model is missing CTRL"; exit 1; }
+          echo "$out" | grep -qF "regs__STATUS" || { echo "the register model is missing STATUS"; exit 1; }
+
       # The fixture holds the real metrics of a real blinky run, so this asserts
       # the numbers the report prints, not just that it exits 0.
       - name: Report reads a LibreLane run's metrics

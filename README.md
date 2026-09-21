@@ -387,6 +387,32 @@ already had their say by the time this runs.
 *   **Graphviz**: renders the `schematic` command's SVG (yosys `show` shells out to `dot`)
 *   **Ciel**: PDK Version Manager
 *   **Cocotb**: Coroutine based cosimulation library (see the `cocotb` command)
+*   **pyuvm**: the UVM in Python, on top of cocotb — `import pyuvm` in a `COCOTB_TESTS` file and it works
+*   **sv2v**: SystemVerilog to Verilog-2005, for sources the tools above will not read
+*   **PeakRDL**: `regblock` generates a register block from SystemRDL, `pyuvm` generates the matching register model
+
+### Generated register blocks
+
+None of the tools in this image read SystemVerilog with unpacked structs, which
+is what `peakrdl regblock` emits:
+
+```
+yosys 0.33:   ERROR: Only PACKED supported at this time
+iverilog 12:  sorry: Unpacked structs not supported.
+```
+
+`sv2v` is the step between. One `.rdl` file, through to gates and to a register
+model that cannot drift from it:
+
+```bash
+peakrdl regblock regs.rdl -o rdl --cpuif apb3-flat
+sv2v rdl/regs_pkg.sv rdl/regs.sv > rdl/regs.v      # now everything here reads it
+peakrdl pyuvm    regs.rdl -o rdl/regs_ral.py       # the same source, as pyuvm
+```
+
+`sv2v` writes signed one-bit zeroes into wider assignments, which verilator
+calls `WIDTHEXPAND`, so a config that lints generated Verilog wants
+`LINTER_DISABLE_WARNINGS: [WIDTHEXPAND]`.
 
 ## License
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.

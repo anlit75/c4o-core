@@ -1,0 +1,16 @@
+// A two-register block, used to check that the generator chain in this image
+// still runs end to end: SystemRDL -> SystemVerilog -> Verilog-2005 -> gates,
+// and the same file -> a pyuvm register model.
+addrmap regs {
+    name = "smoke register block";
+    default regwidth = 32;
+
+    reg {
+        field { sw = rw; hw = r; } enable[0:0] = 0;
+        field { sw = rw; hw = r; } divider[8:1] = 8'd7;
+    } CTRL @ 0x0;
+
+    reg {
+        field { sw = r; hw = w; } count[15:0] = 0;
+    } STATUS @ 0x4;
+};
