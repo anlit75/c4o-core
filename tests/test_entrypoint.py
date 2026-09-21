@@ -177,6 +177,82 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_lint_silences_the_warnings_the_config_names(self, mock_ensure, mock_load, mock_run):
+        # Generated RTL trips warnings that are about the generator, not the
+        # design. Without this the config could say so and lint would refuse
+        # the file anyway.
+        config = dict(self.config, LINTER_DISABLE_WARNINGS=["WIDTHEXPAND", "MULTIDRIVEN"])
+        mock_load.return_value = config
+
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+
+            entrypoint.cmd_lint(args, config)
+
+            call_args = mock_run.call_args[0][0]
+            self.assertIn("-Wno-WIDTHEXPAND", call_args)
+            self.assertIn("-Wno-MULTIDRIVEN", call_args)
+
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_lint_waives_nothing_when_the_config_is_silent(self, mock_ensure, mock_load, mock_run):
+        # LibreLane defaults this key to DECLFILENAME and EOFNEWLINE. Neither
+        # fires in verilator 5.020 unless asked for, so copying that default
+        # would add flags that change nothing -- and would quietly widen what
+        # `lint` lets through if a later verilator changed its mind.
+        mock_load.return_value = self.config
+
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+
+            entrypoint.cmd_lint(args, self.config)
+
+            call_args = mock_run.call_args[0][0]
+            self.assertFalse([arg for arg in call_args if arg.startswith("-Wno-")])
+
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_lint_rejects_one_warning_written_without_its_brackets(self, mock_ensure, mock_load, mock_run):
+        # A bare string is iterable, so this would otherwise spell out
+        # -Wno-W -Wno-I -Wno-D ... and verilator would reject flags nobody
+        # typed.
+        config = dict(self.config, LINTER_DISABLE_WARNINGS="WIDTHEXPAND")
+        mock_load.return_value = config
+
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+
+            # log_error prints to stdout, so that is where the refusal lands.
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+                entrypoint.cmd_lint(args, config)
+
+            self.assertIn("LINTER_DISABLE_WARNINGS", out.getvalue())
+            mock_run.assert_not_called()
+
+        finally:
+            os.chdir(cwd)
+
     def test_load_config_prefers_yaml(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)

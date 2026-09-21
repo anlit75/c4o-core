@@ -143,10 +143,43 @@ def get_include_dirs(config):
     """Verilog include directories, with LibreLane's 'dir::' prefix removed."""
     return [strip_path_prefix(d) for d in config_get(config, "VERILOG_INCLUDE_DIRS", [])]
 
+def disable_warnings(config):
+    """
+    The '-Wno-<CODE>' flags LINTER_DISABLE_WARNINGS asks for.
+
+    Generated RTL is why this exists. sv2v's output trips WIDTHEXPAND four
+    times on its own `1'sb0` constants, and the SystemVerilog it was converted
+    from trips MULTIDRIVEN on struct fields -- measured against verilator
+    5.020, on a PeakRDL register block that synthesises clean. Neither warning
+    is about the design, and until now there was no way to say so: `lint` built
+    its command line from the config and ignored this key entirely, so a config
+    that named it was silently refused all the same.
+
+    LINTER_DISABLE_WARNINGS is LibreLane's own key and means the same thing
+    there, which is what keeps one config file honest across both tools.
+    LibreLane writes the codes into a .vlt file as `lint_off -rule <CODE>`;
+    -Wno-<CODE> is the same instruction without the temporary file. It is left
+    with no default on purpose: LibreLane defaults it to DECLFILENAME and
+    EOFNEWLINE, and neither of those fires in verilator 5.020 unless asked for,
+    so copying the default would only add flags that change nothing.
+    """
+    codes = config_get(config, "LINTER_DISABLE_WARNINGS", [])
+    if isinstance(codes, str):
+        # One code without the brackets is the easy YAML mistake to make, and
+        # iterating it would spell out -Wno-W -Wno-I -Wno-D. Say so instead.
+        log_error(
+            "LINTER_DISABLE_WARNINGS must be a list of warning codes, not a "
+            f"single string: write [{codes}] rather than {codes}."
+        )
+        sys.exit(1)
+    return [f"-Wno-{code}" for code in codes]
+
 def cmd_lint(args, config):
     # Lint only checks RTL
     files = get_files(args, config, key="VERILOG_FILES")
     cmd = ["verilator", "--lint-only"]
+
+    cmd += disable_warnings(config)
 
     # Add include directories
     for inc in get_include_dirs(config):

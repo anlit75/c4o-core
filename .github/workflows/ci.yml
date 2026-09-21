@@ -61,6 +61,62 @@ jobs:
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint
 
+      # LINTER_DISABLE_WARNINGS, against the real verilator rather than a mock.
+      # Both halves matter: a waiver that silenced nothing would leave the
+      # second command red, and a lint that refused nothing would leave the
+      # first one green -- and then the key would look like it worked while
+      # doing neither. The RTL below is the shape generated code arrives in:
+      # sv2v writes `1'sb0` into wider assignments, which is what WIDTHEXPAND
+      # is complaining about, and the design synthesises perfectly well.
+      - name: A warning the config waives stops failing lint
+        run: |
+          cat > widthy.v <<'EOF'
+          module widthy (
+              input wire clk,
+              output reg [31:0] out
+          );
+              always @(posedge clk) out <= 1'sb0;
+          endmodule
+          EOF
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: widthy
+          VERILOG_FILES:
+            - dir::widthy.v
+          EOF
+
+          if out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint 2>&1); then
+            echo "expected lint to refuse the un-waived warning, but it passed"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -qF "WIDTHEXPAND" || { echo "refused for the wrong reason"; exit 1; }
+
+          echo 'LINTER_DISABLE_WARNINGS: [WIDTHEXPAND]' >> config.yaml
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint
+          rm widthy.v
+
+      # A single code without its brackets is iterable, and would otherwise be
+      # spelled out one letter at a time. The refusal has to name the key, or
+      # there is nothing in the output pointing at the line to fix.
+      - name: A warning code written without its brackets is refused by name
+        run: |
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::tests/smoke/counter.v
+          LINTER_DISABLE_WARNINGS: WIDTHEXPAND
+          EOF
+          if out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint 2>&1); then
+            echo "expected lint to refuse a bare string, but it passed"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -qF "LINTER_DISABLE_WARNINGS" || { echo "the refusal did not name the key"; exit 1; }
+
+      # config.yaml wins over config.json, so the two steps above shadowed the
+      # one the rest of this job was written against. Dropping it hands the
+      # later steps back their config.json untouched.
+      - name: Stop shadowing the config.json the later steps read
+        run: rm -f config.yaml
+
       - name: Run Synthesis check (Config)
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test synth
