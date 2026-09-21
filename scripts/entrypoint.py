@@ -256,7 +256,8 @@ def find_netlist(explicit):
     if not found:
         log_error(
             "No netlist found under runs/ or build/runs/. Run the physical "
-            "design flow first, or name the file: gatesim <path>."
+            "design flow first, or name the file: gatesim <path>, "
+            "cocotb --netlist <path>."
         )
         sys.exit(1)
     return max(found, key=os.path.getmtime)
@@ -347,12 +348,17 @@ def cocotb_config(*args):
 
 def cmd_cocotb(args, config):
     """
-    Runs cocotb tests: Python coroutines driving the RTL, rather than a Verilog
-    testbench. Same simulator underneath, so this is an alternative to `sim`,
-    not a replacement for it.
-    """
-    rtl_files = get_files(args, config, key="VERILOG_FILES")
+    Runs cocotb tests: Python coroutines driving the design, rather than a
+    Verilog testbench. Same simulator underneath, so this is an alternative to
+    `sim`, not a replacement for it.
 
+    With --netlist it drives what synthesis produced instead of the RTL, and
+    the tests do not change. That is the point: a testbench that only touches
+    the top-level ports survives synthesis, and one that reaches inside the
+    design does not -- the nets it names are gone. `gatesim` cannot show that,
+    because its testbench is a separate Verilog file written for the netlist;
+    here it is the same Python, run twice.
+    """
     test_files = get_files(args, config, key="COCOTB_TESTS")
     if not test_files:
         log_error(
@@ -366,15 +372,32 @@ def cmd_cocotb(args, config):
         log_error("cocotb needs DESIGN_NAME to know which module to drive.")
         sys.exit(1)
 
+    # Separate names so a gate-level run and an RTL run do not overwrite each
+    # other's verdict. `make cocotb` keeps the names it always had.
+    gate_level = getattr(args, "netlist", None) is not None
+    stem = "cocotb-gl" if gate_level else "cocotb"
+
     ensure_build_dir()
-    vvp_file = "build/cocotb.vvp"
-    results = os.path.join("build", "cocotb-results.xml")
+    vvp_file = f"build/{stem}.vvp"
+    results = os.path.join("build", f"{stem}-results.xml")
     if os.path.exists(results):
         os.remove(results)  # never report a previous run's verdict
 
     # -s names the DUT as the root: there is no Verilog testbench to elaborate.
-    run_command(["iverilog", "-g2012", "-s", toplevel, "-o", vvp_file] +
-                [f"-I{inc}" for inc in get_include_dirs(config)] + rtl_files)
+    if gate_level:
+        netlist = find_netlist(args.netlist or None)
+        log_info(f"Netlist: {netlist}")
+        # FUNCTIONAL and UNIT_DELAY for the reason cmd_gatesim gives: that pair
+        # compiles the cell models silently, neither of them alone does. The
+        # include dirs are left out -- a netlist has no `include to resolve.
+        compile_cmd = ["iverilog", "-g2012", "-DFUNCTIONAL", "-DUNIT_DELAY=#1",
+                       "-s", toplevel, "-o", vvp_file]
+        compile_cmd += cell_models(config) + [netlist]
+    else:
+        compile_cmd = ["iverilog", "-g2012", "-s", toplevel, "-o", vvp_file]
+        compile_cmd += [f"-I{inc}" for inc in get_include_dirs(config)]
+        compile_cmd += get_files(args, config, key="VERILOG_FILES")
+    run_command(compile_cmd)
 
     # cocotb finds tests by module name on PYTHONPATH, so hand it both.
     modules = [os.path.splitext(os.path.basename(f))[0] for f in test_files]
@@ -857,6 +880,16 @@ def build_parser():
         "cocotb", help="Run cocotb (Python) tests against the RTL"
     )
     cocotb_parser.add_argument("--files", nargs="*", help="Verilog RTL files")
+    # Bare --netlist means "the newest one", the same default gatesim takes.
+    # Absent is RTL; present with no value is the empty string, which find_netlist
+    # reads as "go and look".
+    cocotb_parser.add_argument(
+        "--netlist",
+        nargs="?",
+        const="",
+        help="Drive the synthesised netlist instead of the RTL "
+             "(default: the newest under runs/ or build/runs/)",
+    )
     cocotb_parser.set_defaults(func=cmd_cocotb)
 
     # Gate-level sim command

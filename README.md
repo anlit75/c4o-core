@@ -27,7 +27,7 @@ The engine supports the following commands via its Python entrypoint:
 |---|---|
 | `lint` | Runs Verilator linting checks on `VERILOG_FILES`. |
 | `sim` | Compiles and runs simulation using Icarus Verilog on `VERILOG_FILES` + `TEST_FILES`. |
-| `cocotb` | Runs cocotb tests — Python coroutines driving the RTL — on `VERILOG_FILES` + `COCOTB_TESTS`. |
+| `cocotb` | Runs cocotb tests — Python coroutines driving the RTL — on `VERILOG_FILES` + `COCOTB_TESTS`. `--netlist` runs the same tests against the synthesised gates. |
 | `gatesim` | Simulates the **synthesised netlist** against the PDK cell models, on `GATE_TESTS`. |
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
 | `schematic` | Draws the circuit as `build/schematic.svg` — the RTL as written, not the synthesised netlist. |
@@ -164,6 +164,33 @@ Two things worth knowing before you write one:
     1-second precision and every cocotb test dies with
     `Unable to accurately represent 10(ns) with the simulator precision of 1e0`.
     Adding `` `timescale 1ns/1ps `` to the top of the file fixes it.
+
+### The same tests, against the gates
+
+```bash
+cocotb                      # the RTL
+cocotb --netlist            # what synthesis produced, same tests
+cocotb --netlist path/to/x.nl.v
+```
+
+It takes the netlist and cell models exactly as `gatesim` does, and needs
+`PDK` and `STD_CELL_LIBRARY` for the same reason. The tests do not change.
+
+Which is the point. A testbench that only touches the top-level ports survives
+synthesis; one that reaches inside the design does not, because the nets it
+names are gone:
+
+```
+AttributeError: counter contains no object named c
+```
+
+That is not a bug to work around — it is the run telling you which of your
+tests were checking the design and which were checking its internals. `gatesim`
+cannot say it, because its testbench is a separate Verilog file written for the
+netlist, so nothing is shared with the RTL run.
+
+The two runs keep separate verdicts, `build/cocotb-results.xml` and
+`build/cocotb-gl-results.xml`, so running both leaves both readable.
 
 ## 🔬 Simulating the gates (gatesim)
 
