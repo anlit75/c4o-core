@@ -28,6 +28,27 @@ Every release publishes four tags:
 | `2` | the current major |
 | `latest` | one-off runs like the line above. Nothing should pin it |
 
+### Releasing
+
+Nobody pushes a tag. Merging anything to `main` updates a **Release PR** holding
+the next version and its CHANGELOG entry, both computed from the commit titles
+— which is why this repository writes them as
+[Conventional Commits](https://www.conventionalcommits.org/): `feat:` moves the
+minor, `fix:` the patch.
+
+Merging that Release PR is the release. The tag, the GitHub release and the
+four images above all follow from it.
+
+The PR in the middle is deliberate. A version and a changelog derived from
+commit messages are worth reading before they are permanent, and a wrong one is
+a pull request to close rather than a release to yank.
+
+It needs `RELEASE_PLEASE_TOKEN`: a fine-grained PAT scoped to this repository
+with **Contents: read and write** and **Pull requests: read and write**. The
+automatic `GITHUB_TOKEN` will not do, because a tag pushed with it does not
+trigger other workflows — the tag would appear and no image would ever be
+built.
+
 ## 🛠 Command Reference
 
 The engine supports the following commands via its Python entrypoint:
