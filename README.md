@@ -46,14 +46,23 @@ Simulation is outside LibreLane's scope, so testbenches are the one thing it has
 ```yaml
 DESIGN_NAME: counter
 VERILOG_FILES:
-  - dir::src/**/*.v
+  - dir::src/counter.v
 
 # Simulation only. The '//' prefix is what makes LibreLane skip this key.
 "//TEST_FILES":
   - dir::test/*.v
 ```
 
-Glob patterns work (`**/*.v` matches recursively), as does LibreLane's `dir::` prefix, which marks a path as relative to the design directory.
+LibreLane's `dir::` prefix marks a path as relative to the design directory, and works on any of these keys.
+
+**Globs work on the `//` keys, not on `VERILOG_FILES`.** This engine expands them everywhere, but `VERILOG_FILES` belongs to LibreLane, which validates each entry as a literal path and does not expand `**`. A config with `dir::src/**/*.v` therefore lints, simulates and synthesises here, and then fails in the physical flow:
+
+```console
+ERROR  Path provided for variable 'VERILOG_FILES[0]' is invalid:
+       '/workspace/src/**/*.v' does not exist
+```
+
+List source files one per line. The `//` keys are this engine's own, so `dir::test/*.v` and `dir::test/**/*.py` are fine there.
 
 ### Full Example (RTL + GDS)
 
@@ -75,14 +84,15 @@ CLOCK_PERIOD: 10.0
 # ---- keep these unless you know what you are doing ----
 PDK: sky130A
 STD_CELL_LIBRARY: sky130_fd_sc_hd
-DIE_AREA: [0, 0, 100, 100]
 FP_CORE_UTIL: 40
-FP_SIZING: absolute
+FP_SIZING: relative
 ```
+
+`FP_SIZING: relative` sizes the die from `FP_CORE_UTIL`, so it grows with the design. For a fixed die, set `FP_SIZING: absolute` and add `DIE_AREA: [0, 0, w, h]` instead.
 
 ### Key Configuration Options
 
-*   **`VERILOG_FILES`**: List of synthesizable Verilog source files. Supports glob patterns.
+*   **`VERILOG_FILES`**: List of synthesizable Verilog source files, one path per entry — see the note above on globs.
 *   **`//TEST_FILES`**: List of simulation testbench files (non-synthesizable). Plain `TEST_FILES` is also read, but only the prefixed spelling is silent under LibreLane's strict validation.
 *   **`//SIM_TOP`**: Testbench module to elaborate as the simulation root. Required once `//TEST_FILES` resolves to more than one file — see below.
 *   **`//COCOTB_TESTS`**: Python test files for the `cocotb` command. Supports globs.
@@ -93,11 +103,9 @@ FP_SIZING: absolute
 
 ### A pattern that matches nothing is an error
 
-Every configured pattern must match at least one file. A renamed directory or a
-typo used to be a warning, and `sim` would compile the RTL alone and exit 0 —
-green CI, nothing verified. It now fails.
-
-For the same reason, `sim` refuses to run without a testbench at all.
+Every configured pattern must match at least one file, and `sim` refuses to run
+without a testbench at all. A renamed directory or a typo would otherwise leave
+`sim` compiling the RTL alone and exiting 0 — green CI, nothing verified.
 
 ### More than one testbench
 
@@ -218,11 +226,8 @@ show -format svg -viewer none -prefix build/schematic
 `hierarchy -auto-top` is used when `DESIGN_NAME` is absent. Testbenches are
 not drawn — `schematic` reads `VERILOG_FILES` only, as `synth` and `lint` do.
 
-SVG rather than the JSON, deliberately: a file everything opens beats a file
-that needs one particular editor extension. ChipForAll used to ship a Dev
-Container extension for that JSON, and it was pulled from the marketplace
-without anything noticing — a listed extension that no longer exists does not
-fail a container build, it just never installs.
+SVG rather than the JSON, deliberately: a file every browser and editor opens
+beats one that needs a particular extension installed.
 
 ## ✈️ Before the three-minute run (check)
 
@@ -279,14 +284,14 @@ $ c4o-core report
 
   blinky
 
-  die              100 x 100 um  (10000 um^2)
-  utilization      29.2%
-  standard cells   243
-  setup slack      +4.69 ns  (0 violations)
+  die              69.485 x 80.205 um  (5573.04 um^2)
+  utilization      57.1%
+  standard cells   198
+  setup slack      +4.70 ns  (0 violations)
   hold slack       +0.11 ns  (0 violations)
-  power            0.292 mW
+  power            0.290 mW
   signoff          clean  (Magic DRC, KLayout DRC, LVS, antenna, XOR)
-  lint warnings    441
+  lint warnings    0
   layout           runs/blinky_run/final/render/blinky.png
 ```
 
@@ -304,13 +309,10 @@ Every one of those errors the flow by default (`ERROR_ON_MAGIC_DRC` and its
 siblings all default to `True`), so a run that got as far as writing a
 `metrics.json` has already passed them.
 
-The keys are the ones a real LibreLane 3.0.14 run emits, checked against one
-rather than inferred from the checker classes: antenna comes from
-`OpenROAD.CheckAntennas` (`route__antenna_violation__count`), not from
-`Checker.KLayoutAntenna`, which exists in LibreLane but is not in the Classic
-flow at all. That is exactly why the row is worth
-printing: without it nothing states the result, and the reader is left
-inferring it from the absence of a crash.
+The metric keys are the ones a real LibreLane 3.0.14 run emits — antenna, for
+instance, comes from `OpenROAD.CheckAntennas` rather than from a checker step
+the Classic flow does not run. Without this row nothing states the result, and
+the reader is left inferring it from the absence of a crash.
 
 When something *is* wrong — a run stopped part-way, or the checks were turned
 down to warnings — it names what, instead of printing a column of zeroes with
@@ -331,18 +333,14 @@ path — `final/render/<design>.png`, falling back to the render step's own
 directory. It appears only when the `metrics.json` sits where a run left it,
 at `<run>/final/metrics.json`.
 
-Note the name: the format is registered with extension `png` and folder
-`render`, so the file is `blinky.png`. `blinky.klayout.png` is what the
-format's *name* suggests, and it is wrong.
-
-Two more details worth knowing:
+Two details worth knowing:
 
 *   **Slack is the worst corner.** LibreLane writes every timing metric once per
     corner and again with no `__corner:` suffix; the bare key is already the
     worst of them, and that is what is shown.
-*   **Cell count excludes filler.** `design__instance__count` counted 787 for the
-    run above, but 544 of those were fill cells. The 243 is
-    `design__instance__count__stdcell`.
+*   **Cell count excludes filler.** `design__instance__count` includes the fill
+    and tap cells the flow adds, which outnumber the design's own in a small
+    chip. The row shows `design__instance__count__stdcell`.
 
 It is informational and never fails: closing timing is iterative, LibreLane does
 not treat a violation as fatal either, and the checks that *are* fatal have
