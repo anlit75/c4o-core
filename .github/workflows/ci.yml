@@ -65,7 +65,13 @@ jobs:
             - dir::tests/smoke/counter_wrap.v
             - dir::tests/smoke/counter.v
           EOF
-          rm -f build/schematic.svg
+          # Deleted from inside the image, not from here: the step above wrote
+          # build/ as root, and the runner user cannot remove what root left
+          # there. The deletion is load-bearing rather than tidy -- without it a
+          # failing `schematic` leaves the previous step's SVG in place and the
+          # greps below pass on the wrong file.
+          docker run --rm -v ${{ github.workspace }}:/workspace \
+            --entrypoint rm c4o-core:test -f build/schematic.svg
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test schematic
           [ -s build/schematic.svg ] || { echo "schematic.svg is empty or absent"; exit 1; }
           grep -qF "<svg" build/schematic.svg || { echo "not an SVG"; exit 1; }
