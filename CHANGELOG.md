@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.1](https://github.com/anlit75/c4o-core/compare/v2.8.0...v2.8.1) (2026-09-26)
+
+
+### Fixes
+
+* draw one module, so schematic works on a design with a submodule ([#26](https://github.com/anlit75/c4o-core/issues/26)) ([48093c3](https://github.com/anlit75/c4o-core/commit/48093c33682a408f949e652013bec4c38fed271f))
+
 ## [2.8.0](https://github.com/anlit75/c4o-core/compare/v2.7.0...v2.8.0) (2026-09-21)
 
 
