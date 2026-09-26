@@ -277,11 +277,16 @@ from:
 
 ```
 read_verilog <VERILOG_FILES>; hierarchy -top <DESIGN_NAME>; proc; opt;
-show -format svg -viewer none -prefix build/schematic
+show -format svg -viewer none -prefix build/schematic A:top
 ```
 
 `hierarchy -auto-top` is used when `DESIGN_NAME` is absent. Testbenches are
 not drawn — `schematic` reads `VERILOG_FILES` only, as `synth` and `lint` do.
+
+**One module: the top.** `show` draws everything selected and yosys refuses SVG
+for more than one module, so a design with a submodule needs the selection that
+`A:top` provides. Submodules appear as boxes, not as their own drawings. To see
+one of them instead, run yosys yourself and name it.
 
 SVG rather than the JSON, deliberately: a file every browser and editor opens
 beats one that needs a particular extension installed.

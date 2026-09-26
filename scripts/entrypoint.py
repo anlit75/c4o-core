@@ -588,7 +588,19 @@ def cmd_schematic(args, config):
     # -viewer none because yosys otherwise tries to launch a picture viewer
     # for the file it just wrote, which inside a container is an error on the
     # way out rather than a window.
-    parts.append(f"show -format svg -viewer none -prefix {SCHEMATIC_PREFIX}")
+    #
+    # 'A:top' is the selection, and without it this command only works on a
+    # design of one module. `show` draws everything selected, and for anything
+    # but ps or dot yosys refuses more than one:
+    #
+    #   ERROR: For formats different than 'ps' or 'dot' only one module must
+    #          be selected.
+    #
+    # A design with a submodule is the normal case and blinky, with none, is
+    # not -- so this went unnoticed until a real design arrived. 'top' is the
+    # attribute `hierarchy` has just set on the root, which makes this the same
+    # one module whether DESIGN_NAME named it or -auto-top worked it out.
+    parts.append(f"show -format svg -viewer none -prefix {SCHEMATIC_PREFIX} A:top")
 
     run_command(["yosys", "-p", "; ".join(parts)])
     log_info(f"Wrote {SCHEMATIC_PREFIX}.svg")

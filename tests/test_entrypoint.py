@@ -450,6 +450,17 @@ class TestEntrypoint(unittest.TestCase):
         config = {k: v for k, v in self.config.items() if k != "DESIGN_NAME"}
         self.assertIn("hierarchy -auto-top", self._schematic_script(config))
 
+    def test_schematic_draws_one_module_and_says_which(self):
+        # `show` draws everything selected, and for svg yosys refuses more than
+        # one module: "For formats different than 'ps' or 'dot' only one module
+        # must be selected." Any design with a submodule hits that, which is
+        # every real one -- so the selection is not optional, and it is A:top
+        # rather than the design's name so that -auto-top is covered too.
+        for config in (self.config,
+                       {k: v for k, v in self.config.items() if k != "DESIGN_NAME"}):
+            script = self._schematic_script(config)
+            self.assertRegex(script, r"show\b[^;]*\bA:top\b")
+
     def test_schematic_does_not_try_to_open_a_window(self):
         # Without -viewer none, yosys launches a picture viewer for the file
         # it just wrote, which inside a container is an error on the way out.

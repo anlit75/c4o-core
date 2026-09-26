@@ -48,6 +48,38 @@ jobs:
           grep -qF "<svg" build/schematic.svg || { echo "not an SVG"; exit 1; }
           grep -qF "counter" build/schematic.svg || { echo "the design's name is not in the drawing"; exit 1; }
 
+      # The same command on a design with a submodule, which is every real one.
+      # `show` draws what is selected and yosys refuses svg for more than one
+      # module, so this used to fail:
+      #
+      #   ERROR: For formats different than 'ps' or 'dot' only one module must
+      #          be selected.
+      #
+      # counter.v alone has no submodule, so the step above never asked the
+      # question. counter_wrap.v is the smallest thing that does.
+      - name: Run Schematic check on a design with a submodule
+        run: |
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: counter_wrap
+          VERILOG_FILES:
+            - dir::tests/smoke/counter_wrap.v
+            - dir::tests/smoke/counter.v
+          EOF
+          # Deleted from inside the image, not from here: the step above wrote
+          # build/ as root, and the runner user cannot remove what root left
+          # there. The deletion is load-bearing rather than tidy -- without it a
+          # failing `schematic` leaves the previous step's SVG in place and the
+          # greps below pass on the wrong file.
+          docker run --rm -v ${{ github.workspace }}:/workspace \
+            --entrypoint rm c4o-core:test -f build/schematic.svg
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test schematic
+          [ -s build/schematic.svg ] || { echo "schematic.svg is empty or absent"; exit 1; }
+          grep -qF "<svg" build/schematic.svg || { echo "not an SVG"; exit 1; }
+          # The drawing has to be of the top the config named, not of whatever
+          # module yosys happened to have selected.
+          grep -qF "counter_wrap" build/schematic.svg || { echo "the top module is not in the drawing"; exit 1; }
+          rm -f config.yaml
+
       - name: Run Simulation check (CLI)
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test sim --files tests/smoke/tb_counter.v tests/smoke/counter.v
