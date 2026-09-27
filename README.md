@@ -23,10 +23,12 @@ Every release publishes four tags:
 
 | tag | for |
 |---|---|
-| `2.8.0` | a build that will never change under you |
-| `2.8` | **what a repository should pin.** Patches arrive without editing anything; a new behaviour never does |
-| `2` | the current major |
+| `X.Y.Z` | a build that will never change under you |
+| `X.Y` | **what a repository should pin.** Patches arrive without editing anything; a new behaviour never does |
+| `X` | the current major |
 | `latest` | one-off runs like the line above. Nothing should pin it |
+
+The current numbers are on the [releases page](https://github.com/anlit75/c4o-core/releases).
 
 ### Releasing
 
@@ -62,7 +64,7 @@ The engine supports the following commands via its Python entrypoint:
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
 | `schematic` | Draws the circuit as `build/schematic.svg` — the RTL as written, not the synthesised netlist. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
-| `check` | Validates the configuration for the physical design flow, values included. Produces no layout — LibreLane does that. Available as `gds` too, the name it had before. |
+| `check` | Validates the configuration for the physical design flow, values included. Produces no layout — LibreLane does that. `gds` is an alias. |
 | `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power, and the DRC/LVS/antenna signoff result. |
 
 ## ⚙️ Configuration
@@ -71,19 +73,9 @@ The engine supports the following commands via its Python entrypoint:
 
 **This is a [LibreLane](https://github.com/librelane/librelane) configuration file.** The same file drives both this engine and the physical design flow, so the variable names are LibreLane's — not a parallel vocabulary of our own. `c4o-core` simply reads the subset it needs.
 
-Simulation is outside LibreLane's scope, so testbenches are the one thing it has no variable for. That key is written with a `//` prefix, which LibreLane ignores outright, keeping the shared file valid under its validation:
+Simulation is outside LibreLane's scope, so testbenches are the one thing it has no variable for. Those keys are written with a `//` prefix, which LibreLane ignores outright, keeping the shared file valid under its validation.
 
-```yaml
-DESIGN_NAME: counter
-VERILOG_FILES:
-  - dir::src/counter.v
-
-# Simulation only. The '//' prefix is what makes LibreLane skip this key.
-"//TEST_FILES":
-  - dir::test/*.v
-```
-
-LibreLane's `dir::` prefix marks a path as relative to the design directory, and works on any of these keys.
+LibreLane's `dir::` prefix marks a path as relative to the design directory, and works on any key.
 
 **Globs work on the `//` keys, not on `VERILOG_FILES`.** This engine expands them everywhere, but `VERILOG_FILES` belongs to LibreLane, which validates each entry as a literal path and does not expand `**`. A config with `dir::src/**/*.v` therefore lints, simulates and synthesises here, and then fails in the physical flow:
 
@@ -120,16 +112,19 @@ FP_SIZING: relative
 
 `FP_SIZING: relative` sizes the die from `FP_CORE_UTIL`, so it grows with the design. For a fixed die, set `FP_SIZING: absolute` and add `DIE_AREA: [0, 0, w, h]` instead.
 
-### Key Configuration Options
+### The keys this engine reads
 
-*   **`VERILOG_FILES`**: List of synthesizable Verilog source files, one path per entry — see the note above on globs.
-*   **`//TEST_FILES`**: List of simulation testbench files (non-synthesizable). Plain `TEST_FILES` is also read, but only the prefixed spelling is silent under LibreLane's strict validation.
-*   **`//SIM_TOP`**: Testbench module to elaborate as the simulation root. Required once `//TEST_FILES` resolves to more than one file — see below.
-*   **`//COCOTB_TESTS`**: Python test files for the `cocotb` command. Supports globs.
-*   **`//GATE_TESTS`**: Gate-level testbench files for `gatesim`. Supports globs.
-*   **`//GATE_TOP`**: Gate-level testbench module to elaborate. Required once `//GATE_TESTS` resolves to more than one file.
-*   **`VERILOG_INCLUDE_DIRS`**: List of directories containing Verilog include files (`.vh`, `.h`).
-*   **`DESIGN_NAME`**: Top-level module name for synthesis.
+| Key | What it is |
+|---|---|
+| `DESIGN_NAME` | the top module's name |
+| `VERILOG_FILES` | synthesisable sources, one literal path per entry |
+| `VERILOG_INCLUDE_DIRS` | directories holding `.vh` / `.h` includes |
+| `"//TEST_FILES"` | Verilog testbenches for `sim`. Globs work. Plain `TEST_FILES` is read too, but only the prefixed spelling is silent under LibreLane's validation |
+| `"//SIM_TOP"` | which testbench module to elaborate. Required once `"//TEST_FILES"` matches more than one file |
+| `"//COCOTB_TESTS"` | Python testbenches for `cocotb`. Globs work |
+| `"//GATE_TESTS"` / `"//GATE_TOP"` | the same two, for `gatesim` |
+| `CLOCK_PORT` / `CLOCK_PERIOD` | the clock to constrain, and its period in ns |
+| `PDK` / `STD_CELL_LIBRARY` | needed by `gatesim`, `cocotb --netlist` and `pdk` |
 
 ### A pattern that matches nothing is an error
 
@@ -247,10 +242,9 @@ left to override. Drive the real ports at their real width.
 ### It can be slow, and how slow is your design's business
 
 Gate-level cost scales with simulated cycles times cell count, and both can be
-large. Measured on ChipForAll's blinky: **281 seconds**, because its clock
-divider is 26 bits deep and one output toggle takes 2\*\*25 cycles. A deep
-divider is the most common beginner design there is, so this is not an unusual
-case.
+large. ChipForAll's blinky takes minutes, not seconds, because its clock divider
+is 26 bits deep and one output toggle takes 2\*\*25 cycles. A deep divider is the
+most common beginner design there is, so this is not an unusual case.
 
 Two consequences worth planning for:
 
@@ -291,7 +285,7 @@ one of them instead, run yosys yourself and name it.
 SVG rather than the JSON, deliberately: a file every browser and editor opens
 beats one that needs a particular extension installed.
 
-## ✈️ Before the three-minute run (check)
+## ✈️ Before the physical flow (check)
 
 `check` is the pre-flight for the physical design flow. It reads values, not
 just key names, because the mistakes worth catching are all in the values:
@@ -346,7 +340,7 @@ $ c4o-core report
 
   blinky
 
-  die              69.485 x 80.205 um  (5573.04 um^2)
+  die              69.5 x 80.2 um  (5573 um^2)
   utilization      57.1%
   standard cells   198
   setup slack      +4.70 ns  (0 violations)
@@ -356,6 +350,9 @@ $ c4o-core report
   lint warnings    0
   layout           runs/blinky_run/final/render/blinky.png
 ```
+
+Those are one example design's numbers, from one PDK version; the lines are
+what to read.
 
 With no argument it takes the newest `metrics.json` under `runs/` or
 `build/runs/`; name a file to pick a different run. A row it has no metric for
@@ -371,9 +368,9 @@ Every one of those errors the flow by default (`ERROR_ON_MAGIC_DRC` and its
 siblings all default to `True`), so a run that got as far as writing a
 `metrics.json` has already passed them.
 
-The metric keys are the ones a real LibreLane 3.0.14 run emits — antenna, for
-instance, comes from `OpenROAD.CheckAntennas` rather than from a checker step
-the Classic flow does not run. Without this row nothing states the result, and
+The metric keys are the ones a real run emits — antenna, for instance, comes
+from `OpenROAD.CheckAntennas` rather than from a checker step the Classic flow
+does not run. Without this row nothing states the result, and
 the reader is left inferring it from the absence of a crash.
 
 When something *is* wrong — a run stopped part-way, or the checks were turned
@@ -432,8 +429,8 @@ None of the tools in this image read SystemVerilog with unpacked structs, which
 is what `peakrdl regblock` emits:
 
 ```
-yosys 0.33:   ERROR: Only PACKED supported at this time
-iverilog 12:  sorry: Unpacked structs not supported.
+yosys:     ERROR: Only PACKED supported at this time
+iverilog:  sorry: Unpacked structs not supported.
 ```
 
 `sv2v` is the step between. One `.rdl` file, through to gates and to a register
