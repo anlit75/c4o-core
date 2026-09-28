@@ -4,11 +4,14 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from xml.etree import ElementTree
 
 import yaml
+
+import site_page
 
 # ANSI color codes
 GREEN = '\033[92m'
@@ -793,24 +796,8 @@ def find_render(metrics_path):
         return found[0] if relative.startswith(os.pardir) else relative
     return None
 
-def cmd_report(args, config):
-    """
-    Prints the handful of numbers that answer 'is my design any good' -- how big
-    it is, whether it makes timing, what it burns. The flow computes all of this
-    and then leaves it in a 300-key JSON file nobody opens.
-
-    Informational only. It does not fail on a timing violation: closing timing
-    is iterative, and LibreLane does not treat it as fatal either.
-    """
-    path = find_metrics(getattr(args, "metrics", None))
-    log_info(f"Reading metrics from {path}")
-    try:
-        with open(path) as f:
-            metrics = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        log_error(f"Failed to read {path}: {e}")
-        sys.exit(1)
-
+def report_rows(metrics, path):
+    """The (label, value) rows `report` prints, in the order it prints them."""
     rows = []
 
     bbox = metrics.get("design__die__bbox")
@@ -856,6 +843,29 @@ def cmd_report(args, config):
     if render:
         rows.append(("layout", render))
 
+    return rows
+
+def read_metrics(path):
+    log_info(f"Reading metrics from {path}")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        log_error(f"Failed to read {path}: {e}")
+        sys.exit(1)
+
+def cmd_report(args, config):
+    """
+    Prints the handful of numbers that answer 'is my design any good' -- how big
+    it is, whether it makes timing, what it burns. The flow computes all of this
+    and then leaves it in a 300-key JSON file nobody opens.
+
+    Informational only. It does not fail on a timing violation: closing timing
+    is iterative, and LibreLane does not treat it as fatal either.
+    """
+    path = find_metrics(getattr(args, "metrics", None))
+    rows = report_rows(read_metrics(path), path)
+
     if not rows:
         log_error(f"{path} carried none of the metrics this report reads.")
         sys.exit(1)
@@ -867,6 +877,72 @@ def cmd_report(args, config):
     for label, value in rows:
         print(f"  {label.ljust(label_width)}   {value}")
     print()
+
+# One page with what `report` prints, the layout, the schematic and every
+# cocotb verdict, for publishing on GitHub Pages. Everything it needs is copied
+# into this directory, so the directory is the whole site. The markup is in
+# site_page.py; this half finds the files.
+SITE_DIR = "build/site"
+
+COCOTB_RESULTS = [
+    ("cocotb, RTL", "build/cocotb-results.xml"),
+    ("cocotb, gate level", "build/cocotb-gl-results.xml"),
+]
+
+def cmd_site(args, config):
+    """
+    Writes build/site/index.html: the numbers `report` prints, the layout
+    render, the schematic and the cocotb verdicts, on one page. Each part is
+    included when the file behind it exists, so it works after `make cocotb`
+    alone as well as after the full flow.
+
+    It reports; it does not judge. A failed test is shown as failed and the
+    command still succeeds -- the command that ran the test is the gate.
+    """
+    if os.path.isdir(SITE_DIR):
+        shutil.rmtree(SITE_DIR)  # never publish a previous run's picture
+    os.makedirs(SITE_DIR)
+
+    numbers, layout = [], None
+    found = [path for pattern in METRICS_GLOBS for path in glob.glob(pattern)]
+    if found:
+        path = max(found, key=os.path.getmtime)
+        rows = report_rows(read_metrics(path), path)
+        numbers = [(label, value) for label, value in rows if label != "layout"]
+        render = dict(rows).get("layout")
+        if render:
+            layout = "layout.png"
+            shutil.copy(render, os.path.join(SITE_DIR, layout))
+
+    cocotb_runs = []
+    for title, results in COCOTB_RESULTS:
+        if not os.path.exists(results):
+            continue
+        try:
+            seed, cases = site_page.cocotb_cases(results)
+        except ElementTree.ParseError as e:
+            log_error(f"Could not read {results}: {e}")
+            sys.exit(1)
+        cocotb_runs.append((title, seed, cases))
+
+    schematic = None
+    if os.path.exists(SCHEMATIC_PREFIX + ".svg"):
+        schematic = "schematic.svg"
+        shutil.copy(SCHEMATIC_PREFIX + ".svg", os.path.join(SITE_DIR, schematic))
+
+    if not (numbers or layout or cocotb_runs or schematic):
+        log_error(
+            "Nothing to put on the page: no metrics.json under runs/, no cocotb "
+            f"results, no {SCHEMATIC_PREFIX}.svg. Run make cocotb, make schematic "
+            "or make gds first."
+        )
+        sys.exit(1)
+
+    design = config_get(config, "DESIGN_NAME", "design")
+    index = os.path.join(SITE_DIR, "index.html")
+    with open(index, "w") as f:
+        f.write(site_page.render(design, numbers, layout, cocotb_runs, schematic, os.environ))
+    log_info(f"Wrote {index}")
 
 def cmd_pdk(args, config):
     # Same rule as the read path in gatesim_cell_models: PDK_ROOT wins, ./pdks
@@ -965,6 +1041,11 @@ def build_parser():
         help="Path to metrics.json (default: the newest under runs/ or build/runs/)",
     )
     report_parser.set_defaults(func=cmd_report)
+
+    site_parser = subparsers.add_parser(
+        "site", help="Write build/site/index.html: report, layout, schematic, cocotb results"
+    )
+    site_parser.set_defaults(func=cmd_site)
 
     # PDK command
     pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via Ciel")
