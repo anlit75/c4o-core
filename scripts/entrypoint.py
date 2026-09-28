@@ -230,7 +230,18 @@ def cmd_sim(args, config):
 
     ensure_build_dir()
     # iverilog -o build/sim.vvp <files> && vvp build/sim.vvp
-    compile_cmd = ["iverilog", "-o", "build/sim.vvp"]
+    #
+    # -g2012 for the same reason cocotb and gatesim pass it: one source file is
+    # not more or less valid depending on which command reads it. Without it,
+    # `logic` or `always_ff` fails here and passes there, and the physical flow
+    # -- LibreLane reads everything with `read_verilog -sv` -- accepts both.
+    # It is a superset, so Verilog-2005 still compiles, with one exception, and
+    # it was worth measuring rather than guessing: a design using `bit`, `do`,
+    # `final`, `soft`, `global`, `byte` or `type` as an identifier compiled
+    # before this line and does not after it. Not `logic` -- iverilog reserves
+    # that in either mode -- and not on the yosys side, where `read_verilog -sv`
+    # accepted all seven.
+    compile_cmd = ["iverilog", "-g2012", "-o", "build/sim.vvp"]
 
     compile_cmd += root_args(config, test_files, "SIM_TOP")
 
@@ -472,8 +483,10 @@ def cmd_synth(args, config):
     for inc in get_include_dirs(config):
         include_cmds.append(f"verilog_defaults -add -I{inc}")
 
-    # Generate read_verilog commands for each file
-    read_cmds = [f"read_verilog {f}" for f in files]
+    # Generate read_verilog commands for each file. -sv for the reason sim
+    # passes -g2012: the same file has to read the same way everywhere, and
+    # LibreLane's own synthesis reads with -sv too.
+    read_cmds = [f"read_verilog -sv {f}" for f in files]
 
     # Combine commands
     parts = []
@@ -571,7 +584,7 @@ def cmd_schematic(args, config):
     ensure_build_dir()
 
     parts = [f"verilog_defaults -add -I{inc}" for inc in get_include_dirs(config)]
-    parts += [f"read_verilog {f}" for f in files]
+    parts += [f"read_verilog -sv {f}" for f in files]
 
     design_name = config_get(config, "DESIGN_NAME")
     if design_name:
