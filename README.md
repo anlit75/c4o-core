@@ -61,11 +61,19 @@ The engine supports the following commands via its Python entrypoint:
 | `sim` | Compiles and runs simulation using Icarus Verilog on `VERILOG_FILES` + `TEST_FILES`. |
 | `cocotb` | Runs cocotb tests — Python coroutines driving the RTL — on `VERILOG_FILES` + `COCOTB_TESTS`. `--netlist` runs the same tests against the synthesised gates. |
 | `gatesim` | Simulates the **synthesised netlist** against the PDK cell models, on `GATE_TESTS`. |
-| `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
+| `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. One fixed script -- see below. |
 | `schematic` | Draws the circuit as `build/schematic.svg` — the RTL as written, not the synthesised netlist. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `$PDK_ROOT`, or `./pdks` when that is unset. |
 | `check` | Validates the configuration for the physical design flow, values included. Produces no layout — LibreLane does that. `gds` is an alias. |
 | `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power, and the DRC/LVS/antenna signoff result. |
+
+**`synth` runs one fixed Yosys script**, and no variable replaces it: the reads,
+then `synth -top <DESIGN_NAME>`, then `write_json`. What the command answers is
+"does this synthesise, and into how many cells", which is the question worth a
+one-word command. Anything else -- your own passes, your own reports, a script
+you wrote to explain line by line -- is Yosys' own interface, so open a shell in
+this image and run `yosys` there. The physical flow does not use this script
+either: LibreLane runs its own synthesis from `config.yaml`.
 
 ## ⚙️ Configuration
 
