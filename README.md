@@ -63,7 +63,7 @@ The engine supports the following commands via its Python entrypoint:
 | `gatesim` | Simulates the **synthesised netlist** against the PDK cell models, on `GATE_TESTS`. |
 | `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. |
 | `schematic` | Draws the circuit as `build/schematic.svg` — the RTL as written, not the synthesised netlist. |
-| `pdk` | Installs/Enables the Sky130 PDK via Ciel into `./pdks`. |
+| `pdk` | Installs/Enables the Sky130 PDK via Ciel into `$PDK_ROOT`, or `./pdks` when that is unset. |
 | `check` | Validates the configuration for the physical design flow, values included. Produces no layout — LibreLane does that. `gds` is an alias. |
 | `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power, and the DRC/LVS/antenna signoff result. |
 
@@ -232,7 +232,8 @@ STD_CELL_LIBRARY: sky130_fd_sc_hd
 
 It finds the newest netlist under `runs/` or `build/runs/`, and derives the cell
 models from `PDK` and `STD_CELL_LIBRARY` — no third key to disagree with those
-two. Set `PDK_ROOT` if the PDK lives outside `./pdks`.
+two. Set `PDK_ROOT` if the PDK lives outside `./pdks` -- the `pdk` command
+installs where it points, so one copy can serve several checkouts.
 
 **The gate-level testbench has to be a separate file from the RTL one.**
 Synthesis resolves parameters, so a testbench that shrinks the design by

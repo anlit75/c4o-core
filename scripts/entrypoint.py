@@ -856,7 +856,12 @@ def cmd_report(args, config):
     print()
 
 def cmd_pdk(args, config):
-    pdk_root = os.path.join(os.getcwd(), "pdks")
+    # Same rule as the read path in gatesim_cell_models: PDK_ROOT wins, ./pdks
+    # is the default. Installing to a fixed ./pdks while every reader honoured
+    # PDK_ROOT meant the variable could only ever point at a PDK this command
+    # had not installed -- so one 3GB copy per checkout was the only layout
+    # that worked, and a shared read-only PDK was unreachable.
+    pdk_root = os.environ.get("PDK_ROOT") or os.path.join(os.getcwd(), "pdks")
     if not os.path.exists(pdk_root):
         log_info(f"Creating PDK root directory: {pdk_root}")
         os.makedirs(pdk_root)
