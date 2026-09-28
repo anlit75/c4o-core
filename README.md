@@ -66,6 +66,7 @@ The engine supports the following commands via its Python entrypoint:
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `$PDK_ROOT`, or `./pdks` when that is unset. |
 | `check` | Validates the configuration for the physical design flow, values included. Produces no layout — LibreLane does that. `gds` is an alias. |
 | `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power, and the DRC/LVS/antenna signoff result. |
+| `site` | Writes `build/site/`, one page for GitHub Pages: what `report` prints, the layout render, the schematic and every cocotb verdict. |
 
 **`synth` runs one fixed Yosys script**, and no variable replaces it: the reads,
 then `synth -top <DESIGN_NAME>`, then `write_json`. Nothing hands Yosys a liberty
@@ -430,6 +431,23 @@ Two details worth knowing:
 It is informational and never fails: closing timing is iterative, LibreLane does
 not treat a violation as fatal either, and the checks that *are* fatal have
 already had their say by the time this runs.
+
+### One page to share (site)
+
+`site` puts the rows above, the layout render, `build/schematic.svg` and the
+cocotb results (`build/cocotb-results.xml`, and `build/cocotb-gl-results.xml`
+from a `--netlist` run) on one page, `build/site/index.html`, with the images
+copied next to it. The directory is the whole site: upload it with
+`actions/upload-pages-artifact` and GitHub Pages serves it.
+
+Each part appears when the file behind it exists, so the page works after
+`cocotb` alone. The directory is emptied first, so a render from an earlier run
+cannot be published under a later one. Each cocotb table carries the run's seed,
+which is what reproduces a failure the page shows. On GitHub Actions the heading
+links the commit and the run the page came from.
+
+Like `report`, it shows a failed test and still succeeds: the command that ran
+the test is the gate, not the page.
 
 ## 🏗 Architecture
 

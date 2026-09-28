@@ -1192,5 +1192,136 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    # --- site: the page GitHub Pages publishes ---
+
+    # Shaped like a real cocotb 1.9 results file: the seed as a property,
+    # wall-clock `time` next to `sim_time_ns`, a failure as a child element.
+    COCOTB_XML = """<testsuites name="results"><testsuite name="all" package="all">
+<property name="random_seed" value="1790610538" />
+<testcase name="counts_up_by_one" classname="t" time="0.0007" sim_time_ns="81.001" />
+<testcase name="led_is_the_counter_top_bit" classname="t" time="0.0005" sim_time_ns="41.001">
+<failure message="AssertionError" /></testcase>
+</testsuite></testsuites>"""
+
+    def _site(self, config=None):
+        """Runs cmd_site in test_dir and returns the page it wrote."""
+        with contextlib.redirect_stdout(io.StringIO()):
+            entrypoint.cmd_site(MagicMock(), config or {"DESIGN_NAME": "blinky"})
+        with open(os.path.join("build", "site", "index.html")) as f:
+            return f.read()
+
+    def _run_with_render(self):
+        final = os.path.join("runs", "blinky_run", "final")
+        os.makedirs(os.path.join(final, "render"))
+        shutil.copy(self.FIXTURE, final)
+        open(os.path.join(final, "render", "blinky.png"), "w").close()
+
+    def test_site_puts_the_report_the_layout_and_the_tests_on_one_page(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._run_with_render()
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            with open("build/schematic.svg", "w") as f:
+                f.write("<svg/>")
+
+            page = self._site()
+
+            # The same numbers `report` prints for this fixture.
+            self.assertIn("+4.69 ns", page)
+            self.assertIn("29.2%", page)
+            # The layout is shown, not named: its path means nothing on a website.
+            self.assertIn('src="layout.png"', page)
+            self.assertNotIn("runs/blinky_run", page)
+            self.assertTrue(os.path.exists("build/site/layout.png"))
+            self.assertTrue(os.path.exists("build/site/schematic.svg"))
+            # A failure is reported as one, with the seed that reruns it.
+            self.assertIn("1/2 passed", page)
+            self.assertIn('class="FAIL">FAIL', page)
+            self.assertIn("1790610538", page)
+            self.assertIn("81.001", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_leaves_out_what_was_never_run(self):
+        # After `make cocotb` alone there is no layout and no signoff yet, and
+        # the page should say what it has rather than refuse.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+
+            page = self._site()
+
+            self.assertIn("cocotb, RTL", page)
+            self.assertNotIn("Signoff", page)
+            self.assertNotIn("layout.png", page)
+            self.assertNotIn("gate level", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_errors_when_there_is_nothing_to_show(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                self._site()
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_does_not_publish_a_previous_runs_layout(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build/site")
+            open("build/site/layout.png", "w").close()
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+
+            self._site()
+
+            self.assertFalse(os.path.exists("build/site/layout.png"))
+        finally:
+            os.chdir(cwd)
+
+    def test_site_escapes_what_it_did_not_write(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML.replace("counts_up_by_one", "a&lt;b&gt;"))
+
+            page = self._site({"DESIGN_NAME": "<script>x</script>"})
+
+            self.assertNotIn("<script>", page)
+            self.assertIn("a&lt;b&gt;", page)
+        finally:
+            os.chdir(cwd)
+
+    @patch.dict(os.environ, {"GITHUB_SERVER_URL": "https://github.com",
+                             "GITHUB_REPOSITORY": "o/r", "GITHUB_SHA": "9b2e3e3abcdef",
+                             "GITHUB_RUN_ID": "42"})
+    def test_site_links_the_commit_it_shows_when_built_on_actions(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+
+            page = self._site()
+
+            self.assertIn("https://github.com/o/r/commit/9b2e3e3abcdef", page)
+            self.assertIn(">9b2e3e3<", page)
+            self.assertIn("https://github.com/o/r/actions/runs/42", page)
+        finally:
+            os.chdir(cwd)
+
 if __name__ == '__main__':
     unittest.main()

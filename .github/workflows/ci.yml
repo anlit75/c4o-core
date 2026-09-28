@@ -341,6 +341,19 @@ jobs:
           EOF
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test cocotb
 
+      # The unit tests feed `site` a results file shaped by hand. This feeds it
+      # the one the image's own cocotb just wrote, so a cocotb that renames
+      # sim_time_ns or stops recording the seed shows up here rather than as a
+      # page of zeroes. The previous step's results are all passes.
+      - name: The page site writes shows the cocotb run it read
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test site
+          page=build/site/index.html
+          grep -qF "<h1>counter</h1>" "$page" || { echo "the design's name is not the heading"; exit 1; }
+          grep -qE "cocotb, RTL: ([0-9]+)/\1 passed" "$page" || { echo "the page does not report every test passing"; exit 1; }
+          grep -qE "Seed <code>[0-9]+</code>" "$page" || { echo "the page lost the seed that reruns a failure"; exit 1; }
+          grep -qE 'class="num">[1-9][0-9.]*<' "$page" || { echo "every simulated time is zero -- sim_time_ns was not read"; exit 1; }
+
       - name: A failing cocotb test fails the command
         run: |
           cat > tests/smoke/test_failing_cocotb.py <<'EOF'

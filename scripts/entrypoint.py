@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import glob
+import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from xml.etree import ElementTree
@@ -793,24 +795,8 @@ def find_render(metrics_path):
         return found[0] if relative.startswith(os.pardir) else relative
     return None
 
-def cmd_report(args, config):
-    """
-    Prints the handful of numbers that answer 'is my design any good' -- how big
-    it is, whether it makes timing, what it burns. The flow computes all of this
-    and then leaves it in a 300-key JSON file nobody opens.
-
-    Informational only. It does not fail on a timing violation: closing timing
-    is iterative, and LibreLane does not treat it as fatal either.
-    """
-    path = find_metrics(getattr(args, "metrics", None))
-    log_info(f"Reading metrics from {path}")
-    try:
-        with open(path) as f:
-            metrics = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        log_error(f"Failed to read {path}: {e}")
-        sys.exit(1)
-
+def report_rows(metrics, path):
+    """The (label, value) rows `report` prints, in the order it prints them."""
     rows = []
 
     bbox = metrics.get("design__die__bbox")
@@ -856,6 +842,29 @@ def cmd_report(args, config):
     if render:
         rows.append(("layout", render))
 
+    return rows
+
+def read_metrics(path):
+    log_info(f"Reading metrics from {path}")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        log_error(f"Failed to read {path}: {e}")
+        sys.exit(1)
+
+def cmd_report(args, config):
+    """
+    Prints the handful of numbers that answer 'is my design any good' -- how big
+    it is, whether it makes timing, what it burns. The flow computes all of this
+    and then leaves it in a 300-key JSON file nobody opens.
+
+    Informational only. It does not fail on a timing violation: closing timing
+    is iterative, and LibreLane does not treat it as fatal either.
+    """
+    path = find_metrics(getattr(args, "metrics", None))
+    rows = report_rows(read_metrics(path), path)
+
     if not rows:
         log_error(f"{path} carried none of the metrics this report reads.")
         sys.exit(1)
@@ -867,6 +876,145 @@ def cmd_report(args, config):
     for label, value in rows:
         print(f"  {label.ljust(label_width)}   {value}")
     print()
+
+# One page with what `report` prints, the layout, the schematic and every
+# cocotb verdict, for publishing on GitHub Pages. Everything it needs is copied
+# into this directory, so the directory is the whole site.
+SITE_DIR = "build/site"
+
+COCOTB_RESULTS = [
+    ("cocotb, RTL", "build/cocotb-results.xml"),
+    ("cocotb, gate level", "build/cocotb-gl-results.xml"),
+]
+
+def cocotb_cases(path):
+    """
+    The seed and (name, verdict, simulated ns) per testcase of a results file.
+
+    Simulated time rather than the `time` attribute: that one is wall-clock
+    seconds, which rounds to 0.00 for every test of a small design.
+    """
+    try:
+        root = ElementTree.parse(path).getroot()
+    except ElementTree.ParseError as e:
+        log_error(f"Could not read {path}: {e}")
+        sys.exit(1)
+    seed = next((prop.get("value") for prop in root.iter("property")
+                 if prop.get("name") == "random_seed"), None)
+    cases = []
+    for case in root.iter("testcase"):
+        if case.find("failure") is not None or case.find("error") is not None:
+            verdict = "FAIL"
+        elif case.find("skipped") is not None:
+            verdict = "SKIP"
+        else:
+            verdict = "PASS"
+        cases.append((case.get("name", "?"), verdict, float(case.get("sim_time_ns", 0))))
+    return seed, cases
+
+SITE_CSS = """
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
+        --pass: #1a7f37; --fail: #cf222e; --skip: #9a6700; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
+          --pass: #3fb950; --fail: #f85149; --skip: #d29922; }
+}
+body { background: var(--bg); color: var(--fg); margin: 0 auto; max-width: 960px;
+       padding: 16px; font: 16px/1.5 system-ui, sans-serif; }
+header p, footer { color: var(--muted); }
+a { color: inherit; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 4px 12px 4px 0; border-bottom: 1px solid var(--line);
+         overflow-wrap: anywhere; }
+td.num { text-align: right; }
+.PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
+img { max-width: 100%; height: auto; border: 1px solid var(--line); background: #fff; }
+.scroll { overflow-x: auto; }
+"""
+
+def cmd_site(args, config):
+    """
+    Writes build/site/index.html: the numbers `report` prints, the layout
+    render, the schematic and the cocotb verdicts, on one page. Each part is
+    included when the file behind it exists, so it works after `make cocotb`
+    alone as well as after the full flow.
+
+    It reports; it does not judge. A failed test is shown as failed and the
+    command still succeeds -- the command that ran the test is the gate.
+    """
+    design = config_get(config, "DESIGN_NAME", "design")
+    esc = html.escape
+    parts = []
+
+    if os.path.isdir(SITE_DIR):
+        shutil.rmtree(SITE_DIR)  # never publish a previous run's picture
+    os.makedirs(SITE_DIR)
+
+    found = [path for pattern in METRICS_GLOBS for path in glob.glob(pattern)]
+    if found:
+        path = max(found, key=os.path.getmtime)
+        rows = report_rows(read_metrics(path), path)
+        numbers = [(label, value) for label, value in rows if label != "layout"]
+        if numbers:
+            parts.append("<h2>Signoff summary</h2><table>" + "".join(
+                f"<tr><th>{esc(label)}</th><td>{esc(value)}</td></tr>"
+                for label, value in numbers) + "</table>")
+        render = dict(rows).get("layout")
+        if render:
+            shutil.copy(render, os.path.join(SITE_DIR, "layout.png"))
+            parts.append('<h2>Layout</h2><a href="layout.png">'
+                         f'<img src="layout.png" alt="Layout of {esc(design)}"></a>')
+
+    for title, results in COCOTB_RESULTS:
+        if not os.path.exists(results):
+            continue
+        seed, cases = cocotb_cases(results)
+        passed = sum(verdict == "PASS" for _, verdict, _ in cases)
+        # The seed is what turns a failure on this page into one you can rerun.
+        replay = f"<p>Seed <code>{esc(seed)}</code></p>" if seed else ""
+        parts.append(
+            f"<h2>{esc(title)}: {passed}/{len(cases)} passed</h2>{replay}"
+            "<table><tr><th>test</th><th>result</th><th>sim time (ns)</th></tr>" + "".join(
+                f'<tr><td>{esc(name)}</td><td class="{verdict}">{verdict}</td>'
+                f'<td class="num">{sim_ns:g}</td></tr>'
+                for name, verdict, sim_ns in cases) + "</table>")
+
+    schematic = SCHEMATIC_PREFIX + ".svg"
+    if os.path.exists(schematic):
+        shutil.copy(schematic, os.path.join(SITE_DIR, "schematic.svg"))
+        parts.append('<h2>Schematic (RTL)</h2><div class="scroll"><a href="schematic.svg">'
+                     f'<img src="schematic.svg" alt="Schematic of {esc(design)}"></a></div>')
+
+    if not parts:
+        log_error(
+            "Nothing to put on the page: no metrics.json under runs/, no cocotb "
+            f"results, no {schematic}. Run make cocotb, make schematic or make gds first."
+        )
+        sys.exit(1)
+
+    # Only on GitHub Actions, where these say which commit the page shows.
+    source = ""
+    server, repo = os.environ.get("GITHUB_SERVER_URL"), os.environ.get("GITHUB_REPOSITORY")
+    sha, run = os.environ.get("GITHUB_SHA"), os.environ.get("GITHUB_RUN_ID")
+    if server and repo and sha:
+        source = (f'<p>Commit <a href="{esc(server)}/{esc(repo)}/commit/{esc(sha)}">'
+                  f"<code>{esc(sha[:7])}</code></a>")
+        if run:
+            source += f' &middot; <a href="{esc(server)}/{esc(repo)}/actions/runs/{esc(run)}">CI run</a>'
+        source += "</p>"
+
+    page = (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{esc(design)}</title><style>{SITE_CSS}</style></head><body>"
+        f"<header><h1>{esc(design)}</h1>{source}</header>"
+        + "".join(f"<section>{part}</section>" for part in parts)
+        + "<footer><p>Generated by c4o-core <code>site</code>.</p></footer></body></html>\n"
+    )
+    index = os.path.join(SITE_DIR, "index.html")
+    with open(index, "w") as f:
+        f.write(page)
+    log_info(f"Wrote {index}")
 
 def cmd_pdk(args, config):
     # Same rule as the read path in gatesim_cell_models: PDK_ROOT wins, ./pdks
@@ -965,6 +1113,11 @@ def build_parser():
         help="Path to metrics.json (default: the newest under runs/ or build/runs/)",
     )
     report_parser.set_defaults(func=cmd_report)
+
+    site_parser = subparsers.add_parser(
+        "site", help="Write build/site/index.html: report, layout, schematic, cocotb results"
+    )
+    site_parser.set_defaults(func=cmd_site)
 
     # PDK command
     pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via Ciel")
