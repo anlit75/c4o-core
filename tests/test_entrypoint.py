@@ -1133,5 +1133,36 @@ class TestEntrypoint(unittest.TestCase):
             entrypoint.root_args({}, ["a.v", "b.v"], "GATE_TOP")
         self.assertEqual(cm.exception.code, 1)
 
+    @patch('entrypoint.run_command')
+    def test_pdk_installs_where_the_readers_look(self, mock_run):
+        # The install path used to be a fixed ./pdks while every reader honoured
+        # PDK_ROOT, so PDK_ROOT could only ever name a PDK this command had not
+        # installed. One shared read-only copy for many checkouts depends on the
+        # two agreeing.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shared = os.path.join(self.test_dir, "shared-pdks")
+            with patch.dict(os.environ, {"PDK_ROOT": shared}):
+                entrypoint.cmd_pdk(MagicMock(), {})
+            self.assertTrue(os.path.isdir(shared))
+            self.assertIn("--pdk-root", mock_run.call_args[0][0])
+            self.assertEqual(
+                mock_run.call_args[0][0][mock_run.call_args[0][0].index("--pdk-root") + 1],
+                shared,
+            )
+
+            # Unset, it still defaults to ./pdks -- every existing checkout.
+            mock_run.reset_mock()
+            env = {k: v for k, v in os.environ.items() if k != "PDK_ROOT"}
+            with patch.dict(os.environ, env, clear=True):
+                entrypoint.cmd_pdk(MagicMock(), {})
+            self.assertEqual(
+                mock_run.call_args[0][0][mock_run.call_args[0][0].index("--pdk-root") + 1],
+                os.path.join(self.test_dir, "pdks"),
+            )
+        finally:
+            os.chdir(cwd)
+
 if __name__ == '__main__':
     unittest.main()
