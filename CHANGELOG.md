@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.8.2](https://github.com/anlit75/c4o-core/compare/v2.8.1...v2.8.2) (2026-09-28)
+
+
+### Fixes
+
+* install the PDK where PDK_ROOT points, not always ./pdks ([#30](https://github.com/anlit75/c4o-core/issues/30)) ([a5ac5f9](https://github.com/anlit75/c4o-core/commit/a5ac5f957a727fae4dd64dc7da264e60d200ea7c))
+
+
+### Documentation
+
+* remove what expires, and say each key once ([#28](https://github.com/anlit75/c4o-core/issues/28)) ([9350e5a](https://github.com/anlit75/c4o-core/commit/9350e5a1825248598af736e8fe8dfd5fe52917f2))
+
 ## [2.8.1](https://github.com/anlit75/c4o-core/compare/v2.8.0...v2.8.1) (2026-09-26)
 
 
