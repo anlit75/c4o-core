@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.8.3](https://github.com/anlit75/c4o-core/compare/v2.8.2...v2.8.3) (2026-09-28)
+
+
+### Fixes
+
+* read SystemVerilog in every command, not two of four ([#34](https://github.com/anlit75/c4o-core/issues/34)) ([f777b6a](https://github.com/anlit75/c4o-core/commit/f777b6ade59c64b0ff1007d0a5f73237653a685a))
+
+
+### Documentation
+
+* say that synth runs one fixed script, and where to go instead ([#31](https://github.com/anlit75/c4o-core/issues/31)) ([67d9b2d](https://github.com/anlit75/c4o-core/commit/67d9b2d37e73f2ac2eea3c033078e6993ac7ee18))
+* synth maps to generic cells, so it has no area to report ([#33](https://github.com/anlit75/c4o-core/issues/33)) ([8e0fc79](https://github.com/anlit75/c4o-core/commit/8e0fc79975f610f29920eab04a63d34f87ba9d7b))
+
 ## [2.8.2](https://github.com/anlit75/c4o-core/compare/v2.8.1...v2.8.2) (2026-09-28)
 
 
