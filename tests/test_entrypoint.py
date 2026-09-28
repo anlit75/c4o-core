@@ -1,6 +1,7 @@
 import sys
 import os
 import io
+import json
 import contextlib
 import unittest
 import tempfile
@@ -1322,6 +1323,97 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("https://github.com/o/r/actions/runs/42", page)
         finally:
             os.chdir(cwd)
+
+    # --- site: what the run's own reports say, beyond `report` ---
+
+    # A real ChipForAll blinky run under LibreLane 3.0.14, trimmed: the metrics
+    # the page reads, synthesis's stat.json, the STA step's DEFAULT_CORNER, the
+    # default corner's power.rpt, and the worst corner's max.rpt cut after its
+    # first path.
+    RUN_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "run")
+
+    def _run_site(self, edit_metrics=None):
+        shutil.copytree(self.RUN_FIXTURE, "runs")
+        if edit_metrics:
+            path = "runs/blinky_run/final/metrics.json"
+            with open(path) as f:
+                metrics = json.load(f)
+            edit_metrics(metrics)
+            with open(path, "w") as f:
+                json.dump(metrics, f)
+        return self._site()
+
+    def test_site_shows_signoff_timing_area_and_power_from_a_real_run(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site()
+
+            for check in ("Magic DRC", "KLayout DRC", "LVS", "antenna", "XOR"):
+                self.assertIn(f"<td>{check}</td>", page)
+            self.assertEqual(page.count('class="PASS">PASS'), 5)
+            # The worst corner by the metrics, and its path as OpenSTA wrote it.
+            self.assertIn("<code>max_ss_100C_1v60</code>", page)
+            self.assertIn("Startpoint: _182_", page)
+            self.assertIn("4.697966   slack (MET)", page)
+            # stat.json: 1366.3104 total, 683.1552 of it sequential.
+            # Both rows: this design splits exactly in half, so one row
+            # reading the total would still leave a 683.2 on the page.
+            self.assertEqual(page.count(">683.2 um"), 2)
+            self.assertIn("1,906.8 um", page)
+            # power.rpt of DEFAULT_CORNER, not the bare power__total metric,
+            # which in this run is max_ff's 0.290 mW.
+            self.assertIn("<code>nom_tt_025C_1v80</code>", page)
+            self.assertIn(">247.9<", page)
+            self.assertIn(">54.4%<", page)
+            self.assertNotIn("<th>power</th>", page)
+            self.assertNotIn("<th>signoff</th>", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_shows_the_worst_corners_path_or_none(self):
+        # Make a corner with no max.rpt in the fixture the worst. Showing the
+        # max_ss path anyway would present a path that is not the worst one.
+        def worsen(metrics):
+            metrics["timing__setup__ws__corner:nom_tt_025C_1v80"] = -1.0
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site(worsen)
+            self.assertNotIn("Worst setup path", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_marks_a_failed_signoff_check(self):
+        def dirty(metrics):
+            metrics["design__lvs_error__count"] = 3
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site(dirty)
+            self.assertIn('<td>LVS</td><td class="num">3</td><td class="FAIL">FAIL</td>', page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_keeps_the_power_row_when_there_is_no_power_table(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            os.remove("runs/blinky_run/55-openroad-stapostpnr/nom_tt_025C_1v80/power.rpt")
+            page = self._site()
+            self.assertNotIn("<h2>Power</h2>", page)
+            self.assertIn("<th>power</th>", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_first_path_stops_at_the_first_slack(self):
+        text = ("Startpoint: a\nEndpoint: b\n  1.0   slack (VIOLATED)\n"
+                "Startpoint: c\n  2.0   slack (MET)\n")
+        path = entrypoint.site_page.first_path(text)
+        self.assertTrue(path.startswith("Startpoint: a"))
+        self.assertTrue(path.endswith("slack (VIOLATED)"))
+        self.assertNotIn("Startpoint: c", path)
 
 if __name__ == '__main__':
     unittest.main()

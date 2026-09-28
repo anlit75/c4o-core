@@ -66,7 +66,7 @@ The engine supports the following commands via its Python entrypoint:
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `$PDK_ROOT`, or `./pdks` when that is unset. |
 | `check` | Validates the configuration for the physical design flow, values included. Produces no layout — LibreLane does that. `gds` is an alias. |
 | `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power, and the DRC/LVS/antenna signoff result. |
-| `site` | Writes `build/site/`, one page for GitHub Pages: what `report` prints, the layout render, the schematic and every cocotb verdict. |
+| `site` | Writes `build/site/`, one page for GitHub Pages: what `report` prints, signoff checks, the worst setup path, area and power breakdowns, the layout render, the schematic and every cocotb verdict. |
 
 **`synth` runs one fixed Yosys script**, and no variable replaces it: the reads,
 then `synth -top <DESIGN_NAME>`, then `write_json`. Nothing hands Yosys a liberty
@@ -448,6 +448,20 @@ links the commit and the run the page came from.
 
 Like `report`, it shows a failed test and still succeeds: the command that ran
 the test is the gate, not the page.
+
+From the run directory's own reports, when the `metrics.json` sits at
+`<run>/final/`, it adds four more sections:
+
+| Section | Read from | What to keep in mind |
+|---|---|---|
+| Signoff checks | `metrics.json` | One row per check, with its error count. |
+| Worst setup path | `*-openroad-stapostpnr/<corner>/max.rpt` | The corner whose `timing__setup__ws__corner:*` is lowest, and that report's first path, printed as OpenSTA wrote it. Left out if that corner has no `max.rpt`, rather than showing a path that is not the worst one. |
+| Area | synthesis's `reports/stat.json` and `metrics.json` | Flip-flops and combinational logic after synthesis, then all standard cells after routing. Not per module: LibreLane's default `SYNTH_HIERARCHY_MODE` is `flatten`, so module boundaries are gone by then. |
+| Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential / combinational / clock split, as internal, switching and leakage. The activity is OpenSTA's default, not a simulation's, so it shows where power goes, not what a workload draws. |
+
+The power table reads `power.rpt` rather than the bare `power__*` metrics
+because those carry one corner's numbers without naming it. When the table is
+there, the summary drops its `power` row so the page does not give two numbers.
 
 ## 🏗 Architecture
 

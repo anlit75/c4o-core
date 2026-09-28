@@ -889,6 +889,67 @@ COCOTB_RESULTS = [
     ("cocotb, gate level", "build/cocotb-gl-results.xml"),
 ]
 
+def run_details(metrics_path, metrics):
+    """
+    What the page shows beyond `report`'s rows, from the reports LibreLane
+    leaves next to a run's metrics.json. Only when the file sits at
+    <run>/final/metrics.json, for the reason find_render gives. Any part whose
+    report is missing is left out.
+
+    The power table is read from the default corner's power.rpt rather than
+    from the bare power__* metrics: those carry one corner's numbers with no
+    corner named (in a real 3.0.14 run, max_ff_n40C_1v95's).
+    """
+    details = {"signoff": [(label, metrics[key]) for label, key in SIGNOFF_CHECKS
+                           if metrics.get(key) is not None]}
+    final_dir = os.path.dirname(os.path.abspath(metrics_path))
+    if os.path.basename(final_dir) != "final":
+        return details
+    run_dir = os.path.dirname(final_dir)
+
+    def newest(pattern):
+        found = sorted(glob.glob(os.path.join(run_dir, pattern)))
+        return found[-1] if found else None
+
+    def read(path):
+        with open(path) as f:
+            return f.read()
+
+    sta = newest("*-openroad-stapostpnr")
+    corners = {key.split(":", 1)[1]: value for key, value in metrics.items()
+               if key.startswith("timing__setup__ws__corner:") and value is not None}
+    if sta and corners:
+        worst = min(corners, key=corners.get)
+        report = os.path.join(sta, worst, "max.rpt")
+        path = site_page.first_path(read(report)) if os.path.exists(report) else None
+        if path:
+            details["timing"] = (worst, path)
+
+    if sta and os.path.exists(os.path.join(sta, "config.json")):
+        corner = json.loads(read(os.path.join(sta, "config.json"))).get("DEFAULT_CORNER")
+        report = os.path.join(sta, corner or "", "power.rpt")
+        rows = site_page.power_groups(read(report)) if corner and os.path.exists(report) else []
+        if rows:
+            details["power"] = (corner, rows)
+
+    stat = newest("*-yosys-synthesis/reports/stat.json")
+    design = json.loads(read(stat)).get("design", {}) if stat else {}
+    area = []
+    if "area" in design and "sequential_area" in design:
+        area += [("flip-flops, after synthesis", design["sequential_area"]),
+                 ("combinational logic, after synthesis",
+                  design["area"] - design["sequential_area"])]
+    # Counted against a real run: its 198 standard cells were synthesis's 110
+    # plus 42 clock-tree, hold and fanout buffers and 46 well taps.
+    if metrics.get("design__instance__area__stdcell") is not None:
+        area.append(("standard cells after routing, with the clock tree, buffers "
+                     "and well taps the flow added", metrics["design__instance__area__stdcell"]))
+    if metrics.get("design__instance__area__macros") is not None:
+        area.append(("macros (memories, hard blocks)", metrics["design__instance__area__macros"]))
+    if area:
+        details["area"] = area
+    return details
+
 def cmd_site(args, config):
     """
     Writes build/site/index.html: the numbers `report` prints, the layout
@@ -903,12 +964,18 @@ def cmd_site(args, config):
         shutil.rmtree(SITE_DIR)  # never publish a previous run's picture
     os.makedirs(SITE_DIR)
 
-    numbers, layout = [], None
+    numbers, layout, details = [], None, {}
     found = [path for pattern in METRICS_GLOBS for path in glob.glob(pattern)]
     if found:
         path = max(found, key=os.path.getmtime)
-        rows = report_rows(read_metrics(path), path)
-        numbers = [(label, value) for label, value in rows if label != "layout"]
+        metrics = read_metrics(path)
+        rows = report_rows(metrics, path)
+        details = run_details(path, metrics)
+        # Each has a section of their own on the page. Power only when that
+        # section exists: its row is the bare metric, which names no corner
+        # and would disagree with the table next to it.
+        own = {"layout", "signoff"} | ({"power"} if "power" in details else set())
+        numbers = [(label, value) for label, value in rows if label not in own]
         render = dict(rows).get("layout")
         if render:
             layout = "layout.png"
@@ -941,7 +1008,8 @@ def cmd_site(args, config):
     design = config_get(config, "DESIGN_NAME", "design")
     index = os.path.join(SITE_DIR, "index.html")
     with open(index, "w") as f:
-        f.write(site_page.render(design, numbers, layout, cocotb_runs, schematic, os.environ))
+        f.write(site_page.render(design, numbers, layout, cocotb_runs, schematic, os.environ,
+                                 **details))
     log_info(f"Wrote {index}")
 
 def cmd_pdk(args, config):
