@@ -68,7 +68,12 @@ The engine supports the following commands via its Python entrypoint:
 | `report` | Summarises a finished LibreLane run: area, utilization, cell count, timing slack, power, and the DRC/LVS/antenna signoff result. |
 
 **`synth` runs one fixed Yosys script**, and no variable replaces it: the reads,
-then `synth -top <DESIGN_NAME>`, then `write_json`. What the command answers is
+then `synth -top <DESIGN_NAME>`, then `write_json`. Nothing hands Yosys a liberty
+file, so the output is its own generic cells and not the PDK's -- `$_DFF_PP0_`,
+`$_OR_`, `$_XOR_`, 94 of them for a design `report` later counts as 198 standard
+cells. That makes this command an answer to "does it synthesise, and roughly how
+much logic", and not a source of area or timing: those come from the physical
+flow, which synthesises again against the real library. What the command answers is
 "does this synthesise, and into how many cells", which is the question worth a
 one-word command. Anything else -- your own passes, your own reports, a script
 you wrote to explain line by line -- is Yosys' own interface, so open a shell in
