@@ -115,8 +115,8 @@ class TestEntrypoint(unittest.TestCase):
             yosys_cmd = call_args[2]
 
             # Verify RTL files are included
-            self.assertIn("read_verilog src/sub/sub.v", yosys_cmd)
-            self.assertIn("read_verilog src/top.v", yosys_cmd)
+            self.assertIn("read_verilog -sv src/sub/sub.v", yosys_cmd)
+            self.assertIn("read_verilog -sv src/top.v", yosys_cmd)
 
             # Verify Test files are NOT included for Synth
             self.assertNotIn("test/top_tb.v", yosys_cmd)
@@ -1161,6 +1161,34 @@ class TestEntrypoint(unittest.TestCase):
                 mock_run.call_args[0][0][mock_run.call_args[0][0].index("--pdk-root") + 1],
                 os.path.join(self.test_dir, "pdks"),
             )
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    def test_every_command_reads_the_same_language(self, mock_run):
+        # One .sv file used to pass two commands and fail two: sim called
+        # iverilog with no -g2012 and synth read with no -sv, while cocotb,
+        # gatesim and LibreLane all accept SystemVerilog. A student's file
+        # is not more or less valid depending on which make target reads it.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            config = {"DESIGN_NAME": "top", "VERILOG_FILES": ["dir::src/top.v"],
+                      "//TEST_FILES": ["dir::test/top_tb.v"]}
+
+            entrypoint.cmd_sim(MagicMock(files=None, test_files=None), config)
+            argv = mock_run.call_args_list[0][0][0]
+            self.assertEqual(argv[0], "iverilog")
+            self.assertIn("-g2012", argv)
+
+            for cmd in (entrypoint.cmd_synth, entrypoint.cmd_schematic):
+                mock_run.reset_mock()
+                cmd(MagicMock(files=None), config)
+                script = mock_run.call_args[0][0][-1]
+                self.assertIn("read_verilog", script)
+                for piece in script.split(";"):
+                    if "read_verilog" in piece:
+                        self.assertIn("-sv", piece, f"{cmd.__name__}: {piece.strip()}")
         finally:
             os.chdir(cwd)
 

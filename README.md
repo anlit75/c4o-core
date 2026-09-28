@@ -71,14 +71,26 @@ The engine supports the following commands via its Python entrypoint:
 then `synth -top <DESIGN_NAME>`, then `write_json`. Nothing hands Yosys a liberty
 file, so the output is its own generic cells and not the PDK's -- `$_DFF_PP0_`,
 `$_OR_`, `$_XOR_`, 94 of them for a design `report` later counts as 198 standard
-cells. That makes this command an answer to "does it synthesise, and roughly how
-much logic", and not a source of area or timing: those come from the physical
-flow, which synthesises again against the real library. What the command answers is
-"does this synthesise, and into how many cells", which is the question worth a
-one-word command. Anything else -- your own passes, your own reports, a script
-you wrote to explain line by line -- is Yosys' own interface, so open a shell in
-this image and run `yosys` there. The physical flow does not use this script
-either: LibreLane runs its own synthesis from `config.yaml`.
+cells. So this command answers "does it synthesise, and roughly how much logic",
+which is the question worth a one-word command, and it is not a source of area or
+timing: those come from the physical flow, which synthesises again against the
+real library. Anything else -- your own passes, your own reports, a script you
+wrote to explain line by line -- is Yosys' own interface, so open a shell in this
+image and run `yosys` there.
+
+**Every command reads SystemVerilog.** `sim` passes `iverilog -g2012`, `synth`
+and `schematic` read with `read_verilog -sv`, `cocotb` and `gatesim` always did,
+and LibreLane reads with `-sv` too -- so `logic`, `always_ff` and the rest of the
+synthesisable subset behave the same whichever command opens the file. Before
+2.8.4 they did not: the same file passed two of these commands and failed two.
+
+What that costs, measured rather than assumed: `iverilog -g2012` rejects `bit`,
+`do`, `final`, `soft`, `global`, `byte` and `type` as identifiers, which
+Verilog-2005 allowed, so a design using one of those as a signal name has to
+rename it. `read_verilog -sv` accepted all seven, so the yosys side costs
+nothing. What `-sv` does not buy is an `interface` as a synthesisable module
+boundary: yosys parses the declaration and then fails at `hierarchy`, which is
+its own limitation rather than something a flag changes.
 
 ## ⚙️ Configuration
 
