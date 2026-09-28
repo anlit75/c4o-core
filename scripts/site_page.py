@@ -26,6 +26,7 @@ th, td { text-align: left; padding: 4px 12px 4px 0; border-bottom: 1px solid var
          overflow-wrap: anywhere; }
 td.num { text-align: right; }
 .PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
+pre { margin: 0; font-size: 13px; line-height: 1.4; }
 img { max-width: 100%; height: auto; border: 1px solid var(--line); background: #fff; }
 .scroll { overflow-x: auto; }
 """
@@ -54,7 +55,40 @@ def cocotb_cases(path):
         cases.append((case.get("name", "?"), verdict, float(case.get("sim_time_ns", 0))))
     return seed, cases
 
-def render(design, numbers, layout, cocotb_runs, schematic, env):
+def power_groups(text):
+    """
+    The group rows of an OpenSTA `report_power`, as
+    (group, internal, switching, leakage, total) in watts, Total row last.
+    """
+    rows = []
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) >= 5 and fields[0] in (
+            "Sequential", "Combinational", "Clock", "Macro", "Pad", "Total"
+        ):
+            try:
+                rows.append((fields[0], *(float(v) for v in fields[1:5])))
+            except ValueError:
+                continue
+    return rows
+
+def first_path(text):
+    """
+    The first path of an OpenSTA `report_checks`, from its Startpoint line to
+    its slack line inclusive, or None. report_checks sorts by slack, so the
+    first path is the worst one in that file.
+    """
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("Startpoint:")), None)
+    if start is None:
+        return None
+    for end in range(start, len(lines)):
+        if lines[end].rstrip().endswith(("slack (MET)", "slack (VIOLATED)")):
+            return "\n".join(lines[start:end + 1])
+    return None
+
+def render(design, numbers, layout, cocotb_runs, schematic, env,
+           signoff=(), timing=None, area=(), power=None):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -64,14 +98,54 @@ def render(design, numbers, layout, cocotb_runs, schematic, env):
     cocotb_runs  -- (title, seed, cases) per results file, cases as above
     schematic    -- the schematic's name next to the page, or None
     env          -- os.environ; on GitHub Actions it names the commit and run
+    signoff      -- (check, error count) per signoff check the run reported
+    timing       -- (corner, path text) for the worst setup path, or None
+    area         -- (label, um^2) rows
+    power        -- (corner, power_groups rows), or None
     """
     esc = html.escape
     parts = []
 
     if numbers:
-        parts.append("<h2>Signoff summary</h2><table>" + "".join(
+        parts.append("<h2>Summary</h2><table>" + "".join(
             f"<tr><th>{esc(label)}</th><td>{esc(value)}</td></tr>"
             for label, value in numbers) + "</table>")
+
+    if signoff:
+        parts.append(
+            "<h2>Signoff checks</h2><table><tr><th>check</th><th>errors</th><th>result</th></tr>"
+            + "".join(
+                f'<tr><td>{esc(check)}</td><td class="num">{count}</td>'
+                f'<td class="{"FAIL" if count else "PASS"}">{"FAIL" if count else "PASS"}</td></tr>'
+                for check, count in signoff) + "</table>")
+
+    if timing:
+        corner, path = timing
+        parts.append(
+            f"<h2>Worst setup path</h2><p>Corner <code>{esc(corner)}</code>, the one with "
+            "the least setup slack. Printed as OpenSTA reports it.</p>"
+            f'<div class="scroll"><pre>{esc(path)}</pre></div>')
+
+    if area:
+        parts.append("<h2>Area</h2><table>" + "".join(
+            f'<tr><th>{esc(label)}</th><td class="num">{value:,.1f} um&sup2;</td></tr>'
+            for label, value in area) + "</table>")
+
+    if power:
+        corner, rows = power
+        total = next((r[4] for r in rows if r[0] == "Total"), 0) or 1
+        uw = lambda w: f"{w * 1e6:.4g}"
+        parts.append(
+            f"<h2>Power</h2><p>Corner <code>{esc(corner)}</code>, in &micro;W. Dynamic is internal "
+            "plus switching; static is leakage. Switching activity is OpenSTA's default, "
+            "not taken from simulation, so this is an estimate of where power goes, "
+            "not a measurement of a workload.</p>"
+            "<table><tr><th>group</th><th>internal</th><th>switching</th><th>leakage</th>"
+            "<th>total</th><th>share</th></tr>" + "".join(
+                f'<tr><td>{esc(group)}</td><td class="num">{uw(i)}</td><td class="num">{uw(sw)}</td>'
+                f'<td class="num">{uw(lk)}</td><td class="num">{uw(t)}</td>'
+                f'<td class="num">{t / total:.1%}</td></tr>'
+                for group, i, sw, lk, t in rows) + "</table>")
 
     if layout:
         parts.append(f'<h2>Layout</h2><a href="{esc(layout)}">'
