@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.0](https://github.com/anlit75/c4o-core/compare/v2.9.0...v2.10.0) (2026-09-28)
+
+
+### Features
+
+* site shows signoff checks, worst setup path, area and power ([#37](https://github.com/anlit75/c4o-core/issues/37)) ([96b9de8](https://github.com/anlit75/c4o-core/commit/96b9de8f6aac664f0d7c2eec5a3b20b0d4d751e2))
+
 ## [2.9.0](https://github.com/anlit75/c4o-core/compare/v2.8.3...v2.9.0) (2026-09-28)
 
 
