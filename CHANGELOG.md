@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.9.0](https://github.com/anlit75/c4o-core/compare/v2.8.3...v2.9.0) (2026-09-28)
+
+
+### Features
+
+* site writes one page GitHub Pages can publish ([#35](https://github.com/anlit75/c4o-core/issues/35)) ([0c0532b](https://github.com/anlit75/c4o-core/commit/0c0532b7534a036f3b0c01a8427f546fea897f67))
+
 ## [2.8.3](https://github.com/anlit75/c4o-core/compare/v2.8.2...v2.8.3) (2026-09-28)
 
 
