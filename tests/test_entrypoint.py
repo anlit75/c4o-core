@@ -1415,5 +1415,171 @@ class TestEntrypoint(unittest.TestCase):
         self.assertTrue(path.endswith("slack (VIOLATED)"))
         self.assertNotIn("Startpoint: c", path)
 
+    # --- report: power names its corner ---
+
+    def test_report_power_is_the_default_corners_and_says_so(self):
+        # The bare power__total in this real run is max_ff's 0.290 mW; the
+        # default corner, nom_tt, is 0.248.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            out = self._report("runs/blinky_run/final/metrics.json")
+            self.assertIn("0.248 mW  (nom_tt_025C_1v80)", out)
+            self.assertNotIn("0.290", out)
+        finally:
+            os.chdir(cwd)
+
+    def test_report_power_without_a_run_directory_says_the_corner_is_unknown(self):
+        self.assertIn("0.292 mW  (corner not named)", self._report(self.FIXTURE))
+
+    # --- the block diagram ---
+
+    FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
+
+    def _netlist(self, name):
+        with open(os.path.join(self.FIXTURES, name)) as f:
+            return json.load(f)
+
+    def test_block_diagram_draws_submodules_by_their_source_names(self):
+        # yosys 0.33's JSON of the UART's top, trimmed to that module. Three
+        # of its five instances are parameterised and typed $paramod$<hash>\...
+        dot = entrypoint.diagrams.block_diagram_dot(self._netlist("apb_uart_top.json"), "apb_uart_sv")
+        for name, module in (("uart_rx_i", "uart_rx"), ("uart_tx_i", "uart_tx"),
+                             ("uart_rx_fifo_i", "io_generic_fifo"),
+                             ("uart_tx_fifo_i", "io_generic_fifo"),
+                             ("uart_interrupt_i", "uart_interrupt")):
+            self.assertIn(f'"block:{name}" [label="{name}\n{module}"', dot)
+        self.assertNotIn("$paramod", dot)
+        # A direct block-to-block net, and one through the top's own logic.
+        self.assertIn('"block:uart_tx_fifo_i" -> "block:uart_tx_i" [label="tx_data, tx_valid"]', dot)
+        self.assertIn('"logic" -> "port:PRDATA"', dot)
+        # Clock and reset reach all five: a caption, not ten edges.
+        self.assertIn('label="CLK, RSTN reach every block"', dot)
+        self.assertNotIn('"port:CLK" ->', dot)
+        self.assertIn('"port:rx_i" -> "block:uart_rx_i"', dot)
+
+    def test_block_diagram_is_none_for_a_top_without_submodules(self):
+        netlist = self._netlist("counter_wrap.json")
+        self.assertIsNone(entrypoint.diagrams.block_diagram_dot(netlist, "counter"))
+        self.assertIsNotNone(entrypoint.diagrams.block_diagram_dot(netlist, "counter_wrap"))
+
+    @patch('entrypoint.run_command')
+    def test_draw_blocks_runs_dot_only_when_there_is_something_to_draw(self, mock_run):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            netlist = self._netlist("counter_wrap.json")
+            with open("build/n.json", "w") as f:
+                json.dump(netlist, f)
+            with contextlib.redirect_stdout(io.StringIO()):
+                entrypoint.draw_blocks("build/n.json")
+            self.assertEqual(mock_run.call_args[0][0][:2], ["dot", "-Tsvg"])
+
+            mock_run.reset_mock()
+            netlist["modules"]["counter"]["attributes"]["top"] = "1"
+            del netlist["modules"]["counter_wrap"]["attributes"]["top"]
+            with open("build/n.json", "w") as f:
+                json.dump(netlist, f)
+            with contextlib.redirect_stdout(io.StringIO()):
+                entrypoint.draw_blocks("build/n.json")
+            mock_run.assert_not_called()
+        finally:
+            os.chdir(cwd)
+
+    # --- the waveform ---
+
+    BLINKY_VCD = os.path.join(os.path.dirname(__file__), "fixtures", "blinky.vcd")
+
+    def test_read_vcd_names_signals_by_their_scope(self):
+        # Icarus's VCD of ChipForAll's tb_blinky, 1ps timescale.
+        with open(self.BLINKY_VCD) as f:
+            ps, signals = entrypoint.diagrams.read_vcd(f.read())
+        self.assertEqual(ps, 1)
+        width, changes = signals["tb_blinky.uut.count"]
+        self.assertEqual(width, 4)
+        self.assertEqual(changes[:3], [(0, "x"), (5000, "0"), (25000, "1")])
+        self.assertEqual(signals["tb_blinky.led"][1][1], (5000, "0"))
+
+    def test_read_vcd_returns_to_the_outer_scope_after_upscope(self):
+        vcd = ("$scope module t $end $scope module u $end $var wire 1 ! a $end "
+               "$upscope $end $var wire 1 \" b $end $upscope $end $enddefinitions $end\n")
+        _, signals = entrypoint.diagrams.read_vcd(vcd)
+        self.assertEqual(sorted(signals), ["t.b", "t.u.a"])
+
+    def test_waveform_refuses_a_signal_the_vcd_does_not_declare(self):
+        with open(self.BLINKY_VCD) as f:
+            text = f.read()
+        with self.assertRaises(KeyError) as cm:
+            entrypoint.diagrams.waveform_svg(text, ["tb_blinky.nope", "tb_blinky.led", "tb_blinky.nah"])
+        # Every one of them, so a config with three typos takes one fix, not three.
+        self.assertIn("tb_blinky.nope", str(cm.exception))
+        self.assertIn("tb_blinky.nah", str(cm.exception))
+
+    def test_waveform_draws_one_segment_per_actual_change(self):
+        # Writing the value a signal already holds is still recorded in a
+        # VCD; drawn, it would be a boundary where nothing changed.
+        vcd = ("$timescale 1ns $end $scope module t $end $var reg 4 ! v $end "
+               "$upscope $end $enddefinitions $end\n#0\nb11 !\n#10\nb11 !\n#20\nb101 !\n#30\nb101 !\n")
+        svg = entrypoint.diagrams.waveform_svg(vcd, ["t.v"])
+        self.assertEqual(svg.count("<rect x="), 2)
+        self.assertIn(">3<", svg)
+        self.assertIn(">5<", svg)
+        self.assertIn(">30 ns<", svg)
+
+    def _wave_site(self, signals, vcd=True):
+        os.makedirs("build")
+        if vcd:
+            shutil.copy(self.BLINKY_VCD, "build/wave.vcd")
+        with open("build/cocotb-results.xml", "w") as f:
+            f.write(self.COCOTB_XML)
+        return self._site({"DESIGN_NAME": "blinky", "//WAVE_SIGNALS": signals})
+
+    def test_site_draws_the_signals_wave_signals_names(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._wave_site(["tb_blinky.clk", "tb_blinky.uut.count"])
+            self.assertIn('<img src="wave.svg"', page)
+            self.assertIn("build/wave.vcd", page)
+            with open("build/site/wave.svg") as f:
+                self.assertIn(">count<", f.read())
+        finally:
+            os.chdir(cwd)
+
+    def test_site_fails_on_a_wave_signal_that_is_not_there(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                self._wave_site(["tb_blinky.cnt"])
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_without_a_vcd_leaves_the_waveform_out(self):
+        # After `make cocotb` alone there is no VCD yet; that is not an error.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._wave_site(["tb_blinky.clk"], vcd=False)
+            self.assertNotIn("wave.svg", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_shows_the_block_diagram_schematic_drew(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/blocks.svg", "w") as f:
+                f.write("<svg/>")
+            page = self._site()
+            self.assertIn('<img src="blocks.svg"', page)
+            self.assertTrue(os.path.exists("build/site/blocks.svg"))
+        finally:
+            os.chdir(cwd)
+
 if __name__ == '__main__':
     unittest.main()

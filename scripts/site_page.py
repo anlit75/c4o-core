@@ -88,7 +88,7 @@ def first_path(text):
     return None
 
 def render(design, numbers, layout, cocotb_runs, schematic, env,
-           signoff=(), timing=None, area=(), power=None):
+           signoff=(), timing=None, area=(), power=None, blocks=None, wave=None):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -102,6 +102,8 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     timing       -- (corner, path text) for the worst setup path, or None
     area         -- (label, um^2) rows
     power        -- (corner, power_groups rows), or None
+    blocks       -- the block diagram's name next to the page, or None
+    wave         -- (waveform's name next to the page, VCD it came from), or None
     """
     esc = html.escape
     parts = []
@@ -161,6 +163,20 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
                 f'<tr><td>{esc(name)}</td><td class="{verdict}">{verdict}</td>'
                 f'<td class="num">{sim_ns:g}</td></tr>'
                 for name, verdict, sim_ns in cases) + "</table>")
+
+    if wave:
+        image, vcd = wave
+        parts.append(f"<h2>Waveform</h2><p>From <code>{esc(vcd)}</code>, the signals "
+                     "<code>WAVE_SIGNALS</code> names.</p>"
+                     f'<div class="scroll"><a href="{esc(image)}"><img src="{esc(image)}" '
+                     f'alt="Waveform of {esc(design)}"></a></div>')
+
+    if blocks:
+        parts.append("<h2>Block diagram</h2><p>The top module as its submodules and the "
+                     "nets between them. Wiring that passes through the top's own gates "
+                     "meets them at the dashed box.</p>"
+                     f'<div class="scroll"><a href="{esc(blocks)}"><img src="{esc(blocks)}" '
+                     f'alt="Block diagram of {esc(design)}"></a></div>')
 
     if schematic:
         parts.append(f'<h2>Schematic (RTL)</h2><div class="scroll"><a href="{esc(schematic)}">'
