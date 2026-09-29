@@ -286,7 +286,7 @@ Two consequences worth planning for:
 ```console
 $ c4o-core schematic
 [INFO] Wrote build/schematic.svg
-[INFO] Wrote build/blocks.svg
+[INFO] Wrote build/blocks/: 6 diagrams, top.svg first
 ```
 
 An SVG of the design: flops, adders, muxes, carrying the names from your
@@ -314,14 +314,23 @@ one of them instead, run yosys yourself and name it.
 SVG rather than the JSON, deliberately: a file every browser and editor opens
 beats one that needs a particular extension installed.
 
-**The block diagram.** In a design built from blocks, the schematic's muxes and
-flops bury the blocks. So `schematic` also writes the top module's netlist as
-`build/schematic.json` and, when the top instantiates a module of the design,
-draws `build/blocks.svg`: one box per instance, labelled with its instance and
-module names, one dashed box for the top's own logic, and an edge for every net
-two of them share. An input that reaches every block, such as a clock or a
-reset, becomes a caption rather than an edge into each. A top with no submodule
-gets no block diagram.
+**The block diagrams.** In a design built from blocks, the schematic's muxes and
+flops bury the blocks, and no single picture of a deep design stays readable.
+So `schematic` also writes the netlist as `build/schematic.json` and, when the
+top instantiates a module of the design, draws one level at a time into
+`build/blocks/`:
+
+*   `top.svg`: one box per instance, labelled with its instance and module
+    names, one dashed box for the top's own logic, and an edge for every net two
+    of them share. An input that reaches every block, such as a clock or a
+    reset, becomes a caption rather than an edge into each.
+*   Every block links to a file of its own: another block diagram for a module
+    with submodules, with an "up to" link back, or that module's schematic
+    for one without. Two parameterisations of one module are two files
+    (`io_generic_fifo.svg`, `io_generic_fifo_2.svg`).
+
+The links work when the SVG is opened directly, which is what clicking a
+diagram on the `site` page does. A top with no submodule gets no block diagram.
 
 ## ✈️ Before the physical flow (check)
 
@@ -457,6 +466,10 @@ cannot be published under a later one. Each cocotb table carries the run's seed,
 which is what reproduces a failure the page shows. On GitHub Actions the heading
 links the commit and the run the page came from.
 
+Every picture on the page zooms in place: the + / − / reset buttons, Ctrl +
+wheel or a trackpad pinch to zoom around the pointer, drag to pan. A plain
+wheel still scrolls the page. A click that did not drag opens the file itself.
+
 Like `report`, it shows a failed test and still succeeds: the command that ran
 the test is the gate, not the page.
 
@@ -478,7 +491,8 @@ When the power table is on the page, the summary drops its `power` row.
 
 Two more sections, when their files exist:
 
-*   **Block diagram**: `build/blocks.svg`, which `schematic` draws (see above).
+*   **Block diagram**: `build/blocks/top.svg`, with every file it links to
+    copied next to it, so clicking through works once published.
 *   **Waveform**: the signals `"//WAVE_SIGNALS"` names, drawn across the whole
     run from the newest `build/*.vcd` that declares all of them, so a second
     testbench's VCD being newer is no error. When no VCD declares them all,

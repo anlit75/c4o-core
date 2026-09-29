@@ -1465,28 +1465,63 @@ class TestEntrypoint(unittest.TestCase):
         self.assertIsNotNone(entrypoint.diagrams.block_diagram_dot(netlist, "counter_wrap"))
 
     @patch('entrypoint.run_command')
-    def test_draw_blocks_runs_dot_only_when_there_is_something_to_draw(self, mock_run):
+    def test_draw_blocks_does_nothing_for_a_top_without_submodules(self, mock_run):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
             os.makedirs("build")
             netlist = self._netlist("counter_wrap.json")
-            with open("build/n.json", "w") as f:
-                json.dump(netlist, f)
-            with contextlib.redirect_stdout(io.StringIO()):
-                entrypoint.draw_blocks("build/n.json")
-            self.assertEqual(mock_run.call_args[0][0][:2], ["dot", "-Tsvg"])
-
-            mock_run.reset_mock()
             netlist["modules"]["counter"]["attributes"]["top"] = "1"
             del netlist["modules"]["counter_wrap"]["attributes"]["top"]
             with open("build/n.json", "w") as f:
                 json.dump(netlist, f)
             with contextlib.redirect_stdout(io.StringIO()):
-                entrypoint.draw_blocks("build/n.json")
+                entrypoint.draw_blocks("build/n.json", ["read_verilog x.v"])
             mock_run.assert_not_called()
+            self.assertFalse(os.path.exists("build/blocks"))
         finally:
             os.chdir(cwd)
+
+    # tests/smoke/deep.v, three levels: top_deep -> mid -> two leafs.
+    @patch('entrypoint.run_command')
+    def test_draw_blocks_draws_every_level_and_links_them(self, mock_run):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            shutil.copy(os.path.join(self.FIXTURES, "deep.json"), "build/n.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                entrypoint.draw_blocks("build/n.json", ["read_verilog d.v", "proc", "opt"])
+
+            dots = [c[0][0] for c in mock_run.call_args_list if c[0][0][0] == "dot"]
+            self.assertEqual(sorted(c[-1] for c in dots),
+                             ["build/blocks/mid.svg", "build/blocks/top.svg"])
+            with open("build/blocks/top.dot") as f:
+                top = f.read()
+            with open("build/blocks/mid.dot") as f:
+                mid = f.read()
+            self.assertIn('URL="mid.svg"', top)
+            self.assertNotIn('"parent"', top)
+            # Down to the leaf, and back up to where it was opened from.
+            self.assertIn('URL="leaf.svg"', mid)
+            self.assertIn('"parent" [label="up to top_deep", shape=note, URL="top.svg"]', mid)
+            # The leaf has no submodules: its schematic, in one yosys run that
+            # reuses the preparation the caller passed.
+            yosys = [c[0][0] for c in mock_run.call_args_list if c[0][0][0] == "yosys"]
+            self.assertEqual(len(yosys), 1)
+            script = yosys[0][2]
+            self.assertTrue(script.startswith("read_verilog d.v; proc; opt; "))
+            self.assertIn("show -format svg -viewer none -prefix build/blocks/leaf leaf", script)
+        finally:
+            os.chdir(cwd)
+
+    def test_diagram_plan_names_files_after_modules_and_keeps_them_apart(self):
+        # The UART's two io_generic_fifo instances are two parameterisations,
+        # so two modules, so two files.
+        plan = entrypoint.diagrams.diagram_plan(self._netlist("apb_uart_top.json"), "apb_uart_sv")
+        self.assertEqual(plan["apb_uart_sv"], "top")
+        self.assertEqual(sorted(plan.values()), ["io_generic_fifo", "io_generic_fifo_2", "top",
+                                                 "uart_interrupt", "uart_rx", "uart_tx"])
 
     # --- the waveform ---
 
@@ -1587,12 +1622,33 @@ class TestEntrypoint(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
+            os.makedirs("build/blocks")
+            for name in ("top.svg", "uart_rx.svg", "top.dot"):
+                with open(f"build/blocks/{name}", "w") as f:
+                    f.write("<svg/>")
+            page = self._site()
+            self.assertIn('<img src="blocks/top.svg"', page)
+            # Every diagram a block links to, so the links work once published;
+            # not the .dot sources.
+            self.assertEqual(sorted(os.listdir("build/site/blocks")), ["top.svg", "uart_rx.svg"])
+        finally:
+            os.chdir(cwd)
+
+    def test_site_diagrams_zoom_and_the_script_comes_only_with_them(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
             os.makedirs("build")
-            with open("build/blocks.svg", "w") as f:
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            self.assertNotIn("<script>", self._site())
+
+            with open("build/schematic.svg", "w") as f:
                 f.write("<svg/>")
             page = self._site()
-            self.assertIn('<img src="blocks.svg"', page)
-            self.assertTrue(os.path.exists("build/site/blocks.svg"))
+            self.assertIn('<div class="zoom-view"><a href="schematic.svg"><img src="schematic.svg"', page)
+            self.assertIn('data-zoom="reset"', page)
+            self.assertEqual(page.count("<script>"), 1)
         finally:
             os.chdir(cwd)
 

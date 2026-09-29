@@ -18,12 +18,48 @@ def module_label(cell_type):
         return named[0] if named else cell_type
     return cell_type.lstrip("\\")
 
-def block_diagram_dot(netlist, top):
+def diagram_plan(netlist, top):
     """
-    Graphviz source for the top module drawn as its submodule instances, one
-    box for the top's own logic, and its ports -- or None when the top
-    instantiates no module of the design, which leaves nothing to draw that
-    the schematic does not already show.
+    {module: file stem} for the top and every module under it. A module with
+    submodules gets a block diagram under that stem, one without gets its
+    schematic, and every block links to its module's file -- so a design of
+    any depth is read one level at a time instead of as one picture.
+
+    Stems are the source names, numbered when two parameterisations share
+    one: io_generic_fifo, io_generic_fifo_2.
+    """
+    modules = netlist["modules"]
+    reachable, todo = [], [top]
+    while todo:
+        name = todo.pop(0)
+        if name in reachable or name not in modules:
+            continue
+        reachable.append(name)
+        todo += [c["type"] for c in modules[name].get("cells", {}).values()
+                 if c["type"] in modules]
+    plan, taken = {top: "top"}, {"top"}
+    for name in sorted(reachable):
+        if name == top:
+            continue
+        stem = re.sub(r"[^A-Za-z0-9_]", "_", module_label(name))
+        unique, n = stem, 2
+        while unique in taken:
+            unique, n = f"{stem}_{n}", n + 1
+        taken.add(unique)
+        plan[name] = unique
+    return plan
+
+def has_submodules(netlist, module):
+    modules = netlist["modules"]
+    return any(c["type"] in modules for c in modules[module].get("cells", {}).values())
+
+def block_diagram_dot(netlist, top, links=None, parent=None):
+    """
+    Graphviz source for a module drawn as its submodule instances, one box
+    for its own logic, and its ports -- or None when it instantiates no module
+    of the design, which leaves nothing to draw that the schematic does not
+    already show. `links` maps a module name to the file its block opens;
+    `parent` is (label, file) for the way back up.
 
     An edge joins two things that share a net. Wiring that goes through the
     top's own gates meets them at the "logic" box, so nothing reads as
@@ -86,16 +122,25 @@ def block_diagram_dot(netlist, top):
     edges = {pair: bits for pair, bits in edges.items() if pair[0] not in shared}
 
     q = lambda s: '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    lines = [f"digraph {q(top)} {{", "rankdir=LR;",
+    # concentrate merges parallel edges. Not splines=ortho: Graphviz cannot
+    # attach labels to orthogonal edges, and a net name floating beside the
+    # wrong line is worse than a curve.
+    lines = [f"digraph {q(top)} {{", "rankdir=LR; concentrate=true;",
              'node [fontname="Helvetica", fontsize=11]; edge [fontname="Helvetica", fontsize=9];']
     used = {n for pair in edges for n in pair}
     for port, info in mod.get("ports", {}).items():
         node = f"port:{port}"
         if node in used:
             lines.append(f"{q(node)} [label={q(port)}, shape=plaintext];")
+    links = links or {}
     for name, cell in blocks.items():
+        target = links.get(cell["type"])
+        url = f", URL={q(target)}, tooltip={q('open ' + module_label(cell['type']))}" if target else ""
         lines.append(f"{q('block:' + name)} [label={q(name + chr(10) + module_label(cell['type']))}, "
-                     "shape=box, style=\"rounded,filled\", fillcolor=\"#dbe9f6\"];")
+                     f"shape=box, style=\"rounded,filled\", fillcolor=\"#dbe9f6\"{url}];")
+    if parent:
+        up_label, up_file = parent
+        lines.append(f"{q('parent')} [label={q('up to ' + up_label)}, shape=note, URL={q(up_file)}];")
     if glue in used:
         lines.append(f"{q(glue)} [label={q('logic in ' + top)}, shape=box, style=dashed];")
     for (src, dst), bits in sorted(edges.items()):

@@ -29,6 +29,13 @@ td.num { text-align: right; }
 pre { margin: 0; font-size: 13px; line-height: 1.4; }
 img { max-width: 100%; height: auto; border: 1px solid var(--line); background: #fff; }
 .scroll { overflow-x: auto; }
+.zoom { border: 1px solid var(--line); margin: 4px 0 8px; }
+.zoom-tools { display: flex; gap: 4px; padding: 4px; border-bottom: 1px solid var(--line);
+              align-items: center; color: var(--muted); font-size: 13px; }
+.zoom-tools button { font: inherit; min-width: 32px; padding: 2px 8px; color: var(--fg);
+                     background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+.zoom-view { overflow: hidden; background: #fff; cursor: grab; }
+.zoom-view img { display: block; border: 0; transform-origin: 0 0; user-select: none; }
 """
 
 def cocotb_cases(path):
@@ -54,6 +61,66 @@ def cocotb_cases(path):
             verdict = "PASS"
         cases.append((case.get("name", "?"), verdict, float(case.get("sim_time_ns", 0))))
     return seed, cases
+
+def zoomable(target, alt):
+    """
+    A diagram the reader can zoom and pan in place (ZOOM_JS), which still
+    opens the file itself on a click -- where a block diagram's own links work.
+    Without JavaScript it is the plain link it always was.
+    """
+    esc = html.escape
+    return ('<div class="zoom"><div class="zoom-tools">'
+            '<button type="button" data-zoom="in" aria-label="Zoom in">+</button>'
+            '<button type="button" data-zoom="out" aria-label="Zoom out">&minus;</button>'
+            '<button type="button" data-zoom="reset">reset</button>'
+            '<span>Ctrl + wheel or pinch to zoom, drag to pan, click to open</span></div>'
+            f'<div class="zoom-view"><a href="{esc(target)}"><img src="{esc(target)}" '
+            f'alt="{esc(alt)}" draggable="false"></a></div></div>')
+
+# Plain wheel scrolling is left to the page: a diagram that swallowed it would
+# trap anyone scrolling past. Ctrl + wheel is also what a trackpad pinch sends.
+ZOOM_JS = """
+document.querySelectorAll('.zoom').forEach(function (z) {
+  var view = z.querySelector('.zoom-view'), img = view.querySelector('img'),
+      link = view.querySelector('a'), s = 1, x = 0, y = 0, drag = null, moved = false;
+  function apply() {
+    if (s <= 1) { s = 1; x = 0; y = 0; }
+    img.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
+    view.style.touchAction = s > 1 ? 'none' : '';
+  }
+  function zoomAt(f, cx, cy) {
+    var n = Math.min(20, Math.max(1, s * f));
+    x = cx - (cx - x) * n / s; y = cy - (cy - y) * n / s; s = n; apply();
+  }
+  function centre(f) { zoomAt(f, view.clientWidth / 2, view.clientHeight / 2); }
+  view.addEventListener('wheel', function (e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    var r = view.getBoundingClientRect();
+    zoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+  view.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'touch' && s <= 1) return;  /* let the page scroll */
+    drag = { x: e.clientX - x, y: e.clientY - y }; moved = false;
+  });
+  view.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    var nx = e.clientX - drag.x, ny = e.clientY - drag.y;
+    if (Math.abs(nx - x) + Math.abs(ny - y) > 3) moved = true;
+    x = nx; y = ny; if (s > 1) apply();
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
+    view.addEventListener(t, function () { drag = null; });
+  });
+  link.addEventListener('click', function (e) { if (moved) e.preventDefault(); });
+  z.querySelectorAll('[data-zoom]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var k = b.getAttribute('data-zoom');
+      if (k === 'in') centre(1.5); else if (k === 'out') centre(1 / 1.5); else { s = 1; apply(); }
+    });
+  });
+});
+"""
 
 def power_groups(text):
     """
@@ -150,8 +217,7 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
                 for group, i, sw, lk, t in rows) + "</table>")
 
     if layout:
-        parts.append(f'<h2>Layout</h2><a href="{esc(layout)}">'
-                     f'<img src="{esc(layout)}" alt="Layout of {esc(design)}"></a>')
+        parts.append("<h2>Layout</h2>" + zoomable(layout, f"Layout of {design}"))
 
     for title, seed, cases in cocotb_runs:
         passed = sum(verdict == "PASS" for _, verdict, _ in cases)
@@ -167,20 +233,17 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     if wave:
         image, vcd = wave
         parts.append(f"<h2>Waveform</h2><p>From <code>{esc(vcd)}</code>, the signals "
-                     "<code>WAVE_SIGNALS</code> names.</p>"
-                     f'<div class="scroll"><a href="{esc(image)}"><img src="{esc(image)}" '
-                     f'alt="Waveform of {esc(design)}"></a></div>')
+                     "<code>WAVE_SIGNALS</code> names.</p>" + zoomable(image, f"Waveform of {design}"))
 
     if blocks:
         parts.append("<h2>Block diagram</h2><p>The top module as its submodules and the "
                      "nets between them. Wiring that passes through the top's own gates "
-                     "meets them at the dashed box.</p>"
-                     f'<div class="scroll"><a href="{esc(blocks)}"><img src="{esc(blocks)}" '
-                     f'alt="Block diagram of {esc(design)}"></a></div>')
+                     "meets them at the dashed box. Open it and click a block to go one "
+                     "level down: to that module's own block diagram, or to its schematic "
+                     "when it has no submodules.</p>" + zoomable(blocks, f"Block diagram of {design}"))
 
     if schematic:
-        parts.append(f'<h2>Schematic (RTL)</h2><div class="scroll"><a href="{esc(schematic)}">'
-                     f'<img src="{esc(schematic)}" alt="Schematic of {esc(design)}"></a></div>')
+        parts.append("<h2>Schematic (RTL)</h2>" + zoomable(schematic, f"Schematic of {design}"))
 
     # Only on GitHub Actions, where these say which commit the page shows.
     source = ""
@@ -199,5 +262,7 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         f"<title>{esc(design)}</title><style>{CSS}</style></head><body>"
         f"<header><h1>{esc(design)}</h1>{source}</header>"
         + "".join(f"<section>{part}</section>" for part in parts)
-        + "<footer><p>Generated by c4o-core <code>site</code>.</p></footer></body></html>\n"
+        + "<footer><p>Generated by c4o-core <code>site</code>.</p></footer>"
+        + (f"<script>{ZOOM_JS}</script>" if 'class="zoom"' in "".join(parts) else "")
+        + "</body></html>\n"
     )

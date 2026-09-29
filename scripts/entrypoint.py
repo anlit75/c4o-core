@@ -568,7 +568,7 @@ def die_area_error(value):
 # yosys writes <prefix>.dot and, with -format svg, runs dot over it to produce
 # <prefix>.svg beside it.
 SCHEMATIC_PREFIX = "build/schematic"
-BLOCKS_SVG = "build/blocks.svg"
+BLOCKS_DIR = "build/blocks"
 
 def cmd_schematic(args, config):
     """
@@ -621,19 +621,26 @@ def cmd_schematic(args, config):
     parts.append(f"show -format svg -viewer none -prefix {SCHEMATIC_PREFIX} A:top")
     parts.append(f"write_json {SCHEMATIC_PREFIX}.json")
 
-    for stale in (SCHEMATIC_PREFIX + ".json", BLOCKS_SVG):
-        if os.path.exists(stale):
-            os.remove(stale)  # never draw a previous design's blocks
+    # Never draw a previous design's blocks.
+    if os.path.exists(SCHEMATIC_PREFIX + ".json"):
+        os.remove(SCHEMATIC_PREFIX + ".json")
+    if os.path.isdir(BLOCKS_DIR):
+        shutil.rmtree(BLOCKS_DIR)
+    prepare = parts[:parts.index("opt") + 1]
     run_command(["yosys", "-p", "; ".join(parts)])
     log_info(f"Wrote {SCHEMATIC_PREFIX}.svg")
-    draw_blocks(SCHEMATIC_PREFIX + ".json")
+    draw_blocks(SCHEMATIC_PREFIX + ".json", prepare)
 
-def draw_blocks(netlist_path):
+def draw_blocks(netlist_path, prepare):
     """
-    build/blocks.svg: the top module as its submodules and the wiring between
-    them. The schematic draws every mux and flop in the top, which for a
-    design built from blocks buries the blocks. Skipped for a top with no
-    submodule, where it would be one box.
+    build/blocks/: top.svg draws the top module as its submodules and the
+    wiring between them, and each block links to a file of its own -- another
+    block diagram for a module with submodules, that module's schematic for
+    one without. A design of any depth is then read one level at a time; the
+    single schematic of the top buries the blocks of anything built from them.
+
+    `prepare` is the yosys script up to `opt`, reused to draw the leaves.
+    Skipped for a top with no submodule, where it would be one box.
     """
     if not os.path.exists(netlist_path):
         return
@@ -641,15 +648,29 @@ def draw_blocks(netlist_path):
         netlist = json.load(f)
     top = next((name for name, mod in netlist["modules"].items()
                 if mod.get("attributes", {}).get("top")), None)
-    source = diagrams.block_diagram_dot(netlist, top) if top else None
-    if source is None:
+    if not top or not diagrams.has_submodules(netlist, top):
         log_info("The top module instantiates no submodule; no block diagram to draw.")
         return
-    dot_path = os.path.splitext(BLOCKS_SVG)[0] + ".dot"
-    with open(dot_path, "w") as f:
-        f.write(source)
-    run_command(["dot", "-Tsvg", dot_path, "-o", BLOCKS_SVG])
-    log_info(f"Wrote {BLOCKS_SVG}")
+    os.makedirs(BLOCKS_DIR, exist_ok=True)
+    plan = diagrams.diagram_plan(netlist, top)
+    links = {name: f"{stem}.svg" for name, stem in plan.items()}
+    parents = {}
+    for name in plan:  # plan lists the top first, so each child gets its nearest parent
+        for cell in netlist["modules"][name].get("cells", {}).values():
+            parents.setdefault(cell["type"], (diagrams.module_label(name), links[name]))
+
+    leaves = []
+    for name, stem in plan.items():
+        if not diagrams.has_submodules(netlist, name):
+            leaves.append(f"show -format svg -viewer none -prefix {BLOCKS_DIR}/{stem} {name}")
+            continue
+        dot_path = os.path.join(BLOCKS_DIR, f"{stem}.dot")
+        with open(dot_path, "w") as f:
+            f.write(diagrams.block_diagram_dot(netlist, name, links, parents.get(name)))
+        run_command(["dot", "-Tsvg", dot_path, "-o", os.path.join(BLOCKS_DIR, f"{stem}.svg")])
+    if leaves:
+        run_command(["yosys", "-p", "; ".join(prepare + leaves)])
+    log_info(f"Wrote {BLOCKS_DIR}/: {len(plan)} diagrams, top.svg first")
 
 def cmd_check(args, config):
     """
@@ -1050,9 +1071,11 @@ def cmd_site(args, config):
             sys.exit(1)
         cocotb_runs.append((title, seed, cases))
 
-    if os.path.exists(BLOCKS_SVG):
-        details["blocks"] = "blocks.svg"
-        shutil.copy(BLOCKS_SVG, os.path.join(SITE_DIR, "blocks.svg"))
+    if os.path.exists(os.path.join(BLOCKS_DIR, "top.svg")):
+        os.makedirs(os.path.join(SITE_DIR, "blocks"))
+        for svg in glob.glob(os.path.join(BLOCKS_DIR, "*.svg")):
+            shutil.copy(svg, os.path.join(SITE_DIR, "blocks"))
+        details["blocks"] = "blocks/top.svg"
 
     # Opt-in: which signals are worth a picture is the designer's call, not
     # something to guess from a VCD that may hold hundreds.
