@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.0](https://github.com/anlit75/c4o-core/compare/v2.10.0...v2.11.0) (2026-09-29)
+
+
+### Features
+
+* block diagrams, waveform, zoomable diagrams; report names its power corner ([#39](https://github.com/anlit75/c4o-core/issues/39)) ([48a1cc1](https://github.com/anlit75/c4o-core/commit/48a1cc1db7f24da2919a0bda2f7490a44bb57de3))
+
 ## [2.10.0](https://github.com/anlit75/c4o-core/compare/v2.9.0...v2.10.0) (2026-09-28)
 
 
