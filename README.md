@@ -480,8 +480,9 @@ Two more sections, when their files exist:
 
 *   **Block diagram**: `build/blocks.svg`, which `schematic` draws (see above).
 *   **Waveform**: the signals `"//WAVE_SIGNALS"` names, drawn across the whole
-    run from the newest `build/*.vcd`. A name the VCD does not declare fails
-    `site`, all of them listed at once. No VCD yet, as after `cocotb` alone,
+    run from the newest `build/*.vcd` that declares all of them, so a second
+    testbench's VCD being newer is no error. When no VCD declares them all,
+    `site` fails and lists every name missing from the newest one. No VCD yet, as after `cocotb` alone,
     leaves the section out.
 
 ## 🏗 Architecture

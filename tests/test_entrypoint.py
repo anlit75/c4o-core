@@ -1548,6 +1548,21 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    def test_site_draws_from_the_vcd_that_has_the_signals_not_just_the_newest(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            shutil.copy(self.BLINKY_VCD, "build/wave.vcd")
+            with open("build/other_tb.vcd", "w") as f:
+                f.write("$scope module other $end $var wire 1 ! x $end $upscope $end "
+                        "$enddefinitions $end\n#0\n1!\n")
+            os.utime("build/wave.vcd", (1, 1))  # the other one is newer
+            page = self._site({"DESIGN_NAME": "blinky", "//WAVE_SIGNALS": ["tb_blinky.led"]})
+            self.assertIn("<code>build/wave.vcd</code>", page)
+        finally:
+            os.chdir(cwd)
+
     def test_site_fails_on_a_wave_signal_that_is_not_there(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
