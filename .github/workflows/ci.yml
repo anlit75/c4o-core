@@ -47,6 +47,8 @@ jobs:
           head -c 200 build/schematic.svg
           grep -qF "<svg" build/schematic.svg || { echo "not an SVG"; exit 1; }
           grep -qF "counter" build/schematic.svg || { echo "the design's name is not in the drawing"; exit 1; }
+          # One module is one box: no block diagram, rather than a picture of it.
+          [ ! -e build/blocks ] || { echo "drew block diagrams for a design with no submodule"; exit 1; }
 
       # The same command on a design with a submodule, which is every real one.
       # `show` draws what is selected and yosys refuses svg for more than one
@@ -78,6 +80,16 @@ jobs:
           # The drawing has to be of the top the config named, not of whatever
           # module yosys happened to have selected.
           grep -qF "counter_wrap" build/schematic.svg || { echo "the top module is not in the drawing"; exit 1; }
+          # And the block diagrams, drawn by the image's own dot from the JSON
+          # yosys wrote in the same run: the instance and its module by name,
+          # a link on the block, and the file it links to -- counter's own
+          # schematic, drawn by a second yosys run.
+          top=build/blocks/top.svg
+          grep -qF "<svg" $top || { echo "no block diagram, or not an SVG"; exit 1; }
+          grep -qF "inner" $top || { echo "the block diagram lost the instance name"; exit 1; }
+          grep -qF ">counter<" $top || { echo "the block diagram lost the module name"; exit 1; }
+          grep -qF 'href="counter.svg"' $top || { echo "the block does not link to its module"; exit 1; }
+          grep -qF "<svg" build/blocks/counter.svg || { echo "the leaf's schematic was not drawn"; exit 1; }
           rm -f config.yaml
 
       - name: Run Simulation check (CLI)

@@ -11,6 +11,7 @@ from xml.etree import ElementTree
 
 import yaml
 
+import diagrams
 import site_page
 
 # ANSI color codes
@@ -567,6 +568,7 @@ def die_area_error(value):
 # yosys writes <prefix>.dot and, with -format svg, runs dot over it to produce
 # <prefix>.svg beside it.
 SCHEMATIC_PREFIX = "build/schematic"
+BLOCKS_DIR = "build/blocks"
 
 def cmd_schematic(args, config):
     """
@@ -617,9 +619,58 @@ def cmd_schematic(args, config):
     # attribute `hierarchy` has just set on the root, which makes this the same
     # one module whether DESIGN_NAME named it or -auto-top worked it out.
     parts.append(f"show -format svg -viewer none -prefix {SCHEMATIC_PREFIX} A:top")
+    parts.append(f"write_json {SCHEMATIC_PREFIX}.json")
 
+    # Never draw a previous design's blocks.
+    if os.path.exists(SCHEMATIC_PREFIX + ".json"):
+        os.remove(SCHEMATIC_PREFIX + ".json")
+    if os.path.isdir(BLOCKS_DIR):
+        shutil.rmtree(BLOCKS_DIR)
+    prepare = parts[:parts.index("opt") + 1]
     run_command(["yosys", "-p", "; ".join(parts)])
     log_info(f"Wrote {SCHEMATIC_PREFIX}.svg")
+    draw_blocks(SCHEMATIC_PREFIX + ".json", prepare)
+
+def draw_blocks(netlist_path, prepare):
+    """
+    build/blocks/: top.svg draws the top module as its submodules and the
+    wiring between them, and each block links to a file of its own -- another
+    block diagram for a module with submodules, that module's schematic for
+    one without. A design of any depth is then read one level at a time; the
+    single schematic of the top buries the blocks of anything built from them.
+
+    `prepare` is the yosys script up to `opt`, reused to draw the leaves.
+    Skipped for a top with no submodule, where it would be one box.
+    """
+    if not os.path.exists(netlist_path):
+        return
+    with open(netlist_path) as f:
+        netlist = json.load(f)
+    top = next((name for name, mod in netlist["modules"].items()
+                if mod.get("attributes", {}).get("top")), None)
+    if not top or not diagrams.has_submodules(netlist, top):
+        log_info("The top module instantiates no submodule; no block diagram to draw.")
+        return
+    os.makedirs(BLOCKS_DIR, exist_ok=True)
+    plan = diagrams.diagram_plan(netlist, top)
+    links = {name: f"{stem}.svg" for name, stem in plan.items()}
+    parents = {}
+    for name in plan:  # plan lists the top first, so each child gets its nearest parent
+        for cell in netlist["modules"][name].get("cells", {}).values():
+            parents.setdefault(cell["type"], (diagrams.module_label(name), links[name]))
+
+    leaves = []
+    for name, stem in plan.items():
+        if not diagrams.has_submodules(netlist, name):
+            leaves.append(f"show -format svg -viewer none -prefix {BLOCKS_DIR}/{stem} {name}")
+            continue
+        dot_path = os.path.join(BLOCKS_DIR, f"{stem}.dot")
+        with open(dot_path, "w") as f:
+            f.write(diagrams.block_diagram_dot(netlist, name, links, parents.get(name)))
+        run_command(["dot", "-Tsvg", dot_path, "-o", os.path.join(BLOCKS_DIR, f"{stem}.svg")])
+    if leaves:
+        run_command(["yosys", "-p", "; ".join(prepare + leaves)])
+    log_info(f"Wrote {BLOCKS_DIR}/: {len(plan)} diagrams, top.svg first")
 
 def cmd_check(args, config):
     """
@@ -796,6 +847,33 @@ def find_render(metrics_path):
         return found[0] if relative.startswith(os.pardir) else relative
     return None
 
+def sta_step(metrics_path):
+    """
+    The newest post-PnR STA step directory of the run a metrics.json belongs
+    to, or None -- including when the file does not sit at <run>/final/, for
+    the reason find_render gives.
+    """
+    final_dir = os.path.dirname(os.path.abspath(metrics_path))
+    if os.path.basename(final_dir) != "final":
+        return None
+    found = sorted(glob.glob(os.path.join(os.path.dirname(final_dir), "*-openroad-stapostpnr")))
+    return found[-1] if found else None
+
+def default_power(metrics_path):
+    """(DEFAULT_CORNER, power_groups rows) from that corner's power.rpt, or None."""
+    sta = sta_step(metrics_path)
+    config_path = os.path.join(sta, "config.json") if sta else None
+    if not config_path or not os.path.exists(config_path):
+        return None
+    with open(config_path) as f:
+        corner = json.load(f).get("DEFAULT_CORNER")
+    report = os.path.join(sta, corner or "", "power.rpt")
+    if not corner or not os.path.exists(report):
+        return None
+    with open(report) as f:
+        rows = site_page.power_groups(f.read())
+    return (corner, rows) if any(r[0] == "Total" for r in rows) else None
+
 def report_rows(metrics, path):
     """The (label, value) rows `report` prints, in the order it prints them."""
     rows = []
@@ -825,9 +903,16 @@ def report_rows(metrics, path):
             violations = metrics.get(violation_key, "?")
             rows.append((label, f"{slack:+.2f} ns  ({violations} violations)"))
 
-    power = metrics.get("power__total")
-    if power is not None:
-        rows.append(("power", f"{power * 1e3:.3f} mW"))  # OpenSTA reports watts
+    # The default corner's power.rpt when the run left one: the bare
+    # power__total names no corner, and in a real 3.0.14 run it is
+    # max_ff_n40C_1v95's, not the default corner's.
+    corner_power = default_power(path)
+    if corner_power:
+        corner, groups = corner_power
+        total = next(g[4] for g in groups if g[0] == "Total")
+        rows.append(("power", f"{total * 1e3:.3f} mW  ({corner})"))  # watts
+    elif metrics.get("power__total") is not None:
+        rows.append(("power", f"{metrics['power__total'] * 1e3:.3f} mW  (corner not named)"))
 
     signoff = signoff_row(metrics)
     if signoff:
@@ -896,9 +981,6 @@ def run_details(metrics_path, metrics):
     <run>/final/metrics.json, for the reason find_render gives. Any part whose
     report is missing is left out.
 
-    The power table is read from the default corner's power.rpt rather than
-    from the bare power__* metrics: those carry one corner's numbers with no
-    corner named (in a real 3.0.14 run, max_ff_n40C_1v95's).
     """
     details = {"signoff": [(label, metrics[key]) for label, key in SIGNOFF_CHECKS
                            if metrics.get(key) is not None]}
@@ -915,7 +997,7 @@ def run_details(metrics_path, metrics):
         with open(path) as f:
             return f.read()
 
-    sta = newest("*-openroad-stapostpnr")
+    sta = sta_step(metrics_path)
     corners = {key.split(":", 1)[1]: value for key, value in metrics.items()
                if key.startswith("timing__setup__ws__corner:") and value is not None}
     if sta and corners:
@@ -925,12 +1007,9 @@ def run_details(metrics_path, metrics):
         if path:
             details["timing"] = (worst, path)
 
-    if sta and os.path.exists(os.path.join(sta, "config.json")):
-        corner = json.loads(read(os.path.join(sta, "config.json"))).get("DEFAULT_CORNER")
-        report = os.path.join(sta, corner or "", "power.rpt")
-        rows = site_page.power_groups(read(report)) if corner and os.path.exists(report) else []
-        if rows:
-            details["power"] = (corner, rows)
+    power = default_power(metrics_path)
+    if power:
+        details["power"] = power
 
     stat = newest("*-yosys-synthesis/reports/stat.json")
     design = json.loads(read(stat)).get("design", {}) if stat else {}
@@ -992,12 +1071,47 @@ def cmd_site(args, config):
             sys.exit(1)
         cocotb_runs.append((title, seed, cases))
 
+    if os.path.exists(os.path.join(BLOCKS_DIR, "top.svg")):
+        os.makedirs(os.path.join(SITE_DIR, "blocks"))
+        for svg in glob.glob(os.path.join(BLOCKS_DIR, "*.svg")):
+            shutil.copy(svg, os.path.join(SITE_DIR, "blocks"))
+        details["blocks"] = "blocks/top.svg"
+
+    # Opt-in: which signals are worth a picture is the designer's call, not
+    # something to guess from a VCD that may hold hundreds.
+    wanted = config_get(config, "WAVE_SIGNALS")
+    if wanted:
+        vcds = sorted(glob.glob("build/*.vcd"), key=os.path.getmtime)
+        if not vcds:
+            log_warn("WAVE_SIGNALS is set but build/ holds no VCD; run sim first.")
+        else:
+            # The newest VCD that declares every signal: with two testbenches
+            # the newest file may be the other one's, which is no error.
+            svg = source = first_error = None
+            for vcd in reversed(vcds):
+                with open(vcd) as f:
+                    text = f.read()
+                try:
+                    svg, source = diagrams.waveform_svg(text, wanted), vcd
+                    break
+                except KeyError as e:
+                    first_error = first_error or f"{vcd} does not declare {e.args[0]}"
+            if svg is None:
+                log_error(
+                    f"No VCD in build/ declares every WAVE_SIGNALS name; {first_error}. "
+                    "Names are dotted from the testbench top, e.g. tb_blinky.uut.count."
+                )
+                sys.exit(1)
+            with open(os.path.join(SITE_DIR, "wave.svg"), "w") as f:
+                f.write(svg)
+            details["wave"] = ("wave.svg", source)
+
     schematic = None
     if os.path.exists(SCHEMATIC_PREFIX + ".svg"):
         schematic = "schematic.svg"
         shutil.copy(SCHEMATIC_PREFIX + ".svg", os.path.join(SITE_DIR, schematic))
 
-    if not (numbers or layout or cocotb_runs or schematic):
+    if not (numbers or layout or cocotb_runs or schematic or details):
         log_error(
             "Nothing to put on the page: no metrics.json under runs/, no cocotb "
             f"results, no {SCHEMATIC_PREFIX}.svg. Run make cocotb, make schematic "
