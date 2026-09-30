@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.0](https://github.com/anlit75/c4o-core/compare/v2.11.0...v2.12.0) (2026-09-30)
+
+
+### Features
+
+* report breaks cells down by class, and site links the GDS in 3D ([#41](https://github.com/anlit75/c4o-core/issues/41)) ([94560af](https://github.com/anlit75/c4o-core/commit/94560af353e61fb52d24d4325024fe46e7eec046))
+
 ## [2.11.0](https://github.com/anlit75/c4o-core/compare/v2.10.0...v2.11.0) (2026-09-29)
 
 
