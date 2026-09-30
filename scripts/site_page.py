@@ -11,31 +11,75 @@ import html
 from xml.etree import ElementTree
 
 CSS = """
-:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
-        --pass: #1a7f37; --fail: #cf222e; --skip: #9a6700; }
+:root { --bg: #f6f8fa; --card: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
+        --accent: #0969da; --pass: #1a7f37; --fail: #cf222e; --skip: #9a6700;
+        --pass-bg: #dafbe1; --fail-bg: #ffebe9; --skip-bg: #fff8c5; --bar: #0969da33; }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
-          --pass: #3fb950; --fail: #f85149; --skip: #d29922; }
+  :root { --bg: #0d1117; --card: #151b23; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
+          --accent: #4493f8; --pass: #3fb950; --fail: #f85149; --skip: #d29922;
+          --pass-bg: #2ea04326; --fail-bg: #f8514926; --skip-bg: #bb800926; --bar: #4493f840; }
 }
-body { background: var(--bg); color: var(--fg); margin: 0 auto; max-width: 960px;
-       padding: 16px; font: 16px/1.5 system-ui, sans-serif; }
-header p, footer { color: var(--muted); }
-a { color: inherit; }
-table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-th, td { text-align: left; padding: 4px 12px 4px 0; border-bottom: 1px solid var(--line);
-         overflow-wrap: anywhere; }
-td.num { text-align: right; }
-.PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
-pre { margin: 0; font-size: 13px; line-height: 1.4; }
-img { max-width: 100%; height: auto; border: 1px solid var(--line); background: #fff; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 64px; }
+body { background: var(--bg); color: var(--fg); margin: 0;
+       font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+code { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
+header { padding: 40px 0 24px; }
+.eyebrow { margin: 0; color: var(--muted); font-size: 14px; letter-spacing: .04em;
+           text-transform: uppercase; font-weight: 600; }
+h1 { margin: 4px 0 8px; font-size: 40px; line-height: 1.15; overflow-wrap: anywhere; }
+.meta { margin: 0; color: var(--muted); font-size: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 14px;
+        font-weight: 600; border-radius: 999px; border: 1px solid currentColor; }
+.chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.chip.PASS { background: var(--pass-bg); } .chip.FAIL { background: var(--fail-bg); }
+.chip.SKIP { background: var(--skip-bg); }
+nav { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line); }
+nav .wrap { display: flex; gap: 4px; overflow-x: auto; padding-top: 8px; padding-bottom: 8px; }
+nav a { flex: none; padding: 4px 10px; border-radius: 6px; color: var(--muted); font-size: 14px; }
+nav a:hover { background: var(--card); color: var(--fg); text-decoration: none; }
+main { padding: 24px 0 8px; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 20px 24px; margin: 0 0 16px; }
+h2 { margin: 0 0 12px; font-size: 20px; }
+section > p, .note { color: var(--muted); font-size: 14px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.kpi { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.kpi.wide { grid-column: 1 / -1; }
+.kpi .label { color: var(--muted); font-size: 13px; text-transform: capitalize; }
+.kpi .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;
+              overflow-wrap: anywhere; }
+.kpi.wide .value { font-size: 15px; font-weight: 500; }
+.kpi .detail { color: var(--muted); font-size: 13px; }
 .scroll { overflow-x: auto; }
-.zoom { border: 1px solid var(--line); margin: 4px 0 8px; }
-.zoom-tools { display: flex; gap: 4px; padding: 4px; border-bottom: 1px solid var(--line);
-              align-items: center; color: var(--muted); font-size: 13px; }
-.zoom-tools button { font: inherit; min-width: 32px; padding: 2px 8px; color: var(--fg);
-                     background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 15px; }
+th, td { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line);
+         overflow-wrap: break-word; }
+tr:last-child > th, tr:last-child > td { border-bottom: 0; }
+th { font-weight: 600; }
+td.num, th.num { text-align: right; }
+td.num, td.PASS, td.FAIL, td.SKIP { white-space: nowrap; }
+td.PASS, td.FAIL, td.SKIP { font-weight: 600; }
+.PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
+.share { position: relative; }
+.share span { position: absolute; inset: 20% auto 20% 0; background: var(--bar); border-radius: 3px; }
+details { border: 1px solid var(--line); border-radius: 8px; }
+summary { cursor: pointer; padding: 8px 12px; font-weight: 600; }
+details .scroll { border-top: 1px solid var(--line); padding: 12px; }
+pre { margin: 0; font-size: 13px; line-height: 1.4; }
+img { max-width: 100%; height: auto; background: #fff; }
+.zoom { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: 4px 0 0; }
+.zoom-tools { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--line);
+              align-items: center; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+.zoom-tools button { font: inherit; min-width: 32px; padding: 2px 8px; color: var(--fg); cursor: pointer;
+                     background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
 .zoom-view { overflow: hidden; background: #fff; cursor: grab; }
 .zoom-view img { display: block; border: 0; transform-origin: 0 0; user-select: none; }
+footer { color: var(--muted); font-size: 14px; padding: 8px 0 40px; }
+@media (max-width: 600px) { h1 { font-size: 30px; } section { padding: 16px; } }
 """
 
 def cocotb_cases(path):
@@ -168,6 +212,18 @@ def first_path(text):
             return "\n".join(lines[start:end + 1])
     return None
 
+def kpi(label, value):
+    """
+    One summary number as a card: `report` writes "+4.70 ns  (0 violations)",
+    and the part in brackets is the detail under the headline figure.
+    """
+    esc = html.escape
+    main, _, detail = value.partition("  (")
+    wide = " wide" if len(main) > 32 else ""
+    detail = f'<div class="detail">{esc(detail.rstrip(")"))}</div>' if detail else ""
+    return (f'<div class="kpi{wide}"><div class="label">{esc(label)}</div>'
+            f'<div class="value">{esc(main)}</div>{detail}</div>')
+
 def render(design, numbers, layout, cocotb_runs, schematic, env,
            signoff=(), timing=None, area=(), power=None, blocks=None, wave=None, gds=None):
     """
@@ -189,107 +245,152 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
                     None when the viewer has no layers for it), or None
     """
     esc = html.escape
-    parts = []
+    parts = []  # (anchor, nav label, markup), in page order
+    add = lambda anchor, label, markup: parts.append((anchor, label, markup))
+
+    # The verdicts first: what someone landing on the page wants to know is
+    # whether it works, before any number. Each chip only for what was run.
+    chips = []
+    cases = [verdict for _, _, run in cocotb_runs for _, verdict, _ in run]
+    if cases:
+        passed = cases.count("PASS")
+        chips.append(("PASS" if passed == len(cases) else "FAIL",
+                      f"{passed}/{len(cases)} tests passed"))
+    if signoff:
+        errors = sum(count for _, count in signoff)
+        chips.append(("FAIL", f"Signoff: {errors} errors") if errors
+                     else ("PASS", "Signoff clean"))
+    setup = dict(numbers).get("setup slack")
+    if setup:
+        chips.append(("FAIL", "Timing missed") if setup.startswith("-")
+                     else ("PASS", "Timing met"))
 
     if numbers:
-        parts.append("<h2>Summary</h2><table>" + "".join(
-            f"<tr><th>{esc(label)}</th><td>{esc(value)}</td></tr>"
-            for label, value in numbers) + "</table>")
+        add("summary", "Summary", '<h2>Summary</h2><div class="kpis">'
+            + "".join(kpi(label, value) for label, value in numbers) + "</div>")
+
+    for index, (title, seed, run) in enumerate(cocotb_runs):
+        passed = sum(verdict == "PASS" for _, verdict, _ in run)
+        # The seed is what turns a failure on this page into one you can rerun.
+        replay = f"<p>Seed <code>{esc(seed)}</code> reruns exactly these tests.</p>" if seed else ""
+        add(f"tests-{index}", title.replace("cocotb, ", "Tests, "),
+            f"<h2>{esc(title)}: {passed}/{len(run)} passed</h2>{replay}"
+            '<div class="scroll"><table><tr><th>test</th><th>result</th>'
+            '<th class="num">sim time (ns)</th></tr>' + "".join(
+                f'<tr><td><code>{esc(name)}</code></td><td class="{verdict}">{verdict}</td>'
+                f'<td class="num">{sim_ns:g}</td></tr>'
+                for name, verdict, sim_ns in run) + "</table></div>")
 
     if signoff:
-        parts.append(
-            "<h2>Signoff checks</h2><table><tr><th>check</th><th>errors</th><th>result</th></tr>"
+        add("signoff", "Signoff",
+            "<h2>Signoff checks</h2><p>The checks a layout has to pass before it can be "
+            'manufactured.</p><div class="scroll"><table><tr><th>check</th><th>errors</th><th>result</th></tr>'
             + "".join(
                 f'<tr><td>{esc(check)}</td><td class="num">{count}</td>'
                 f'<td class="{"FAIL" if count else "PASS"}">{"FAIL" if count else "PASS"}</td></tr>'
-                for check, count in signoff) + "</table>")
-
-    if timing:
-        corner, path = timing
-        parts.append(
-            f"<h2>Worst setup path</h2><p>Corner <code>{esc(corner)}</code>, the one with "
-            "the least setup slack. Printed as OpenSTA reports it.</p>"
-            f'<div class="scroll"><pre>{esc(path)}</pre></div>')
-
-    if area:
-        parts.append("<h2>Area</h2><table>" + "".join(
-            f'<tr><th>{esc(label)}</th><td class="num">{value:,.1f} um&sup2;</td></tr>'
-            for label, value in area) + "</table>")
-
-    if power:
-        corner, rows = power
-        total = next((r[4] for r in rows if r[0] == "Total"), 0) or 1
-        uw = lambda w: f"{w * 1e6:.4g}"
-        parts.append(
-            f"<h2>Power</h2><p>Corner <code>{esc(corner)}</code>, in &micro;W. Dynamic is internal "
-            "plus switching; static is leakage. Switching activity is OpenSTA's default, "
-            "not taken from simulation, so this is an estimate of where power goes, "
-            "not a measurement of a workload.</p>"
-            "<table><tr><th>group</th><th>internal</th><th>switching</th><th>leakage</th>"
-            "<th>total</th><th>share</th></tr>" + "".join(
-                f'<tr><td>{esc(group)}</td><td class="num">{uw(i)}</td><td class="num">{uw(sw)}</td>'
-                f'<td class="num">{uw(lk)}</td><td class="num">{uw(t)}</td>'
-                f'<td class="num">{t / total:.1%}</td></tr>'
-                for group, i, sw, lk, t in rows) + "</table>")
+                for check, count in signoff) + "</table></div>")
 
     if layout or gds:
         section = "<h2>Layout</h2>"
         if gds:
             name, pdk = gds
-            section += f'<p>The GDS: <a href="{esc(name)}" download>{esc(name)}</a>'
+            section += f'<p>Download the GDS: <a href="{esc(name)}" download>{esc(name)}</a>'
             if pdk:
                 section += (f'<span data-viewer="{esc(pdk)}" data-gds="{esc(name)}" hidden>'
                             ' &middot; <a>open it in 3D</a> in Tiny Tapeout\'s viewer</span>')
             section += "</p>"
         if layout:
             section += zoomable(layout, f"Layout of {design}")
-        parts.append(section)
-
-    for title, seed, cases in cocotb_runs:
-        passed = sum(verdict == "PASS" for _, verdict, _ in cases)
-        # The seed is what turns a failure on this page into one you can rerun.
-        replay = f"<p>Seed <code>{esc(seed)}</code></p>" if seed else ""
-        parts.append(
-            f"<h2>{esc(title)}: {passed}/{len(cases)} passed</h2>{replay}"
-            "<table><tr><th>test</th><th>result</th><th>sim time (ns)</th></tr>" + "".join(
-                f'<tr><td>{esc(name)}</td><td class="{verdict}">{verdict}</td>'
-                f'<td class="num">{sim_ns:g}</td></tr>'
-                for name, verdict, sim_ns in cases) + "</table>")
+        add("layout", "Layout", section)
 
     if wave:
         image, vcd = wave
-        parts.append(f"<h2>Waveform</h2><p>From <code>{esc(vcd)}</code>, the signals "
-                     "<code>WAVE_SIGNALS</code> names.</p>" + zoomable(image, f"Waveform of {design}"))
+        add("waveform", "Waveform",
+            f"<h2>Waveform</h2><p>From <code>{esc(vcd)}</code>, the signals "
+            "<code>WAVE_SIGNALS</code> names.</p>" + zoomable(image, f"Waveform of {design}"))
+
+    if timing:
+        corner, path = timing
+        # The whole path is long; its last line is the one that answers.
+        verdict = path.strip().splitlines()[-1].split()
+        headline = " ".join(verdict[-2:]) if len(verdict) >= 3 else "the path"
+        slack = f"{float(verdict[0]):+.3f} ns, " if len(verdict) >= 3 else ""
+        add("timing", "Timing",
+            f"<h2>Worst setup path</h2><p>Corner <code>{esc(corner)}</code>, the one with "
+            "the least setup slack. Printed as OpenSTA reports it.</p>"
+            f"<details><summary>{esc(slack + headline)}: show the full path</summary>"
+            f'<div class="scroll"><pre>{esc(path)}</pre></div></details>')
+
+    if area:
+        largest = max(value for _, value in area) or 1
+        add("area", "Area", '<h2>Area</h2><div class="scroll"><table>' + "".join(
+            f'<tr><th>{esc(label)}</th><td class="num share">'
+            f'<span style="width:{value / largest:.0%}"></span>{value:,.1f} um&sup2;</td></tr>'
+            for label, value in area) + "</table></div>")
+
+    if power:
+        corner, rows = power
+        total = next((r[4] for r in rows if r[0] == "Total"), 0) or 1
+        uw = lambda w: f"{w * 1e6:.4g}"
+        add("power", "Power",
+            f"<h2>Power</h2><p>Corner <code>{esc(corner)}</code>, in &micro;W. Dynamic is internal "
+            "plus switching; static is leakage. Switching activity is OpenSTA's default, "
+            "not taken from simulation, so this is an estimate of where power goes, "
+            "not a measurement of a workload.</p>"
+            '<div class="scroll"><table><tr><th>group</th><th class="num">internal</th>'
+            '<th class="num">switching</th><th class="num">leakage</th>'
+            '<th class="num">total</th><th class="num">share</th></tr>' + "".join(
+                f'<tr><td>{esc(group)}</td><td class="num">{uw(i)}</td><td class="num">{uw(sw)}</td>'
+                f'<td class="num">{uw(lk)}</td><td class="num">{uw(t)}</td>'
+                f'<td class="num share"><span style="width:{t / total:.0%}"></span>{t / total:.1%}</td></tr>'
+                for group, i, sw, lk, t in rows) + "</table></div>")
 
     if blocks:
-        parts.append("<h2>Block diagram</h2><p>The top module as its submodules and the "
-                     "nets between them. Wiring that passes through the top's own gates "
-                     "meets them at the dashed box. Open it and click a block to go one "
-                     "level down: to that module's own block diagram, or to its schematic "
-                     "when it has no submodules.</p>" + zoomable(blocks, f"Block diagram of {design}"))
+        add("blocks", "Blocks",
+            "<h2>Block diagram</h2><p>The top module as its submodules and the "
+            "nets between them. Wiring that passes through the top's own gates "
+            "meets them at the dashed box. Open it and click a block to go one "
+            "level down: to that module's own block diagram, or to its schematic "
+            "when it has no submodules.</p>" + zoomable(blocks, f"Block diagram of {design}"))
 
     if schematic:
-        parts.append("<h2>Schematic (RTL)</h2>" + zoomable(schematic, f"Schematic of {design}"))
+        add("schematic", "Schematic",
+            "<h2>Schematic (RTL)</h2>" + zoomable(schematic, f"Schematic of {design}"))
 
     # Only on GitHub Actions, where these say which commit the page shows.
     source = ""
     server, repo = env.get("GITHUB_SERVER_URL"), env.get("GITHUB_REPOSITORY")
     sha, run = env.get("GITHUB_SHA"), env.get("GITHUB_RUN_ID")
     if server and repo and sha:
-        source = (f'<p>Commit <a href="{esc(server)}/{esc(repo)}/commit/{esc(sha)}">'
+        source = (f'<p class="meta"><a href="{esc(server)}/{esc(repo)}">{esc(repo)}</a> &middot; '
+                  f'commit <a href="{esc(server)}/{esc(repo)}/commit/{esc(sha)}">'
                   f"<code>{esc(sha[:7])}</code></a>")
         if run:
             source += f' &middot; <a href="{esc(server)}/{esc(repo)}/actions/runs/{esc(run)}">CI run</a>'
         source += "</p>"
 
+    body = "".join(markup for _, _, markup in parts)
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>{esc(design)}</title><style>{CSS}</style></head><body>"
-        f"<header><h1>{esc(design)}</h1>{source}</header>"
-        + "".join(f"<section>{part}</section>" for part in parts)
-        + "<footer><p>Generated by c4o-core <code>site</code>.</p></footer>"
-        + (f"<script>{ZOOM_JS}</script>" if 'class="zoom"' in "".join(parts) else "")
-        + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in "".join(parts) else "")
+        f'<meta name="description" content="Verification and signoff results for {esc(design)}.">'
+        f"<title>{esc(design)} · chip results</title><style>{CSS}</style></head><body>"
+        f'<header><div class="wrap"><p class="eyebrow">Chip results</p><h1>{esc(design)}</h1>'
+        f"{source}"
+        + ('<div class="chips">' + "".join(
+            f'<span class="chip {state}">{esc(text)}</span>' for state, text in chips)
+           + "</div>" if chips else "")
+        + "</div></header>"
+        + ('<nav aria-label="Sections"><div class="wrap">' + "".join(
+            f'<a href="#{anchor}">{esc(label)}</a>' for anchor, label, _ in parts)
+           + "</div></nav>" if len(parts) > 1 else "")
+        + '<main class="wrap">'
+        + "".join(f'<section id="{anchor}">{markup}</section>' for anchor, _, markup in parts)
+        + "</main>"
+        + '<footer class="wrap"><p>Built with <a href="https://github.com/anlit75/ChipForAll">'
+          "ChipForAll</a>, on open-source EDA tools. Generated by c4o-core "
+          "<code>site</code>.</p></footer>"
+        + (f"<script>{ZOOM_JS}</script>" if 'class="zoom"' in body else "")
+        + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in body else "")
         + "</body></html>\n"
     )

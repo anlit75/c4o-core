@@ -1389,8 +1389,8 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("<code>nom_tt_025C_1v80</code>", page)
             self.assertIn(">247.9<", page)
             self.assertIn(">54.4%<", page)
-            self.assertNotIn("<th>power</th>", page)
-            self.assertNotIn("<th>signoff</th>", page)
+            self.assertNotIn("<div class=\"label\">power</div>", page)
+            self.assertNotIn("<div class=\"label\">signoff</div>", page)
         finally:
             os.chdir(cwd)
 
@@ -1473,7 +1473,7 @@ class TestEntrypoint(unittest.TestCase):
             os.remove("runs/blinky_run/55-openroad-stapostpnr/nom_tt_025C_1v80/power.rpt")
             page = self._site()
             self.assertNotIn("<h2>Power</h2>", page)
-            self.assertIn("<th>power</th>", page)
+            self.assertIn("<div class=\"label\">power</div>", page)
         finally:
             os.chdir(cwd)
 
