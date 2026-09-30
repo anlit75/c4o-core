@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.0](https://github.com/anlit75/c4o-core/compare/v2.12.0...v2.13.0) (2026-09-30)
+
+
+### Features
+
+* the results page leads with its verdict, and reads like a product page ([#43](https://github.com/anlit75/c4o-core/issues/43)) ([6af862b](https://github.com/anlit75/c4o-core/commit/6af862b86da75875b026129357a012ff6b5804bf))
+
 ## [2.12.0](https://github.com/anlit75/c4o-core/compare/v2.11.0...v2.12.0) (2026-09-30)
 
 
