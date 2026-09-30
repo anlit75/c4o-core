@@ -390,6 +390,7 @@ $ c4o-core report
   die              69.5 x 80.2 um  (5573 um^2)
   utilization      57.1%
   standard cells   198
+  cell classes     57 logic, 46 well taps, 35 timing-repair buffers, 27 inverters, 26 sequential, 7 clock buffers
   setup slack      +4.70 ns  (0 violations)
   hold slack       +0.11 ns  (0 violations)
   power            0.248 mW  (nom_tt_025C_1v80)
@@ -447,6 +448,11 @@ Two details worth knowing:
 *   **Cell count excludes filler.** `design__instance__count` includes the fill
     and tap cells the flow adds, which outnumber the design's own in a small
     chip. The row shows `design__instance__count__stdcell`.
+*   **Cell classes say what those cells are.** LibreLane files every cell under
+    a class (`design__instance__count__class:*`); the row lists them largest
+    first, fill left out, and in a real run they add up to `standard cells`.
+    It is how you see that 88 of blinky's 198 are buffers and taps the flow
+    added, not logic the RTL asked for.
 
 It is informational and never fails: closing timing is iterative, LibreLane does
 not treat a violation as fatal either, and the checks that *are* fatal have
@@ -488,6 +494,15 @@ because those carry one corner's numbers without naming it. `report`'s `power`
 row does the same and names the corner. Without a run directory to find
 `power.rpt` in, it falls back to the metric and says `(corner not named)`.
 When the power table is on the page, the summary drops its `power` row.
+
+The run's final GDS, `<run>/final/gds/*.gds`, is copied next to the page and
+linked under **Layout** as a download. When config's `PDK` is one
+[Tiny Tapeout's GDS viewer](https://github.com/TinyTapeout/tinytapeout_gds_viewer)
+has layers for — `sky130A`, `ihp-sg13g2`, `gf180mcuD` — the page also links it
+there, to open in 3D. The viewer fetches the GDS by URL, so that link appears
+only once the page is served over HTTP(S), as on GitHub Pages; opened straight
+from disk it stays hidden. Serving `build/site` with `python3 -m http.server`
+works too: the viewer accepts `localhost` URLs.
 
 Two more sections, when their files exist:
 

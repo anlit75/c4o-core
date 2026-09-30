@@ -631,6 +631,29 @@ class TestEntrypoint(unittest.TestCase):
         # design__instance__count is 787 because 544 of them are fill cells.
         self.assertNotIn("787", out)
 
+    def test_report_breaks_the_cells_down_by_class_without_fill(self):
+        # The real 3.0.14 run: its class counts add up to its 198 cells.
+        out = self._report(os.path.join(self.RUN_FIXTURE, "blinky_run", "final", "metrics.json"))
+
+        self.assertIn("57 logic, 46 well taps, 35 timing-repair buffers, 27 inverters, "
+                      "26 sequential, 7 clock buffers", out)
+        self.assertNotIn("235", out)  # fill
+
+    def test_report_names_an_unmapped_cell_class_by_its_own_name(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with open("classes.json", "w") as f:
+                json.dump({"design__instance__count__class:antenna_cell": 3,
+                           "design__instance__count__class:clock_inverter": 0}, f)
+
+            out = self._report("classes.json")
+
+            self.assertIn("3 antenna cell", out)
+            self.assertNotIn("clock inverter", out)  # none of them
+        finally:
+            os.chdir(cwd)
+
     def test_report_survives_a_file_missing_most_metrics(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
@@ -1368,6 +1391,53 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn(">54.4%<", page)
             self.assertNotIn("<th>power</th>", page)
             self.assertNotIn("<th>signoff</th>", page)
+        finally:
+            os.chdir(cwd)
+
+    def _run_with_gds(self):
+        os.makedirs("runs/blinky_run/final/gds")
+        with open("runs/blinky_run/final/gds/blinky.gds", "wb") as f:
+            f.write(b"\x00\x06\x00\x02\x02\x58")  # a GDS HEADER record
+
+    def test_site_publishes_the_gds_with_a_3d_viewer_link(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            self._run_with_gds()
+
+            page = self._site({"DESIGN_NAME": "blinky", "PDK": "sky130A"})
+
+            self.assertTrue(os.path.exists("build/site/blinky.gds"))
+            self.assertIn('<a href="blinky.gds" download>', page)
+            # Hidden until the script finds the page has a URL to hand over.
+            self.assertIn('data-viewer="sky130A" data-gds="blinky.gds" hidden', page)
+            self.assertIn("gds-viewer.tinytapeout.com", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_offers_the_gds_without_a_viewer_for_a_pdk_it_cannot_draw(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            self._run_with_gds()
+
+            page = self._site({"DESIGN_NAME": "blinky", "PDK": "some130"})
+
+            self.assertIn('<a href="blinky.gds" download>', page)
+            self.assertNotIn("data-viewer", page)
+            self.assertNotIn("gds-viewer.tinytapeout.com", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_without_a_gds_has_no_gds_link(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site()
+
+            self.assertNotIn(".gds", page)
         finally:
             os.chdir(cwd)
 

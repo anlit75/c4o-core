@@ -847,6 +847,21 @@ def find_render(metrics_path):
         return found[0] if relative.startswith(os.pardir) else relative
     return None
 
+def find_gds(metrics_path):
+    """
+    The run's final GDS, at <run>/final/gds/, or None -- including when the
+    metrics.json does not sit at <run>/final/, for the reason find_render gives.
+    """
+    final_dir = os.path.dirname(os.path.abspath(metrics_path))
+    if os.path.basename(final_dir) != "final":
+        return None
+    found = sorted(glob.glob(os.path.join(final_dir, "gds", "*.gds")))
+    return found[0] if found else None
+
+# The PDKs Tiny Tapeout's GDS viewer has layer maps for (its src/pdk_layers.js).
+# Any other and the page offers the GDS as a download only.
+GDS_VIEWER_PDKS = {"sky130A", "ihp-sg13g2", "gf180mcuD"}
+
 def sta_step(metrics_path):
     """
     The newest post-PnR STA step directory of the run a metrics.json belongs
@@ -874,6 +889,17 @@ def default_power(metrics_path):
         rows = site_page.power_groups(f.read())
     return (corner, rows) if any(r[0] == "Total" for r in rows) else None
 
+# LibreLane's names for the classes a real 3.0.14 run reported, in words. A
+# class not listed here is printed under its own name, underscores spaced.
+CELL_CLASSES = {
+    "multi_input_combinational_cell": "logic",
+    "sequential_cell": "sequential",
+    "inverter": "inverters",
+    "timing_repair_buffer": "timing-repair buffers",
+    "clock_buffer": "clock buffers",
+    "tap_cell": "well taps",
+}
+
 def report_rows(metrics, path):
     """The (label, value) rows `report` prints, in the order it prints them."""
     rows = []
@@ -893,6 +919,20 @@ def report_rows(metrics, path):
     cells = metrics.get("design__instance__count__stdcell")
     if cells is not None:
         rows.append(("standard cells", str(cells)))
+
+    # What those cells are, by the class LibreLane files each one under,
+    # largest first. Fill is left out for the reason above; in a real run the
+    # rest add up to the row before -- 198, of which 88 are buffers and taps
+    # the flow added, not logic the RTL asked for.
+    classes = sorted(
+        ((key.split(":", 1)[1], count) for key, count in metrics.items()
+         if key.startswith("design__instance__count__class:")
+         and not key.endswith(":fill_cell") and count),
+        key=lambda c: -c[1])
+    if classes:
+        rows.append(("cell classes", ", ".join(
+            f"{count} {CELL_CLASSES.get(name, name.replace('_', ' '))}"
+            for name, count in classes)))
 
     for label, slack_key, violation_key in (
         ("setup slack", "timing__setup__ws", "timing__setup_vio__count"),
@@ -1059,6 +1099,14 @@ def cmd_site(args, config):
         if render:
             layout = "layout.png"
             shutil.copy(render, os.path.join(SITE_DIR, layout))
+        # The layout itself, next to its picture: a download, and on a
+        # published page a link that opens it in 3D.
+        gds = find_gds(path)
+        if gds:
+            name = os.path.basename(gds)
+            shutil.copy(gds, os.path.join(SITE_DIR, name))
+            pdk = config_get(config, "PDK", "sky130A")
+            details["gds"] = (name, pdk if pdk in GDS_VIEWER_PDKS else None)
 
     cocotb_runs = []
     for title, results in COCOTB_RESULTS:
