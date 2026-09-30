@@ -66,6 +66,12 @@ td.PASS, td.FAIL, td.SKIP { font-weight: 600; }
 .PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
 .share { position: relative; }
 .share span { position: absolute; inset: 20% auto 20% 0; background: var(--bar); border-radius: 3px; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.btn, .actions a[download] { display: inline-block; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px;
+       background: var(--card); color: var(--fg); font-weight: 600; font-size: 14px; }
+.btn:hover, .actions a[download]:hover { text-decoration: none; border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.hint { color: var(--muted); font-size: 13px; }
 details { border: 1px solid var(--line); border-radius: 8px; }
 summary { cursor: pointer; padding: 8px 12px; font-weight: 600; }
 details .scroll { border-top: 1px solid var(--line); padding: 12px; }
@@ -168,7 +174,7 @@ document.querySelectorAll('.zoom').forEach(function (z) {
 
 # Tiny Tapeout's viewer fetches the GDS by URL, so the link can only be built
 # where the page itself has one: on a published page, not one opened from disk.
-# Until then the link stays hidden and the GDS is a plain download.
+# Until then the button stays hidden and a note says where it will work.
 GDS_VIEWER = "https://gds-viewer.tinytapeout.com/"
 GDS_VIEWER_JS = """
 document.querySelectorAll('[data-viewer]').forEach(function (s) {
@@ -177,6 +183,8 @@ document.querySelectorAll('[data-viewer]').forEach(function (s) {
   s.querySelector('a').href = '""" + GDS_VIEWER + """?pdk=' +
     encodeURIComponent(s.getAttribute('data-viewer')) + '&model=' + encodeURIComponent(gds);
   s.hidden = false;
+  var off = s.parentNode.querySelector('[data-viewer-off]');
+  if (off) off.hidden = true;
 });
 """
 
@@ -294,10 +302,15 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         section = "<h2>Layout</h2>"
         if gds:
             name, pdk = gds
-            section += f'<p>Download the GDS: <a href="{esc(name)}" download>{esc(name)}</a>'
+            section += '<p class="actions">'
             if pdk:
                 section += (f'<span data-viewer="{esc(pdk)}" data-gds="{esc(name)}" hidden>'
-                            ' &middot; <a>open it in 3D</a> in Tiny Tapeout\'s viewer</span>')
+                            '<a class="btn primary" target="_blank" rel="noopener">'
+                            'Open in 3D</a></span>')
+            section += f'<a href="{esc(name)}" download>Download {esc(name)}</a>'
+            if pdk:
+                section += ('<span class="hint" data-viewer-off>The 3D view, in Tiny Tapeout\'s '
+                            'viewer, opens from the published page.</span>')
             section += "</p>"
         if layout:
             section += zoomable(layout, f"Layout of {design}")
