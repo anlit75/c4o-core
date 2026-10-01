@@ -1860,6 +1860,8 @@ class TestEntrypoint(unittest.TestCase):
         try:
             page = self._wave_site(["tb_blinky.clk", "tb_blinky.uut.count"])
             self.assertIn('<img src="wave.svg"', page)
+            # The file itself, one click away, for a slide or a report.
+            self.assertIn('<a class="zoom-dl" href="wave.svg" download>Download SVG</a>', page)
             self.assertIn("build/wave.vcd", page)
             with open("build/site/wave.svg") as f:
                 self.assertIn(">count<", f.read())
