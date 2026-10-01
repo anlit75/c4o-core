@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.1](https://github.com/anlit75/c4o-core/compare/v2.13.0...v2.13.1) (2026-10-01)
+
+
+### Fixes
+
+* check says it builds no layout; the README is the contract, with fixes only for the newest minor ([#45](https://github.com/anlit75/c4o-core/issues/45)) ([1e450e5](https://github.com/anlit75/c4o-core/commit/1e450e5a66c70bd089b178ce4421f35297bd7d72))
+
 ## [2.13.0](https://github.com/anlit75/c4o-core/compare/v2.12.0...v2.13.0) (2026-09-30)
 
 
