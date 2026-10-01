@@ -14,11 +14,11 @@ from xml.etree import ElementTree
 CSS = """
 :root { --bg: #f6f8fa; --card: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
         --accent: #0969da; --pass: #1a7f37; --fail: #cf222e; --skip: #9a6700;
-        --pass-bg: #dafbe1; --fail-bg: #ffebe9; --skip-bg: #fff8c5; --bar: #0969da33; }
+        --pass-bg: #dafbe1; --fail-bg: #ffebe9; --skip-bg: #fff8c5; --accent2: #54aeff; }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #0d1117; --card: #151b23; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
           --accent: #4493f8; --pass: #3fb950; --fail: #f85149; --skip: #d29922;
-          --pass-bg: #2ea04326; --fail-bg: #f8514926; --skip-bg: #bb800926; --bar: #4493f840; }
+          --pass-bg: #2ea04326; --fail-bg: #f8514926; --skip-bg: #bb800926; --accent2: #1f6feb; }
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; scroll-padding-top: 64px; }
@@ -65,9 +65,19 @@ td.num, th.num { text-align: right; }
 td.num, td.PASS, td.FAIL, td.SKIP { white-space: nowrap; }
 td.PASS, td.FAIL, td.SKIP { font-weight: 600; }
 .PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
-.share { position: relative; }
-.share span { position: absolute; inset: 20% auto 20% 0; background: var(--bar); border-radius: 3px; z-index: -1; }
-.share { z-index: 0; }
+td.bar, th.bar { width: 120px; padding-right: 0; }
+td.bar span { display: block; height: 10px; border-radius: 3px; background: var(--accent); }
+.stack { display: flex; height: 22px; border-radius: 6px; overflow: hidden; margin: 8px 0 6px;
+         background: var(--line); }
+.stack span { display: block; height: 100%; }
+.seg-synthesis, .seg-ff { background: var(--accent); } .seg-logic { background: var(--accent2); }
+.seg-flow { background: var(--muted); } .seg-other { background: var(--skip); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 16px; padding: 0; list-style: none;
+          font-size: 14px; }
+.legend li::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                     margin-right: 6px; background: var(--c); }
+.legend .of { color: var(--muted); }
+h3 { margin: 16px 0 0; font-size: 16px; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .btn, .actions a[download] { display: inline-block; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px;
        background: var(--card); color: var(--fg); font-weight: 600; font-size: 14px; }
@@ -90,10 +100,13 @@ footer { color: var(--muted); font-size: 14px; padding: 8px 0 40px; }
 .lede { margin: 0 0 8px; font-size: 18px; max-width: 46em; }
 header .actions { margin: 16px 0 0; }
 #layout .zoom-view img { max-height: 480px; width: auto; }
+#layout .zoom { width: fit-content; max-width: 100%; margin: 4px auto 0; }
 details > .zoom { border: 0; border-top: 1px solid var(--line); border-radius: 0; margin: 0; }
 @media (max-width: 600px) { h1 { font-size: 30px; } section { padding: 16px; }
   table.power td:nth-child(2), table.power th:nth-child(2),
-  table.power td:nth-child(3), table.power th:nth-child(3) { display: none; } }
+  table.power td:nth-child(3), table.power th:nth-child(3),
+  table.power td:nth-child(4), table.power th:nth-child(4) { display: none; }
+  td.bar, th.bar { width: 60px; } }
 """
 
 def cocotb_cases(path):
@@ -237,10 +250,66 @@ def kpi(label, value):
     # `report` writes um^2 for a terminal; on the page it is a real superscript.
     value = value.replace("um^2", "um\u00b2")
     main, _, detail = value.partition("  (")
+    if label == "lint warnings" and not detail:
+        # A bare count reads as a flaw; say what it counts.
+        detail = "Verilator on the RTL, inside the flow: warnings, not errors"
     wide = " wide" if len(main) > 32 else ""
     detail = f'<div class="detail">{esc(detail.rstrip(")"))}</div>' if detail else ""
     return (f'<div class="kpi{wide}"><div class="label">{esc(label)}</div>'
             f'<div class="value">{esc(main)}</div>{detail}</div>')
+
+def stack(parts, label):
+    """One bar split into (css class, value) segments, with an accessible label."""
+    total = sum(v for _, v in parts) or 1
+    return (f'<div class="stack" role="img" aria-label="{html.escape(label)}">'
+            + "".join(f'<span class="seg-{c}" style="width:{v / total:.2%}"></span>'
+                      for c, v in parts if v > 0) + "</div>")
+
+def legend(items):
+    """(colour variable, markup) per entry under a stack."""
+    return ('<ul class="legend">' + "".join(
+        f'<li style="--c: var(--{c})">{text}</li>' for c, text in items) + "</ul>")
+
+def makeup(area, cells):
+    """
+    What the chip is made of, in area and in cells. Synthesis's flip-flops and
+    logic are one stage; the standard-cell total after routing contains them,
+    so the part the flow added is the difference. One bar per measure, split
+    by where each part came from -- not three bars side by side, which read as
+    peers when one of them contains the other two.
+    """
+    esc = html.escape
+    um2 = lambda v: f"{v:,.1f} um&sup2;"
+    out = ""
+    ff, logic, routed = area.get("flip_flops"), area.get("logic"), area.get("routed")
+    if ff is not None and logic is not None:
+        synth = ff + logic
+        parts = [("ff", ff), ("logic", logic)]
+        items = [("accent", f"flip-flops {um2(ff)}"), ("accent2", f"logic {um2(logic)}")]
+        if routed is not None and routed >= synth:
+            parts.append(("flow", routed - synth))
+            items.append(("muted", f"added by place and route {um2(routed - synth)} "
+                          '<span class="of">(the difference: routing also resizes cells)</span>'))
+            out += (f"<p>Synthesis produced {um2(synth)} of logic; place and route grew it "
+                    f"{(routed - synth) / synth:.0%} to {um2(routed)}, with the clock tree, "
+                    "timing buffers and well taps it added.</p>")
+        out += stack(parts, "Standard-cell area by origin") + legend(items)
+    elif routed is not None:
+        out += f"<p>Standard cells after routing: {um2(routed)}.</p>"
+    if area.get("macros"):
+        out += f"<p>Macros (memories, hard blocks): {um2(area['macros'])}.</p>"
+
+    if cells:
+        groups = [("synthesis", "accent", "from synthesis"), ("flow", "muted", "added by the flow"),
+                  ("other", "skip", "other")]
+        sums = {g: sum(n for _, n, k in cells if k == g) for g, _, _ in groups}
+        out += (f"<h3>Cells: {sum(sums.values()):,}</h3>"
+                + stack([(g, sums[g]) for g, _, _ in groups], "Cells by origin")
+                + legend([(colour, f"{name} {sums[g]:,} " + '<span class="of">('
+                           + ", ".join(f"{n:,} {esc(cls)}" for cls, n, k in cells if k == g)
+                           + ")</span>")
+                          for g, colour, name in groups if sums[g]]))
+    return out
 
 def run_name(title):
     """"cocotb, RTL" -> "RTL", "cocotb, gate level" -> "gates": a column head."""
@@ -258,10 +327,6 @@ def merged_tests(cocotb_runs):
     for _, _, run in cocotb_runs:
         names += [name for name, _, _ in run if name not in names]
     verdicts = [{name: verdict for name, verdict, _ in run} for _, _, run in cocotb_runs]
-    sim = {}
-    for _, _, run in cocotb_runs:
-        for name, _, ns in run:
-            sim.setdefault(name, ns)
     heads = [run_name(title) for title, _, _ in cocotb_runs]
     score = ", ".join(f"{sum(v == 'PASS' for v in vs.values())}/{len(vs)} on {h}"
                       for h, vs in zip(heads, verdicts))
@@ -272,16 +337,14 @@ def merged_tests(cocotb_runs):
     return (f"<h2>Tests: {score}</h2><p>The same cocotb tests, run on the RTL and again "
             f"on the gates synthesis produced.</p>{seeds}"
             '<div class="scroll"><table><tr><th>test</th>'
-            + "".join(f"<th>{esc(h)}</th>" for h in heads)
-            + '<th class="num">sim time (ns)</th></tr>' + "".join(
+            + "".join(f"<th>{esc(h)}</th>" for h in heads) + "</tr>" + "".join(
                 f"<tr><td><code>{esc(name)}</code></td>"
-                + "".join(cell(vs.get(name)) for vs in verdicts)
-                + f'<td class="num">{sim[name]:g}</td></tr>'
+                + "".join(cell(vs.get(name)) for vs in verdicts) + "</tr>"
                 for name in names) + "</table></div>")
 
 def render(design, numbers, layout, cocotb_runs, schematic, env,
-           signoff=(), timing=None, area=(), power=None, blocks=None, wave=None, gds=None,
-           description=None):
+           signoff=(), timing=None, area=None, power=None, blocks=None, wave=None, gds=None,
+           description=None, cells=()):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -293,13 +356,14 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     env          -- os.environ; on GitHub Actions it names the commit and run
     signoff      -- (check, error count) per signoff check the run reported
     timing       -- (corner, path text) for the worst setup path, or None
-    area         -- (label, um^2) rows
+    area         -- {flip_flops, logic, routed, macros: um^2}, any of them absent
     power        -- (corner, power_groups rows), or None
     blocks       -- the block diagram's name next to the page, or None
     wave         -- (waveform's name next to the page, VCD it came from), or None
     gds          -- (the GDS's name next to the page, PDK for the 3D viewer or
                     None when the viewer has no layers for it), or None
     description  -- one line saying what the design is, or None
+    cells        -- (class, count, 'synthesis' | 'flow' | 'other') per cell class
 
     The page is laid out to be shared, as a portfolio piece: the layout first,
     then the numbers, then the evidence that it works, then the detail.
@@ -384,12 +448,8 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             f"<details><summary>{esc(slack + headline)}: show the full path</summary>"
             f'<div class="scroll"><pre>{esc(path)}</pre></div></details>')
 
-    if area:
-        largest = max(value for _, value in area) or 1
-        add("area", "Area", '<h2>Area</h2><div class="scroll"><table>' + "".join(
-            f'<tr><th>{esc(label)}</th><td class="num share">'
-            f'<span style="width:{value / largest:.0%}"></span>{value:,.1f} um&sup2;</td></tr>'
-            for label, value in area) + "</table></div>")
+    if area or cells:
+        add("area", "Area", "<h2>Area</h2>" + makeup(area or {}, cells))
 
     if power:
         corner, rows = power
@@ -402,10 +462,11 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             "not a measurement of a workload.</p>"
             '<div class="scroll"><table class="power"><tr><th>group</th><th class="num">internal</th>'
             '<th class="num">switching</th><th class="num">leakage</th>'
-            '<th class="num">total</th><th class="num">share</th></tr>' + "".join(
+            '<th class="num">total</th><th class="num">share</th><th class="bar"></th></tr>' + "".join(
                 f'<tr><td>{esc(group)}</td><td class="num">{uw(i)}</td><td class="num">{uw(sw)}</td>'
                 f'<td class="num">{uw(lk)}</td><td class="num">{uw(t)}</td>'
-                f'<td class="num share"><span style="width:{t / total:.0%}"></span>{t / total:.1%}</td></tr>'
+                f'<td class="num">{t / total:.1%}</td>'
+                f'<td class="bar"><span style="width:{t / total:.0%}"></span></td></tr>'
                 for group, i, sw, lk, t in rows) + "</table></div>")
 
     if blocks:
