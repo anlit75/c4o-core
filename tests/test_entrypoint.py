@@ -1417,6 +1417,17 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("<code>max_ss_100C_1v60</code>", page)
             self.assertIn("Startpoint: _182_", page)
             self.assertIn("4.697966   slack (MET)", page)
+            # What the report says, in a sentence: the clock is the edge at
+            # 10.0; count[1] is the net _182_ drives; _172_'s D net is
+            # auto-named, so the instance stays.
+            self.assertIn("From <code>count[1]</code> (flip-flop) to <code>_172_</code> (flip-flop). "
+                          "Clock 10.0 ns (100 MHz): the data arrives at 5.49 ns, "
+                          "4.70 ns before its 10.19 ns deadline.", page)
+            self.assertIn('<span class="used" style="width:53.89%"></span>'
+                          '<span class="spare" style="width:46.11%"></span>'
+                          '<span class="reserved" style="width:0.00%"></span>', page)
+            self.assertIn("(slow transistors, 100 &deg;C, 1.60 V)", page)
+            self.assertIn("<details><summary>Full OpenSTA report</summary>", page)
             # stat.json: 1366.3104 total, 683.1552 of it sequential -- this
             # design splits exactly in half. Routing's 1906.8 contains both, so
             # the third part is the difference, not a third peer.
@@ -1697,7 +1708,9 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn('content="A clock divider that blinks an LED."', page)
             self.assertIn('<meta property="og:image" content="https://some.github.io/repo/layout.png">', page)
             self.assertIn('<a class="btn" href="https://github.com/Some/repo">View source</a>', page)
-            self.assertIn("<details><summary>Schematic (RTL)</summary>", page)
+            # No block diagram here, so the schematic keeps a section, folded.
+            self.assertIn("<h2>Schematic</h2>", page)
+            self.assertIn("<details><summary>Show the schematic</summary>", page)
         finally:
             os.chdir(cwd)
 
@@ -1738,6 +1751,56 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("<div class=\"label\">power</div>", page)
         finally:
             os.chdir(cwd)
+
+    UART_PATH = """Startpoint: _2086_ (rising edge-triggered flip-flop clocked by CLK)
+Endpoint: PRDATA[4] (output port clocked by CLK)
+                                  0.000000    0.000000   clock CLK (rise edge)
+                      0.1   0.2   0.6 ^ _2086_/CLK (sky130_fd_sc_hd__dfrtp_1)
+     3    0.01   0.2   0.5   1.1 ^ _2086_/Q (sky130_fd_sc_hd__dfrtp_1)
+                                                         uart_rx_fifo_i.pointer_out[0] (net)
+                                              9.275290   data arrival time
+                                 11.000000   11.000000   clock CLK (rise edge)
+                                 -0.250000   10.750000   clock uncertainty
+                                 -0.550000   10.200000   output external delay
+                                             10.200000   data required time
+                                              {slack}   slack ({verdict})
+"""
+
+    def test_timing_story_names_the_path_and_the_clock(self):
+        s = entrypoint.site_page.timing_story(self.UART_PATH.format(slack="0.924710", verdict="MET"))
+        self.assertEqual(s["start"], "uart_rx_fifo_i.pointer_out[0]")
+        self.assertEqual((s["end"], s["end_kind"]), ("PRDATA[4]", "output"))
+        self.assertEqual(s["period"], 11.0)
+        self.assertEqual((s["arrival"], s["required"]), (9.27529, 10.2))
+
+    def test_timing_story_gives_up_rather_than_guess(self):
+        # No required time: the page shows the report as printed instead.
+        path = self.UART_PATH.replace("data required time", "something else")
+        self.assertIsNone(entrypoint.site_page.timing_story(path.format(slack="0.9", verdict="MET")))
+
+    def test_timing_story_leaves_a_half_cycle_path_to_the_report(self):
+        # Launched on a falling edge at 5.5: the 5.5 ns to the capture edge is
+        # not the clock period, and the page must not call it one.
+        path = self.UART_PATH.replace("0.000000    0.000000   clock CLK (rise edge)",
+                                      "5.500000    5.500000   clock CLK (fall edge)")
+        self.assertIsNone(entrypoint.site_page.timing_story(path.format(slack="0.9", verdict="MET")))
+
+    def test_site_draws_a_violated_path_late_not_spare(self):
+        path = self.UART_PATH.replace("9.275290", "10.500000").format(slack="-0.300000",
+                                                                      verdict="VIOLATED")
+        page = entrypoint.site_page.render("uart", [], None, [], None, {},
+                                           timing=("max_ss_100C_1v60", path))
+        self.assertIn("0.30 ns after its 10.20 ns deadline", page)
+        self.assertIn('<span class="late"', page)
+        # The bar has a key: which colour is the overrun.
+        self.assertIn("late by 0.30 ns", page)
+        self.assertNotIn('<span class="spare"', page)
+
+    def test_site_links_the_schematic_under_the_blocks_instead_of_a_section(self):
+        page = entrypoint.site_page.render("uart", [], None, [], "schematic.svg", {},
+                                           blocks="blocks/top.svg")
+        self.assertIn('<a href="schematic.svg">open the schematic</a>', page)
+        self.assertNotIn('<section id="schematic"', page)
 
     def test_first_path_stops_at_the_first_slack(self):
         text = ("Startpoint: a\nEndpoint: b\n  1.0   slack (VIOLATED)\n"

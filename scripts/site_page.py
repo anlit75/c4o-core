@@ -98,6 +98,11 @@ h3 { margin: 16px 0 0; font-size: 16px; }
 .btn:hover, .actions a[download]:hover { text-decoration: none; border-color: var(--accent); }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .hint { color: var(--muted); font-size: 13px; }
+.tbar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin: 4px 0 8px;
+        background: var(--line); }
+.tbar span { display: block; height: 100%; }
+.tbar .used { background: var(--accent); } .tbar .spare { background: var(--pass); }
+.tbar .late { background: var(--fail); } .tbar .reserved { background: var(--muted); }
 details { border: 1px solid var(--line); border-radius: 8px; }
 summary { cursor: pointer; padding: 8px 12px; font-weight: 600; }
 details .scroll { border-top: 1px solid var(--line); padding: 12px; }
@@ -394,6 +399,69 @@ def hero_art(layout, design, numbers, pdk):
     return (f'<figure class="hero-art" id="layout"><a href="{esc(layout)}">'
             f'<img src="{esc(layout)}" alt="Layout of {esc(design)}"></a>{caption}</figure>')
 
+AUTO_NAME = re.compile(r"_\d+_$")
+CORNER = re.compile(r"(?:min|nom|max)_(ss|tt|ff|sf|fs)_(n?)(\d+)C_(\d+)v(\d+)$")
+PROCESS = {"ss": "slow", "tt": "typical", "ff": "fast", "sf": "slow-fast", "fs": "fast-slow"}
+
+def corner_words(corner):
+    """'max_ss_100C_1v60' -> 'slow transistors, 100 °C, 1.60 V', or None."""
+    m = CORNER.match(corner)
+    if not m:
+        return None
+    process, minus, temp, volts, frac = m.groups()
+    return (f"{PROCESS[process]} transistors, {'-' if minus else ''}{temp} &deg;C, "
+            f"{volts}.{frac} V")
+
+def timing_story(path):
+    """
+    What a reader wants from an OpenSTA path report, pulled out of it: where
+    the path starts and ends, the clock period, and when the data arrives
+    against when it must. None when any of it cannot be found, so the page
+    falls back to the report as printed.
+    """
+    lines = path.splitlines()
+    head = {}
+    for line in lines:
+        for key in ("Startpoint", "Endpoint"):
+            if line.startswith(key + ":"):
+                name, _, kind = line.split(":", 1)[1].strip().partition(" ")
+                head[key] = (name, kind)
+    number = lambda pattern: next((float(m.group(1)) for line in lines
+                                   for m in [re.search(pattern, line)] if m), None)
+    edges = [float(m.group(1)) for line in lines
+             for m in [re.match(r"\s*\S+\s+(-?[\d.]+)\s+clock \S+ \((?:rise|fall) edge\)", line)] if m]
+    arrival = number(r"^\s*(-?[\d.]+)\s+data arrival time")
+    required = number(r"^\s*(-?[\d.]+)\s+data required time")
+    slack = number(r"^\s*(-?[\d.]+)\s+slack")
+    # A launch edge off zero is a half-cycle or multicycle path: the gap to
+    # the capture edge is not the clock period, so do not call it one.
+    if len(head) < 2 or len(edges) < 2 or edges[0] != 0 or None in (arrival, required, slack):
+        return None
+
+    def net_after(cell):
+        # An instance like _2086_ says nothing; the net it drives usually does.
+        hits = [i for i, line in enumerate(lines) if f" {cell}/" in line]
+        nets = [l.split()[0] for l in lines[hits[-1]:] if l.rstrip().endswith("(net)")] if hits else []
+        return nets[0] if nets and not AUTO_NAME.search(nets[0]) else cell
+
+    def net_before(cell):
+        hits = [i for i, line in enumerate(lines) if f" {cell}/" in line]
+        nets = [l.split()[0] for l in lines[:hits[0]] if l.rstrip().endswith("(net)")] if hits else []
+        return nets[-1] if nets and not AUTO_NAME.search(nets[-1]) else cell
+
+    def kind(text):
+        return ("input" if "input port" in text else "output" if "output port" in text
+                else "flip-flop" if "flip-flop" in text else "latch" if "latch" in text else "")
+
+    (start, start_kind), (end, end_kind) = head["Startpoint"], head["Endpoint"]
+    return {
+        "start": net_after(start) if AUTO_NAME.search(start) else start,
+        "start_kind": kind(start_kind),
+        "end": net_before(end) if AUTO_NAME.search(end) else end,
+        "end_kind": kind(end_kind),
+        "period": edges[1], "arrival": arrival, "required": required, "slack": slack,
+    }
+
 def run_name(title):
     """"cocotb, RTL" -> "RTL", "cocotb, gate level" -> "gates": a column head."""
     return {"cocotb, RTL": "RTL", "cocotb, gate level": "gates"}.get(title, title)
@@ -522,14 +590,46 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
 
     if timing:
         corner, path = timing
-        # The whole path is long; its last line is the one that answers.
-        verdict = path.strip().splitlines()[-1].split()
-        headline = " ".join(verdict[-2:]) if len(verdict) >= 3 else "the path"
-        slack = f"{float(verdict[0]):+.3f} ns, " if len(verdict) >= 3 else ""
-        add("timing", "Timing",
-            f"<h2>Worst setup path</h2><p>Corner <code>{esc(corner)}</code>, the one with "
-            "the least setup slack. Printed as OpenSTA reports it.</p>"
-            f"<details><summary>{esc(slack + headline)}: show the full path</summary>"
+        story = timing_story(path)
+        words = corner_words(corner)
+        where = (f"Corner <code>{esc(corner)}</code>" + (f" ({words})" if words else "")
+                 + ", the one with the least setup slack.")
+        if story:
+            # The report's two facts worth a sentence -- the clock and which
+            # path -- and a bar that is one clock period wide.
+            s = story
+            point = lambda name, kind: (f"{kind} <code>{esc(name)}</code>" if kind in ("input", "output")
+                                        else f"<code>{esc(name)}</code>" + (f" ({kind})" if kind else ""))
+            mhz = f" ({1000 / s['period']:.0f} MHz)" if s["period"] > 0 else ""
+            when = (f"{s['slack']:.2f} ns before its {s['required']:.2f} ns deadline" if s["slack"] >= 0
+                    else f"{-s['slack']:.2f} ns after its {s['required']:.2f} ns deadline")
+            scale = max(s["period"], s["arrival"], s["required"]) or 1
+            pct = lambda v: f"{max(v, 0) / scale:.2%}"
+            if s["slack"] >= 0:
+                bar = (f'<span class="used" style="width:{pct(s["arrival"])}"></span>'
+                       f'<span class="spare" style="width:{pct(s["slack"])}"></span>')
+            else:
+                bar = (f'<span class="used" style="width:{pct(s["required"])}"></span>'
+                       f'<span class="late" style="width:{pct(-s["slack"])}"></span>')
+            reserved = s["period"] - max(s["required"], s["arrival"])
+            bar += f'<span class="reserved" style="width:{pct(reserved)}"></span>'
+            key = ([("accent", f"data path {s['arrival']:.2f} ns"), ("pass", f"slack {s['slack']:.2f} ns")]
+                   if s["slack"] >= 0 else
+                   [("accent", f"until the deadline {s['required']:.2f} ns"),
+                    ("fail", f"late by {-s['slack']:.2f} ns")])
+            if reserved > 0:
+                key.append(("muted", f"held back for clock uncertainty and setup or I/O delay "
+                                     f"{reserved:.2f} ns"))
+            body = (f"<p>From {point(s['start'], s['start_kind'])} to {point(s['end'], s['end_kind'])}. "
+                    f"Clock {s['period']:.1f} ns{mhz}: the data arrives at {s['arrival']:.2f} ns, "
+                    f"{when}.</p>"
+                    f'<div class="tbar" role="img" aria-label="Data arrives at {s["arrival"]:.2f} of '
+                    f'{s["period"]:.1f} ns, slack {s["slack"]:+.2f} ns">{bar}</div>' + legend(key) +
+                    f'<p class="hint">{where}</p>')
+        else:
+            body = f"<p>{where} Printed as OpenSTA reports it.</p>"
+        add("timing", "Timing", "<h2>Worst setup path</h2>" + body
+            + "<details><summary>Full OpenSTA report</summary>"
             f'<div class="scroll"><pre>{esc(path)}</pre></div></details>')
 
     if area or cells:
@@ -567,13 +667,19 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             "nets between them. Wiring that passes through the top's own gates "
             "meets them at the dashed box. Open it and click a block to go one "
             "level down: to that module's own block diagram, or to its schematic "
-            "when it has no submodules.</p>" + zoomable(blocks, f"Block diagram of {design}"))
+            "when it has no submodules.</p>" + zoomable(blocks, f"Block diagram of {design}")
+            # With blocks to click through, the top's whole schematic is a
+            # texture on the page; it is a file to open, not a section.
+            + (f'<p class="hint">The whole top module as one drawing, from the RTL: '
+               f'<a href="{esc(schematic)}">open the schematic</a>, best on a large screen.</p>'
+               if schematic else ""))
 
-    if schematic:
-        # Collapsed: past a few hundred cells it is a texture, not a picture,
-        # and the block diagram above says more. One click away for a small one.
+    if schematic and not blocks:
+        # Collapsed: past a few hundred cells it is a texture, not a picture.
+        # One click away for a small one.
         add("schematic", "Schematic",
-            "<details><summary>Schematic (RTL)</summary>"
+            "<h2>Schematic</h2><p>The circuit the RTL describes, drawn by Yosys "
+            "before synthesis.</p><details><summary>Show the schematic</summary>"
             + zoomable(schematic, f"Schematic of {design}") + "</details>")
 
     # Only on GitHub Actions, where these say which commit the page shows.
