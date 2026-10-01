@@ -965,6 +965,39 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    @patch('entrypoint.log_warn')
+    @patch('entrypoint.check_cocotb_results')
+    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_warns_when_no_rtl_declares_a_timescale(
+        self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check, mock_warn
+    ):
+        # Icarus then runs at 1 s, and cocotb's Clock in ns fails with an
+        # error that names neither the cause nor the file. `make sim` passes.
+        os.makedirs(os.path.join(self.test_dir, "pytests"))
+        open(os.path.join(self.test_dir, "pytests/test_top.py"), "w").close()
+        config = {"VERILOG_FILES": ["src/**/*.v"], "//COCOTB_TESTS": ["dir::pytests/*.py"],
+                  "DESIGN_NAME": "top"}
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+            args.netlist = None
+
+            entrypoint.cmd_cocotb(args, config)
+            self.assertIn("`timescale 1ns/1ps", mock_warn.call_args[0][0])
+
+            mock_warn.reset_mock()
+            with open("src/top.v", "w") as f:
+                f.write("`timescale 1ns/1ps\nmodule top; endmodule")
+            entrypoint.cmd_cocotb(args, config)
+            mock_warn.assert_not_called()
+        finally:
+            os.chdir(cwd)
+
     def _gl_cocotb_config(self):
         """_gl_workspace, plus the Python tests cocotb needs."""
         os.makedirs(os.path.join(self.test_dir, "pytests"), exist_ok=True)
@@ -1387,18 +1420,21 @@ class TestEntrypoint(unittest.TestCase):
             # stat.json: 1366.3104 total, 683.1552 of it sequential -- this
             # design splits exactly in half. Routing's 1906.8 contains both, so
             # the third part is the difference, not a third peer.
-            self.assertIn("flip-flops 683.2 um", page)
-            self.assertIn("logic 683.2 um", page)
-            self.assertIn("added by place and route 540.5 um", page)
-            self.assertIn("grew it 40% to 1,906.8 um", page)
+            self.assertIn("flip-flops 683.2 &micro;m&sup2;", page)
+            self.assertIn("logic 683.2 &micro;m&sup2;", page)
+            self.assertIn("added by place and route 540.5 &micro;m&sup2;", page)
+            self.assertIn("grew it 40% to 1,906.8 &micro;m&sup2;", page)
             # Cells by origin: 57 logic + 26 sequential + 27 inverters from
             # synthesis; 46 taps + 35 timing-repair + 7 clock buffers added.
             self.assertIn("<h3>Cells: 198</h3>", page)
             self.assertIn("from synthesis 110 ", page)
             self.assertIn("added by the flow 88 ", page)
             self.assertNotIn("cell classes", page)
-            # The share bar has a column of its own, never under a number.
-            self.assertIn('<td class="num">54.4%</td><td class="bar"><span style="width:54%"></span></td>', page)
+            # The share bar has a column of its own, never under a number, and
+            # is scaled to the largest group so the bars are comparable; the
+            # Total row is the sum, so it gets no bar.
+            self.assertIn('<td class="num">54.4%</td><td class="bar"><span style="width:100%"></span></td>', page)
+            self.assertRegex(page, r'<tr class="total"><td>Total</td>.*?<td class="bar"></td></tr>')
             # A bare lint count reads as a flaw; it says what it counts.
             self.assertIn("Verilator on the RTL, inside the flow", page)
             # power.rpt of DEFAULT_CORNER, not the bare power__total metric,
@@ -1426,7 +1462,7 @@ class TestEntrypoint(unittest.TestCase):
             page = self._site({"DESIGN_NAME": "blinky", "PDK": "sky130A"})
 
             self.assertTrue(os.path.exists("build/site/blinky.gds"))
-            self.assertIn('<a class="btn" href="blinky.gds" download>Download GDS</a>', page)
+            self.assertIn('<a class="btn ghost" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
             # Hidden until the script finds the page has a URL to hand over.
             self.assertIn('data-viewer="sky130A" data-gds="blinky.gds" hidden', page)
             self.assertIn("gds-viewer.tinytapeout.com", page)
@@ -1442,7 +1478,7 @@ class TestEntrypoint(unittest.TestCase):
 
             page = self._site({"DESIGN_NAME": "blinky", "PDK": "some130"})
 
-            self.assertIn('<a class="btn" href="blinky.gds" download>Download GDS</a>', page)
+            self.assertIn('<a class="btn ghost" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
             self.assertNotIn("data-viewer", page)
             self.assertNotIn("gds-viewer.tinytapeout.com", page)
         finally:
@@ -1507,8 +1543,64 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("5 clock inverters", page)
             # report's terminal spelling, um^2, does not reach the page.
             self.assertNotIn("um^2", page)
-            self.assertIn("um\u00b2", page)
+            self.assertIn("&micro;m&sup2;", page)
             self.assertIn('<th class="num">errors</th>', page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_formats_the_summary_for_reading(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site()
+            # report's "69.5 x 80.2 um" and "5573.04 um^2", as a reader writes them.
+            self.assertIn('<div class="value">69.5 \u00d7 80.2 \u00b5m</div>', page)
+            self.assertIn('<div class="detail">5,573.0 \u00b5m\u00b2</div>', page)
+            # Positive slack is the good news; it says so in colour.
+            self.assertIn('<div class="kpi good"><div class="label">setup slack</div>', page)
+            # A tick beside PASS, written so Python's string escapes cannot eat it.
+            self.assertIn('td.PASS::before { content: "\u2713"', page)
+            # Macro and Pad are zero in a design with neither: rows of 0.0 are noise.
+            self.assertNotIn("<td>Macro</td>", page)
+            self.assertNotIn("<td>Pad</td>", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_does_not_colour_a_negative_slack_good(self):
+        def violated(metrics):
+            metrics["timing__setup__ws"] = -0.5
+            metrics["design__instance__count__stdcell"] = 12345
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site(violated)
+            self.assertIn('<div class="kpi"><div class="label">setup slack</div>', page)
+            self.assertIn('<div class="value">12,345</div>', page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_puts_the_layout_beside_the_title_and_names_the_author(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            self._run_with_gds()
+            os.makedirs("runs/blinky_run/final/render")
+            open("runs/blinky_run/final/render/blinky.png", "w").close()
+            env = {"GITHUB_REPOSITORY": "someone/blinky", "GITHUB_SERVER_URL": "https://github.com"}
+            with patch.dict(os.environ, env):
+                page = self._site({"DESIGN_NAME": "blinky", "PDK": "sky130A"})
+
+            header = page[page.index("<header"):page.index("</header>")]
+            self.assertIn('<header class="has-art">', page)
+            self.assertIn('<figure class="hero-art" id="layout">', header)
+            self.assertIn("69.5 \u00d7 80.2 \u00b5m &middot; 198 cells &middot; sky130A", header)
+            self.assertIn('<p class="byline">by <a href="https://github.com/someone">someone</a></p>', header)
+            # The layout is the hero now, not a section of its own further down.
+            self.assertNotIn('<section id="layout"', page)
+            # Most wanted first: the 3D view, then the source, then the file.
+            order = [header.index(s) for s in ("data-viewer=", "View source", "blinky.gds\" download")]
+            self.assertEqual(order, sorted(order))
         finally:
             os.chdir(cwd)
 

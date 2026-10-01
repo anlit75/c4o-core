@@ -66,6 +66,14 @@ def load_config():
             sys.exit(1)
     return {}
 
+def read_text(path):
+    """A source file's text, or "" when it cannot be read as text."""
+    try:
+        with open(path, errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
 def config_get(config, key, default=None):
     """
     Reads a config key, also accepting it under a '//' prefix.
@@ -411,7 +419,17 @@ def cmd_cocotb(args, config):
     else:
         compile_cmd = ["iverilog", "-g2012", "-s", toplevel, "-o", vvp_file]
         compile_cmd += [f"-I{inc}" for inc in get_include_dirs(config)]
-        compile_cmd += get_files(args, config, key="VERILOG_FILES")
+        sources = get_files(args, config, key="VERILOG_FILES")
+        compile_cmd += sources
+        # Without a `timescale Icarus runs at 1 s precision, and the first
+        # Clock(..., units="ns") dies with "Unable to accurately represent
+        # 10(ns)" -- which names neither the cause nor the file. `make sim`
+        # never shows it: the Verilog testbench carries its own `timescale.
+        if not any("`timescale" in read_text(f) for f in sources):
+            log_warn("None of VERILOG_FILES declares a `timescale, so the simulator runs at "
+                     "1 s precision and a cocotb Clock in ns fails with \"Unable to "
+                     "accurately represent\". Put `timescale 1ns/1ps on the first line "
+                     "of your RTL.")
     run_command(compile_cmd)
 
     # cocotb finds tests by module name on PYTHONPATH, so hand it both.
@@ -1129,7 +1147,8 @@ def cmd_site(args, config):
             name = os.path.basename(gds)
             shutil.copy(gds, os.path.join(SITE_DIR, name))
             pdk = config_get(config, "PDK", "sky130A")
-            details["gds"] = (name, pdk if pdk in GDS_VIEWER_PDKS else None)
+            details["gds"] = (name, pdk if pdk in GDS_VIEWER_PDKS else None,
+                              os.path.getsize(gds))
 
     cocotb_runs = []
     for title, results in COCOTB_RESULTS:

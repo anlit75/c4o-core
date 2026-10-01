@@ -68,7 +68,9 @@ Two things worth knowing before you write one:
 *   **Your design needs a `` `timescale ``.** Without one Icarus defaults to
     1-second precision and every cocotb test dies with
     `Unable to accurately represent 10(ns) with the simulator precision of 1e0`.
-    Adding `` `timescale 1ns/1ps `` to the top of the file fixes it.
+    Adding `` `timescale 1ns/1ps `` to the top of the file fixes it. `make sim`
+    never shows this, because the Verilog testbench carries its own, so this
+    command warns before compiling when no file in `VERILOG_FILES` declares one.
 
 ### The same tests, against the gates
 
@@ -330,16 +332,20 @@ the commit and the run it came from -- provided `GITHUB_SERVER_URL`,
 `docker run` does only when asked with `-e`. The verdict chips are one per
 thing that ran; "Timing met" needs both setup and hold slack non-negative.
 
-The page is laid out to be shared -- a portfolio piece more than a CI log. Under
-the title, `"//DESCRIPTION"` from the config says what the design is, and the
-buttons are what a visitor does with a chip: **Open in 3D**, **Download GDS**
-and, on Actions, **View source**. The sections then run layout, summary, tests,
-block diagram, waveform, signoff, timing, area, power, and the RTL schematic
+The page is laid out to be shared -- a portfolio piece more than a CI log. The
+layout render sits beside the title, captioned with the die size, the cell count
+and the PDK. Under the title, on Actions, a byline names the repository's owner;
+`"//DESCRIPTION"` from the config says what the design is, and the buttons are
+what a visitor does with a chip, most wanted first: **Open in 3D**, **View
+source** (on Actions), and the GDS with its size. The summary writes the die as
+`69.5 × 80.2 µm`, groups thousands, and colours a non-negative slack green. The
+sections then run summary, tests, block diagram, waveform, signoff, timing,
+area, power, and the RTL schematic
 folded into a `<details>`, since past a few hundred cells it is a texture
 rather than a picture. When both an RTL and a gate-level cocotb run exist they
 share one table, a column each, which is what makes "the same tests still pass
 after synthesis" visible. The page carries Open Graph tags for link previews;
-`og:image` is the layout, and only on Actions, where the Pages URL it must be
+`og:image` is the layout, as a `summary` card, and only on Actions, where the Pages URL it must be
 absolute against is known (`https://<owner>.github.io/<repo>/`).
 
 Every picture on the page zooms in place: the + / − / reset buttons, Ctrl +
@@ -357,7 +363,7 @@ From the run directory's own reports, when the `metrics.json` sits at
 | Signoff checks | `metrics.json` | One row per check, with its error count. |
 | Worst setup path | `*-openroad-stapostpnr/<corner>/max.rpt` | The corner whose `timing__setup__ws__corner:*` is lowest, and that report's first path, printed as OpenSTA wrote it. Left out if that corner has no `max.rpt`, rather than showing a path that is not the worst one. |
 | Area | synthesis's `reports/stat.json` and `metrics.json` | One bar of the standard-cell area after routing, split into synthesis's flip-flops and logic and the difference place and route added (a difference, since routing also resizes cells); then one bar of the cell count by class, split into what synthesis produced, what the flow added (taps, timing-repair and clock buffers and inverters) and anything unclassified. Not per module: LibreLane's default `SYNTH_HIERARCHY_MODE` is `flatten`, so module boundaries are gone by then. |
-| Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential / combinational / clock split, as internal, switching and leakage. The activity is OpenSTA's default, not a simulation's, so it shows where power goes, not what a workload draws. |
+| Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential / combinational / clock split, as internal, switching and leakage, with groups at zero (a design with no macros or pads) left out and the bars scaled to the largest group. The activity is OpenSTA's default, not a simulation's, so it shows where power goes, not what a workload draws. |
 
 The power table reads `power.rpt` rather than the bare `power__*` metrics
 because those carry one corner's numbers without naming it. `report`'s `power`
@@ -366,7 +372,7 @@ row does the same and names the corner. Without a run directory to find
 When the power table is on the page, the summary drops its `power` row.
 
 The run's final GDS, `<run>/final/gds/*.gds`, is copied next to the page and
-linked under **Layout** as a download. When config's `PDK` is one
+linked from the heading as a download. When config's `PDK` is one
 [Tiny Tapeout's GDS viewer](https://github.com/TinyTapeout/tinytapeout_gds_viewer)
 has layers for — `sky130A`, `ihp-sg13g2`, `gf180mcuD` — the page also links it
 there, to open in 3D. The viewer fetches the GDS by URL, so that link appears
