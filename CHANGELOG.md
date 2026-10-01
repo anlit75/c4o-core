@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.14.2](https://github.com/anlit75/c4o-core/compare/v2.14.1...v2.14.2) (2026-10-01)
+
+
+### Fixes
+
+* **site:** polish the results page and warn on a missing `timescale ([#53](https://github.com/anlit75/c4o-core/issues/53)) ([8db41e9](https://github.com/anlit75/c4o-core/commit/8db41e9804068d9e4f2b4814dcbc75d73a6b4c14))
+
 ## [2.14.1](https://github.com/anlit75/c4o-core/compare/v2.14.0...v2.14.1) (2026-10-01)
 
 
