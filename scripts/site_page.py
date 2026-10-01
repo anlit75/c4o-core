@@ -8,6 +8,7 @@ markup. Nothing here touches the filesystem except to parse the XML it is
 handed.
 """
 import html
+from datetime import datetime, timezone
 from xml.etree import ElementTree
 
 CSS = """
@@ -65,7 +66,8 @@ td.num, td.PASS, td.FAIL, td.SKIP { white-space: nowrap; }
 td.PASS, td.FAIL, td.SKIP { font-weight: 600; }
 .PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
 .share { position: relative; }
-.share span { position: absolute; inset: 20% auto 20% 0; background: var(--bar); border-radius: 3px; }
+.share span { position: absolute; inset: 20% auto 20% 0; background: var(--bar); border-radius: 3px; z-index: -1; }
+.share { z-index: 0; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .btn, .actions a[download] { display: inline-block; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px;
        background: var(--card); color: var(--fg); font-weight: 600; font-size: 14px; }
@@ -226,6 +228,8 @@ def kpi(label, value):
     and the part in brackets is the detail under the headline figure.
     """
     esc = html.escape
+    # `report` writes um^2 for a terminal; on the page it is a real superscript.
+    value = value.replace("um^2", "um\u00b2")
     main, _, detail = value.partition("  (")
     wide = " wide" if len(main) > 32 else ""
     detail = f'<div class="detail">{esc(detail.rstrip(")"))}</div>' if detail else ""
@@ -268,9 +272,13 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         errors = sum(count for _, count in signoff)
         chips.append(("FAIL", f"Signoff: {errors} errors") if errors
                      else ("PASS", "Signoff clean"))
-    setup = dict(numbers).get("setup slack")
-    if setup:
-        chips.append(("FAIL", "Timing missed") if setup.startswith("-")
+    # Setup and hold both: a negative hold slack is a chip that fails on
+    # silicon at any clock speed, so "Timing met" on setup alone would be a
+    # wrong verdict, not a partial one.
+    slacks = [dict(numbers).get(k) for k in ("setup slack", "hold slack")]
+    slacks = [s for s in slacks if s]
+    if slacks:
+        chips.append(("FAIL", "Timing missed") if any(s.startswith("-") for s in slacks)
                      else ("PASS", "Timing met"))
 
     if numbers:
@@ -292,7 +300,7 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     if signoff:
         add("signoff", "Signoff",
             "<h2>Signoff checks</h2><p>The checks a layout has to pass before it can be "
-            'manufactured.</p><div class="scroll"><table><tr><th>check</th><th>errors</th><th>result</th></tr>'
+            'manufactured.</p><div class="scroll"><table><tr><th>check</th><th class="num">errors</th><th>result</th></tr>'
             + "".join(
                 f'<tr><td>{esc(check)}</td><td class="num">{count}</td>'
                 f'<td class="{"FAIL" if count else "PASS"}">{"FAIL" if count else "PASS"}</td></tr>'
@@ -371,16 +379,22 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             "<h2>Schematic (RTL)</h2>" + zoomable(schematic, f"Schematic of {design}"))
 
     # Only on GitHub Actions, where these say which commit the page shows.
-    source = ""
+    # When the page was built, always: a published page stays up until the
+    # next one replaces it, so a reader needs to know how old it is.
+    # SOURCE_DATE_EPOCH, when set, pins it (reproducible builds, tests).
+    epoch = env.get("SOURCE_DATE_EPOCH")
+    built = (datetime.fromtimestamp(int(epoch), timezone.utc) if epoch
+             else datetime.now(timezone.utc))
+    meta = [f"Built {built:%Y-%m-%d %H:%M} UTC"]
     server, repo = env.get("GITHUB_SERVER_URL"), env.get("GITHUB_REPOSITORY")
     sha, run = env.get("GITHUB_SHA"), env.get("GITHUB_RUN_ID")
     if server and repo and sha:
-        source = (f'<p class="meta"><a href="{esc(server)}/{esc(repo)}">{esc(repo)}</a> &middot; '
-                  f'commit <a href="{esc(server)}/{esc(repo)}/commit/{esc(sha)}">'
-                  f"<code>{esc(sha[:7])}</code></a>")
+        meta.append(f'<a href="{esc(server)}/{esc(repo)}">{esc(repo)}</a>')
+        meta.append(f'commit <a href="{esc(server)}/{esc(repo)}/commit/{esc(sha)}">'
+                    f"<code>{esc(sha[:7])}</code></a>")
         if run:
-            source += f' &middot; <a href="{esc(server)}/{esc(repo)}/actions/runs/{esc(run)}">CI run</a>'
-        source += "</p>"
+            meta.append(f'<a href="{esc(server)}/{esc(repo)}/actions/runs/{esc(run)}">CI run</a>')
+    source = f'<p class="meta">{" &middot; ".join(meta)}</p>'
 
     body = "".join(markup for _, _, markup in parts)
     return (

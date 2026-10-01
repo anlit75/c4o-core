@@ -323,8 +323,12 @@ copied next to it. The directory is the whole site: upload it with
 Each part appears when the file behind it exists, so the page works after
 `cocotb` alone. The directory is emptied first, so a render from an earlier run
 cannot be published under a later one. Each cocotb table carries the run's seed,
-which is what reproduces a failure the page shows. On GitHub Actions the heading
-links the commit and the run the page came from.
+which is what reproduces a failure the page shows. The heading says when the
+page was built (`SOURCE_DATE_EPOCH` pins it), and on GitHub Actions also links
+the commit and the run it came from -- provided `GITHUB_SERVER_URL`,
+`GITHUB_REPOSITORY`, `GITHUB_SHA` and `GITHUB_RUN_ID` reach the container, which
+`docker run` does only when asked with `-e`. The verdict chips are one per
+thing that ran; "Timing met" needs both setup and hold slack non-negative.
 
 Every picture on the page zooms in place: the + / − / reset buttons, Ctrl +
 wheel or a trackpad pinch to zoom around the pointer, drag to pan. A plain
