@@ -13,13 +13,16 @@ from datetime import datetime, timezone
 from xml.etree import ElementTree
 
 CSS = """
-:root { --bg: #f6f8fa; --card: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
+:root { color-scheme: light dark; --bg: #f6f8fa; --card: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
         --accent: #0969da; --pass: #1a7f37; --fail: #cf222e; --skip: #9a6700;
-        --pass-bg: #dafbe1; --fail-bg: #ffebe9; --skip-bg: #fff8c5; --accent2: #54aeff; }
+        --pass-bg: #dafbe1; --fail-bg: #ffebe9; --skip-bg: #fff8c5; --accent2: #54aeff;
+        --primary: #0969da; }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #0d1117; --card: #151b23; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
           --accent: #4493f8; --pass: #3fb950; --fail: #f85149; --skip: #d29922;
-          --pass-bg: #2ea04326; --fail-bg: #f8514926; --skip-bg: #bb800926; --accent2: #79c0ff; }
+          --pass-bg: #2ea04326; --fail-bg: #f8514926; --skip-bg: #bb800926; --accent2: #79c0ff;
+          /* #4493f8 behind white text is 3.1:1; this is 4.6:1. */
+          --primary: #1f6feb; }
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; scroll-padding-top: 64px; }
@@ -76,6 +79,7 @@ tr.total td { font-weight: 650; border-top: 2px solid var(--fg); }
 .PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
 td.bar, th.bar { width: 120px; padding-right: 0; }
 td.bar span { display: block; height: 8px; border-radius: 4px; background: var(--accent); }
+td.bar .track { background: var(--line); }
 .stack { display: flex; gap: 2px; height: 22px; border-radius: 6px; overflow: hidden;
          margin: 8px 0 6px; background: var(--card); }
 .stack span { display: block; height: 100%; }
@@ -91,8 +95,10 @@ h3 { margin: 16px 0 0; font-size: 16px; }
 .btn, .actions a[download] { display: inline-block; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px;
        background: var(--card); color: var(--fg); font-weight: 600; font-size: 14px; }
 .btn:hover, .actions a[download]:hover { text-decoration: none; border-color: var(--accent); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.ghost { border-color: transparent; background: none; color: var(--muted); font-weight: 500; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+/* .actions a[download] above outranks a bare .btn.ghost; match it. */
+.btn.ghost, .actions a.btn.ghost { border-color: transparent; background: none; color: var(--muted);
+                                   font-weight: 500; }
 .hint { color: var(--muted); font-size: 13px; }
 details { border: 1px solid var(--line); border-radius: 8px; }
 summary { cursor: pointer; padding: 8px 12px; font-weight: 600; }
@@ -130,7 +136,7 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
 }
 @media (max-width: 760px) {
   header.has-art .hero { grid-template-columns: 1fr; gap: 20px; }
-  .hero-art { max-width: 320px; }
+  .hero-art { max-width: 320px; margin-inline: auto; }
 }
 details > .zoom { border: 0; border-top: 1px solid var(--line); border-radius: 0; margin: 0; }
 @media (max-width: 600px) { section { padding: 16px; }
@@ -527,7 +533,6 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         corner, rows = power
         total = next((r[4] for r in rows if r[0] == "Total"), 0) or 1
         rows = [r for r in rows if r[4] or r[0] == "Total"]  # Macro, Pad: zero here
-        largest = max((r[4] for r in rows if r[0] != "Total"), default=0) or 1
         # One decimal throughout; leakage is orders of magnitude below the
         # rest, and four significant digits of it were noise.
         uw = lambda w: f"{w * 1e6:,.1f}" if w * 1e6 >= 0.05 or not w else "&lt;0.1"
@@ -543,7 +548,10 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
                 f'<td class="num">{uw(i)}</td><td class="num">{uw(sw)}</td>'
                 f'<td class="num">{uw(lk)}</td><td class="num">{uw(t)}</td>'
                 f'<td class="num">{t / total:.1%}</td><td class="bar">'
-                + ("" if group == "Total" else f'<span style="width:{t / largest:.0%}"></span>')
+                # A share of the whole, on a track that is the whole: a bar
+                # scaled to the largest group read as that group's share.
+                + ("" if group == "Total" else
+                   f'<span class="track"><span style="width:{t / total:.0%}"></span></span>')
                 + "</td></tr>"
                 for group, i, sw, lk, t in rows) + "</table></div>")
 
@@ -638,6 +646,10 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             f'<span class="chip {state}">{esc(text)}</span>' for state, text in chips)
            + "</div>" if chips else "")
         + actions
+        # Locally, before the flow has run, the page is tests and waveform
+        # only; say what is missing and what adds it, or it reads as all there is.
+        + ("" if layout or signoff else '<p class="hint">The layout, signoff checks, timing, area and '
+           "power appear here once <code>make gds</code> has run.</p>")
         + "</div>" + hero_art(layout, design, numbers, gds_pdk) + "</div></header>"
         + ('<nav aria-label="Sections"><div class="wrap">' + "".join(
             f'<a href="#{anchor}">{esc(label)}</a>' for anchor, label, _ in parts)

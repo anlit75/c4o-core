@@ -1430,10 +1430,12 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("from synthesis 110 ", page)
             self.assertIn("added by the flow 88 ", page)
             self.assertNotIn("cell classes", page)
-            # The share bar has a column of its own, never under a number, and
-            # is scaled to the largest group so the bars are comparable; the
-            # Total row is the sum, so it gets no bar.
-            self.assertIn('<td class="num">54.4%</td><td class="bar"><span style="width:100%"></span></td>', page)
+            # The share bar has a column of its own, never under a number. It
+            # is the share of the whole, on a track that is the whole -- scaled
+            # to the largest group, 54.4% drew as a full bar. The Total row is
+            # the sum, so it gets no bar.
+            self.assertIn('<td class="num">54.4%</td><td class="bar"><span class="track">'
+                          '<span style="width:54%"></span></span></td>', page)
             self.assertRegex(page, r'<tr class="total"><td>Total</td>.*?<td class="bar"></td></tr>')
             # A bare lint count reads as a flaw; it says what it counts.
             self.assertIn("Verilator on the RTL, inside the flow", page)
@@ -1601,6 +1603,36 @@ class TestEntrypoint(unittest.TestCase):
             # Most wanted first: the 3D view, then the source, then the file.
             order = [header.index(s) for s in ("data-viewer=", "View source", "blinky.gds\" download")]
             self.assertEqual(order, sorted(order))
+        finally:
+            os.chdir(cwd)
+
+    def test_site_says_what_make_gds_adds_until_it_has_run(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            page = self._site()
+            self.assertIn("once <code>make gds</code> has run", page)
+
+            shutil.rmtree("build/site")
+            page = self._run_site()
+            self.assertNotIn("once <code>make gds</code> has run", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_keeps_the_gds_button_quiet_and_the_primary_readable(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site()
+            # .actions a[download] outranks a bare .btn.ghost, which left the
+            # GDS link as heavy as View source.
+            self.assertIn(".actions a.btn.ghost {", page)
+            # White on dark mode's #4493f8 is 3.1:1, under AA's 4.5:1.
+            self.assertIn("--primary: #1f6feb;", page)
+            self.assertIn("color-scheme: light dark;", page)
         finally:
             os.chdir(cwd)
 
@@ -1885,9 +1917,12 @@ class TestEntrypoint(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            with self.assertRaises(SystemExit) as cm:
+            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
                 self._wave_site(["tb_blinky.cnt"])
             self.assertEqual(cm.exception.code, 1)
+            # A typo is the usual cause: the message lists the names there are.
+            self.assertIn("It declares: ", error.call_args[0][0])
+            self.assertIn("tb_blinky.uut.count", error.call_args[0][0])
         finally:
             os.chdir(cwd)
 
