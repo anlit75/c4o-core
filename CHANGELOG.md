@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.15.0](https://github.com/anlit75/c4o-core/compare/v2.14.2...v2.15.0) (2026-10-01)
+
+
+### Features
+
+* **site:** a download link on every zoomable diagram ([#56](https://github.com/anlit75/c4o-core/issues/56)) ([cbcf8ad](https://github.com/anlit75/c4o-core/commit/cbcf8ad2eb9131065111a7f1407c31360de72eb6))
+
+
+### Fixes
+
+* **site:** quiet GDS button, readable dark primary, honest power bars ([#55](https://github.com/anlit75/c4o-core/issues/55)) ([aa152bf](https://github.com/anlit75/c4o-core/commit/aa152bf88644f0a0ca7ce074966d610c0a4429da))
+
 ## [2.14.2](https://github.com/anlit75/c4o-core/compare/v2.14.1...v2.14.2) (2026-10-01)
 
 
