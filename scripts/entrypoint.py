@@ -906,6 +906,21 @@ CELL_CLASSES = {
     "tap_cell": "well taps",
 }
 
+# Which classes the flow adds rather than synthesis producing them. Counted
+# against a real run: its 198 standard cells were synthesis's 110 plus 42
+# clock-tree, hold and fanout buffers and 46 well taps. A class in neither set
+# is shown as "other" rather than guessed at.
+FROM_SYNTHESIS = {"multi_input_combinational_cell", "sequential_cell", "inverter"}
+ADDED_BY_FLOW = {"timing_repair_buffer", "clock_buffer", "clock_inverter", "tap_cell"}
+
+def cell_classes(metrics):
+    """(class, count) per class LibreLane filed cells under, largest first, fill left out."""
+    return sorted(
+        ((key.split(":", 1)[1], count) for key, count in metrics.items()
+         if key.startswith("design__instance__count__class:")
+         and not key.endswith(":fill_cell") and count),
+        key=lambda c: -c[1])
+
 def report_rows(metrics, path):
     """The (label, value) rows `report` prints, in the order it prints them."""
     rows = []
@@ -930,11 +945,7 @@ def report_rows(metrics, path):
     # largest first. Fill is left out for the reason above; in a real run the
     # rest add up to the row before -- 198, of which 88 are buffers and taps
     # the flow added, not logic the RTL asked for.
-    classes = sorted(
-        ((key.split(":", 1)[1], count) for key, count in metrics.items()
-         if key.startswith("design__instance__count__class:")
-         and not key.endswith(":fill_cell") and count),
-        key=lambda c: -c[1])
+    classes = cell_classes(metrics)
     if classes:
         rows.append(("cell classes", ", ".join(
             f"{count} {CELL_CLASSES.get(name, name.replace('_', ' '))}"
@@ -1059,20 +1070,25 @@ def run_details(metrics_path, metrics):
 
     stat = newest("*-yosys-synthesis/reports/stat.json")
     design = json.loads(read(stat)).get("design", {}) if stat else {}
-    area = []
+    # Two stages, not three peers: what synthesis produced (flip-flops and
+    # logic), and the standard-cell total after routing, which contains them.
+    area = {}
     if "area" in design and "sequential_area" in design:
-        area += [("flip-flops, after synthesis", design["sequential_area"]),
-                 ("combinational logic, after synthesis",
-                  design["area"] - design["sequential_area"])]
-    # Counted against a real run: its 198 standard cells were synthesis's 110
-    # plus 42 clock-tree, hold and fanout buffers and 46 well taps.
+        area["flip_flops"] = design["sequential_area"]
+        area["logic"] = design["area"] - design["sequential_area"]
     if metrics.get("design__instance__area__stdcell") is not None:
-        area.append(("standard cells after routing, with the clock tree, buffers "
-                     "and well taps the flow added", metrics["design__instance__area__stdcell"]))
-    if metrics.get("design__instance__area__macros") is not None:
-        area.append(("macros (memories, hard blocks)", metrics["design__instance__area__macros"]))
+        area["routed"] = metrics["design__instance__area__stdcell"]
+    if metrics.get("design__instance__area__macros"):
+        area["macros"] = metrics["design__instance__area__macros"]
     if area:
         details["area"] = area
+
+    cells = [(CELL_CLASSES.get(name, name.replace("_", " ")), count,
+              "synthesis" if name in FROM_SYNTHESIS
+              else "flow" if name in ADDED_BY_FLOW else "other")
+             for name, count in cell_classes(metrics)]
+    if cells:
+        details["cells"] = cells
     return details
 
 def cmd_site(args, config):
@@ -1099,7 +1115,8 @@ def cmd_site(args, config):
         # Each has a section of their own on the page. Power only when that
         # section exists: its row is the bare metric, which names no corner
         # and would disagree with the table next to it.
-        own = {"layout", "signoff"} | ({"power"} if "power" in details else set())
+        own = ({"layout", "signoff"} | ({"power"} if "power" in details else set())
+               | ({"cell classes"} if "cells" in details else set()))
         numbers = [(label, value) for label, value in rows if label not in own]
         render = dict(rows).get("layout")
         if render:

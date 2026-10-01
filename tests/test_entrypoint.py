@@ -1384,11 +1384,23 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("<code>max_ss_100C_1v60</code>", page)
             self.assertIn("Startpoint: _182_", page)
             self.assertIn("4.697966   slack (MET)", page)
-            # stat.json: 1366.3104 total, 683.1552 of it sequential.
-            # Both rows: this design splits exactly in half, so one row
-            # reading the total would still leave a 683.2 on the page.
-            self.assertEqual(page.count(">683.2 um"), 2)
-            self.assertIn("1,906.8 um", page)
+            # stat.json: 1366.3104 total, 683.1552 of it sequential -- this
+            # design splits exactly in half. Routing's 1906.8 contains both, so
+            # the third part is the difference, not a third peer.
+            self.assertIn("flip-flops 683.2 um", page)
+            self.assertIn("logic 683.2 um", page)
+            self.assertIn("added by place and route 540.5 um", page)
+            self.assertIn("grew it 40% to 1,906.8 um", page)
+            # Cells by origin: 57 logic + 26 sequential + 27 inverters from
+            # synthesis; 46 taps + 35 timing-repair + 7 clock buffers added.
+            self.assertIn("<h3>Cells: 198</h3>", page)
+            self.assertIn("from synthesis 110 ", page)
+            self.assertIn("added by the flow 88 ", page)
+            self.assertNotIn("cell classes", page)
+            # The share bar has a column of its own, never under a number.
+            self.assertIn('<td class="num">54.4%</td><td class="bar"><span style="width:54%"></span></td>', page)
+            # A bare lint count reads as a flaw; it says what it counts.
+            self.assertIn("Verilator on the RTL, inside the flow", page)
             # power.rpt of DEFAULT_CORNER, not the bare power__total metric,
             # which in this run is max_ff's 0.290 mW.
             self.assertIn("<code>nom_tt_025C_1v80</code>", page)
@@ -1514,7 +1526,9 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("<h2>Tests: 1/2 on RTL, 1/2 on gates</h2>", page)
             self.assertIn('<span class="chip FAIL">1/2 on RTL · 1/2 on gates</span>', page)
             self.assertEqual(page.count("<th>test</th>"), 1)
-            self.assertIn("<th>RTL</th><th>gates</th>", page)
+            self.assertIn("<th>RTL</th><th>gates</th></tr>", page)
+            # No sim-time column: it could only ever have been one run's.
+            self.assertNotIn("sim time", page)
         finally:
             os.chdir(cwd)
 

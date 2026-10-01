@@ -356,7 +356,7 @@ From the run directory's own reports, when the `metrics.json` sits at
 |---|---|---|
 | Signoff checks | `metrics.json` | One row per check, with its error count. |
 | Worst setup path | `*-openroad-stapostpnr/<corner>/max.rpt` | The corner whose `timing__setup__ws__corner:*` is lowest, and that report's first path, printed as OpenSTA wrote it. Left out if that corner has no `max.rpt`, rather than showing a path that is not the worst one. |
-| Area | synthesis's `reports/stat.json` and `metrics.json` | Flip-flops and combinational logic after synthesis, then all standard cells after routing. Not per module: LibreLane's default `SYNTH_HIERARCHY_MODE` is `flatten`, so module boundaries are gone by then. |
+| Area | synthesis's `reports/stat.json` and `metrics.json` | One bar of the standard-cell area after routing, split into synthesis's flip-flops and logic and the difference place and route added (a difference, since routing also resizes cells); then one bar of the cell count by class, split into what synthesis produced, what the flow added (taps, timing-repair and clock buffers and inverters) and anything unclassified. Not per module: LibreLane's default `SYNTH_HIERARCHY_MODE` is `flatten`, so module boundaries are gone by then. |
 | Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential / combinational / clock split, as internal, switching and leakage. The activity is OpenSTA's default, not a simulation's, so it shows where power goes, not what a workload draws. |
 
 The power table reads `power.rpt` rather than the bare `power__*` metrics
