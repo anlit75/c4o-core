@@ -330,6 +330,18 @@ the commit and the run it came from -- provided `GITHUB_SERVER_URL`,
 `docker run` does only when asked with `-e`. The verdict chips are one per
 thing that ran; "Timing met" needs both setup and hold slack non-negative.
 
+The page is laid out to be shared -- a portfolio piece more than a CI log. Under
+the title, `"//DESCRIPTION"` from the config says what the design is, and the
+buttons are what a visitor does with a chip: **Open in 3D**, **Download GDS**
+and, on Actions, **View source**. The sections then run layout, summary, tests,
+block diagram, waveform, signoff, timing, area, power, and the RTL schematic
+folded into a `<details>`, since past a few hundred cells it is a texture
+rather than a picture. When both an RTL and a gate-level cocotb run exist they
+share one table, a column each, which is what makes "the same tests still pass
+after synthesis" visible. The page carries Open Graph tags for link previews;
+`og:image` is the layout, and only on Actions, where the Pages URL it must be
+absolute against is known (`https://<owner>.github.io/<repo>/`).
+
 Every picture on the page zooms in place: the + / − / reset buttons, Ctrl +
 wheel or a trackpad pinch to zoom around the pointer, drag to pan. A plain
 wheel still scrolls the page. A click that did not drag opens the file itself.

@@ -113,6 +113,7 @@ FP_SIZING: relative
 | `"//GATE_TESTS"` / `"//GATE_TOP"` | the same two, for `gatesim` |
 | `CLOCK_PORT` / `CLOCK_PERIOD` | the clock to constrain, and its period in ns |
 | `PDK` / `STD_CELL_LIBRARY` | needed by `gatesim`, `cocotb --netlist` and `pdk` |
+| `"//DESCRIPTION"` | one line saying what the design is, under the title of `site`'s page and in its link preview |
 | `"//WAVE_SIGNALS"` | signals `site` draws from `sim`'s VCD, dotted from the testbench top (`tb_blinky.uut.count`). A name the VCD does not declare fails `site` |
 
 ### A pattern that matches nothing is an error

@@ -87,7 +87,13 @@ img { max-width: 100%; height: auto; background: #fff; }
 .zoom-view { overflow: hidden; background: #fff; cursor: grab; }
 .zoom-view img { display: block; border: 0; transform-origin: 0 0; user-select: none; }
 footer { color: var(--muted); font-size: 14px; padding: 8px 0 40px; }
-@media (max-width: 600px) { h1 { font-size: 30px; } section { padding: 16px; } }
+.lede { margin: 0 0 8px; font-size: 18px; max-width: 46em; }
+header .actions { margin: 16px 0 0; }
+#layout .zoom-view img { max-height: 480px; width: auto; }
+details > .zoom { border: 0; border-top: 1px solid var(--line); border-radius: 0; margin: 0; }
+@media (max-width: 600px) { h1 { font-size: 30px; } section { padding: 16px; }
+  table.power td:nth-child(2), table.power th:nth-child(2),
+  table.power td:nth-child(3), table.power th:nth-child(3) { display: none; } }
 """
 
 def cocotb_cases(path):
@@ -236,8 +242,46 @@ def kpi(label, value):
     return (f'<div class="kpi{wide}"><div class="label">{esc(label)}</div>'
             f'<div class="value">{esc(main)}</div>{detail}</div>')
 
+def run_name(title):
+    """"cocotb, RTL" -> "RTL", "cocotb, gate level" -> "gates": a column head."""
+    return {"cocotb, RTL": "RTL", "cocotb, gate level": "gates"}.get(title, title)
+
+def merged_tests(cocotb_runs):
+    """
+    One table for every run: a row per test, a column per run. The RTL and the
+    gate-level runs execute the same tests, and side by side that reads as what
+    it is -- the design still passing after synthesis -- instead of one table
+    printed twice.
+    """
+    esc = html.escape
+    names = []
+    for _, _, run in cocotb_runs:
+        names += [name for name, _, _ in run if name not in names]
+    verdicts = [{name: verdict for name, verdict, _ in run} for _, _, run in cocotb_runs]
+    sim = {}
+    for _, _, run in cocotb_runs:
+        for name, _, ns in run:
+            sim.setdefault(name, ns)
+    heads = [run_name(title) for title, _, _ in cocotb_runs]
+    score = ", ".join(f"{sum(v == 'PASS' for v in vs.values())}/{len(vs)} on {h}"
+                      for h, vs in zip(heads, verdicts))
+    seeds = "".join(f"<p>Seed <code>{esc(seed)}</code> reruns the {esc(h)} run exactly.</p>"
+                    for h, (_, seed, _) in zip(heads, cocotb_runs) if seed)
+    def cell(verdict):
+        return f'<td class="{verdict}">{verdict}</td>' if verdict else "<td>&mdash;</td>"
+    return (f"<h2>Tests: {score}</h2><p>The same cocotb tests, run on the RTL and again "
+            f"on the gates synthesis produced.</p>{seeds}"
+            '<div class="scroll"><table><tr><th>test</th>'
+            + "".join(f"<th>{esc(h)}</th>" for h in heads)
+            + '<th class="num">sim time (ns)</th></tr>' + "".join(
+                f"<tr><td><code>{esc(name)}</code></td>"
+                + "".join(cell(vs.get(name)) for vs in verdicts)
+                + f'<td class="num">{sim[name]:g}</td></tr>'
+                for name in names) + "</table></div>")
+
 def render(design, numbers, layout, cocotb_runs, schematic, env,
-           signoff=(), timing=None, area=(), power=None, blocks=None, wave=None, gds=None):
+           signoff=(), timing=None, area=(), power=None, blocks=None, wave=None, gds=None,
+           description=None):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -255,6 +299,10 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     wave         -- (waveform's name next to the page, VCD it came from), or None
     gds          -- (the GDS's name next to the page, PDK for the 3D viewer or
                     None when the viewer has no layers for it), or None
+    description  -- one line saying what the design is, or None
+
+    The page is laid out to be shared, as a portfolio piece: the layout first,
+    then the numbers, then the evidence that it works, then the detail.
     """
     esc = html.escape
     parts = []  # (anchor, nav label, markup), in page order
@@ -266,8 +314,15 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     cases = [verdict for _, _, run in cocotb_runs for _, verdict, _ in run]
     if cases:
         passed = cases.count("PASS")
-        chips.append(("PASS" if passed == len(cases) else "FAIL",
-                      f"{passed}/{len(cases)} tests passed"))
+        if len(cocotb_runs) > 1:
+            # Per run, so "6/6 on RTL · 6/6 on gates" says the same tests
+            # held after synthesis, which a single 12/12 hides.
+            text = " · ".join(
+                f"{sum(v == 'PASS' for _, v, _ in run)}/{len(run)} on {run_name(title)}"
+                for title, _, run in cocotb_runs)
+        else:
+            text = f"{passed}/{len(cases)} tests passed"
+        chips.append(("PASS" if passed == len(cases) else "FAIL", text))
     if signoff:
         errors = sum(count for _, count in signoff)
         chips.append(("FAIL", f"Signoff: {errors} errors") if errors
@@ -285,7 +340,9 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         add("summary", "Summary", '<h2>Summary</h2><div class="kpis">'
             + "".join(kpi(label, value) for label, value in numbers) + "</div>")
 
-    for index, (title, seed, run) in enumerate(cocotb_runs):
+    if len(cocotb_runs) > 1:
+        add("tests", "Tests", merged_tests(cocotb_runs))
+    for index, (title, seed, run) in enumerate(cocotb_runs if len(cocotb_runs) == 1 else ()):
         passed = sum(verdict == "PASS" for _, verdict, _ in run)
         # The seed is what turns a failure on this page into one you can rerun.
         replay = f"<p>Seed <code>{esc(seed)}</code> reruns exactly these tests.</p>" if seed else ""
@@ -306,23 +363,8 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
                 f'<td class="{"FAIL" if count else "PASS"}">{"FAIL" if count else "PASS"}</td></tr>'
                 for check, count in signoff) + "</table></div>")
 
-    if layout or gds:
-        section = "<h2>Layout</h2>"
-        if gds:
-            name, pdk = gds
-            section += '<p class="actions">'
-            if pdk:
-                section += (f'<span data-viewer="{esc(pdk)}" data-gds="{esc(name)}" hidden>'
-                            '<a class="btn primary" target="_blank" rel="noopener">'
-                            'Open in 3D</a></span>')
-            section += f'<a href="{esc(name)}" download>Download {esc(name)}</a>'
-            if pdk:
-                section += ('<span class="hint" data-viewer-off>The 3D view, in Tiny Tapeout\'s '
-                            'viewer, opens from the published page.</span>')
-            section += "</p>"
-        if layout:
-            section += zoomable(layout, f"Layout of {design}")
-        add("layout", "Layout", section)
+    if layout:
+        add("layout", "Layout", "<h2>Layout</h2>" + zoomable(layout, f"Layout of {design}"))
 
     if wave:
         image, vcd = wave
@@ -358,7 +400,7 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             "plus switching; static is leakage. Switching activity is OpenSTA's default, "
             "not taken from simulation, so this is an estimate of where power goes, "
             "not a measurement of a workload.</p>"
-            '<div class="scroll"><table><tr><th>group</th><th class="num">internal</th>'
+            '<div class="scroll"><table class="power"><tr><th>group</th><th class="num">internal</th>'
             '<th class="num">switching</th><th class="num">leakage</th>'
             '<th class="num">total</th><th class="num">share</th></tr>' + "".join(
                 f'<tr><td>{esc(group)}</td><td class="num">{uw(i)}</td><td class="num">{uw(sw)}</td>'
@@ -375,8 +417,11 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             "when it has no submodules.</p>" + zoomable(blocks, f"Block diagram of {design}"))
 
     if schematic:
+        # Collapsed: past a few hundred cells it is a texture, not a picture,
+        # and the block diagram above says more. One click away for a small one.
         add("schematic", "Schematic",
-            "<h2>Schematic (RTL)</h2>" + zoomable(schematic, f"Schematic of {design}"))
+            "<details><summary>Schematic (RTL)</summary>"
+            + zoomable(schematic, f"Schematic of {design}") + "</details>")
 
     # Only on GitHub Actions, where these say which commit the page shows.
     # When the page was built, always: a published page stays up until the
@@ -396,17 +441,53 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             meta.append(f'<a href="{esc(server)}/{esc(repo)}/actions/runs/{esc(run)}">CI run</a>')
     source = f'<p class="meta">{" &middot; ".join(meta)}</p>'
 
+    # What a visitor does with a chip: turn it around in 3D, take the GDS,
+    # read the code. Each button only when there is something behind it.
+    actions = []
+    if gds:
+        name, pdk = gds
+        if pdk:
+            actions.append(f'<span data-viewer="{esc(pdk)}" data-gds="{esc(name)}" hidden>'
+                           '<a class="btn primary" target="_blank" rel="noopener">'
+                           'Open in 3D</a></span>')
+        actions.append(f'<a class="btn" href="{esc(name)}" download>Download GDS</a>')
+    if server and repo:
+        actions.append(f'<a class="btn" href="{esc(server)}/{esc(repo)}">View source</a>')
+    if gds and gds[1]:
+        actions.append('<span class="hint" data-viewer-off>The 3D view, in Tiny Tapeout\'s '
+                       'viewer, opens from the published page.</span>')
+    actions = f'<p class="actions">{"".join(actions)}</p>' if actions else ""
+
+    # Link previews (chat apps, LinkedIn) need an absolute image URL; it is
+    # only known on Actions, from where GitHub Pages serves a repository.
+    summary = description or f"Verification and signoff results for {design}."
+    og = (f'<meta property="og:title" content="{esc(design)}">'
+          f'<meta property="og:description" content="{esc(summary)}">'
+          '<meta property="og:type" content="website">')
+    if layout and repo and "/" in repo:
+        owner, name = repo.split("/", 1)
+        og += (f'<meta property="og:image" content="https://{esc(owner.lower())}.github.io/'
+               f'{esc(name)}/{esc(layout)}"><meta name="twitter:card" content="summary_large_image">')
+
+    order = ["layout", "summary", "tests", "blocks", "waveform", "signoff",
+             "timing", "area", "power", "schematic"]
+    parts.sort(key=lambda p: order.index(p[0].split("-")[0]) if p[0].split("-")[0] in order
+               else len(order))
+
     body = "".join(markup for _, _, markup in parts)
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f'<meta name="description" content="Verification and signoff results for {esc(design)}.">'
-        f"<title>{esc(design)} · chip results</title><style>{CSS}</style></head><body>"
-        f'<header><div class="wrap"><p class="eyebrow">Chip results</p><h1>{esc(design)}</h1>'
-        f"{source}"
+        f'<meta name="description" content="{esc(summary)}">{og}'
+        f"<title>{esc(design)} · chip design</title><style>{CSS}</style></head><body>"
+        f'<header><div class="wrap"><p class="eyebrow">Chip design · open-source flow</p>'
+        f"<h1>{esc(design)}</h1>"
+        + (f'<p class="lede">{esc(description)}</p>' if description else "")
+        + f"{source}"
         + ('<div class="chips">' + "".join(
             f'<span class="chip {state}">{esc(text)}</span>' for state, text in chips)
            + "</div>" if chips else "")
+        + actions
         + "</div></header>"
         + ('<nav aria-label="Sections"><div class="wrap">' + "".join(
             f'<a href="#{anchor}">{esc(label)}</a>' for anchor, label, _ in parts)
@@ -414,10 +495,12 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         + '<main class="wrap">'
         + "".join(f'<section id="{anchor}">{markup}</section>' for anchor, _, markup in parts)
         + "</main>"
-        + '<footer class="wrap"><p>Built with <a href="https://github.com/anlit75/ChipForAll">'
+        + '<footer class="wrap"><p>'
+        + (f'Source: <a href="{esc(server)}/{esc(repo)}">{esc(repo)}</a>. ' if server and repo else "")
+        + 'Built with <a href="https://github.com/anlit75/ChipForAll">'
           "ChipForAll</a>, on open-source EDA tools. Generated by c4o-core "
           "<code>site</code>.</p></footer>"
         + (f"<script>{ZOOM_JS}</script>" if 'class="zoom"' in body else "")
-        + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in body else "")
+        + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in actions else "")
         + "</body></html>\n"
     )
