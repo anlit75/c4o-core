@@ -1177,6 +1177,7 @@ def cmd_site(args, config):
     index = os.path.join(SITE_DIR, "index.html")
     with open(index, "w") as f:
         f.write(site_page.render(design, numbers, layout, cocotb_runs, schematic, os.environ,
+                                 description=config_get(config, "DESCRIPTION", None),
                                  **details))
     log_info(f"Wrote {index}")
 

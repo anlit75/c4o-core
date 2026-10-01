@@ -1414,7 +1414,7 @@ class TestEntrypoint(unittest.TestCase):
             page = self._site({"DESIGN_NAME": "blinky", "PDK": "sky130A"})
 
             self.assertTrue(os.path.exists("build/site/blinky.gds"))
-            self.assertIn('<a href="blinky.gds" download>', page)
+            self.assertIn('<a class="btn" href="blinky.gds" download>Download GDS</a>', page)
             # Hidden until the script finds the page has a URL to hand over.
             self.assertIn('data-viewer="sky130A" data-gds="blinky.gds" hidden', page)
             self.assertIn("gds-viewer.tinytapeout.com", page)
@@ -1430,7 +1430,7 @@ class TestEntrypoint(unittest.TestCase):
 
             page = self._site({"DESIGN_NAME": "blinky", "PDK": "some130"})
 
-            self.assertIn('<a href="blinky.gds" download>', page)
+            self.assertIn('<a class="btn" href="blinky.gds" download>Download GDS</a>', page)
             self.assertNotIn("data-viewer", page)
             self.assertNotIn("gds-viewer.tinytapeout.com", page)
         finally:
@@ -1497,6 +1497,67 @@ class TestEntrypoint(unittest.TestCase):
             self.assertNotIn("um^2", page)
             self.assertIn("um\u00b2", page)
             self.assertIn('<th class="num">errors</th>', page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_puts_rtl_and_gate_runs_in_one_table(self):
+        # The same tests on the RTL and on the gates: side by side that reads
+        # as "still passes after synthesis", not as one table printed twice.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            for name in ("build/cocotb-results.xml", "build/cocotb-gl-results.xml"):
+                with open(name, "w") as f:
+                    f.write(self.COCOTB_XML)
+            page = self._site()
+            self.assertIn("<h2>Tests: 1/2 on RTL, 1/2 on gates</h2>", page)
+            self.assertIn('<span class="chip FAIL">1/2 on RTL · 1/2 on gates</span>', page)
+            self.assertEqual(page.count("<th>test</th>"), 1)
+            self.assertIn("<th>RTL</th><th>gates</th>", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_reads_as_a_portfolio(self):
+        # Layout first, the design described, buttons for what a visitor does
+        # with a chip, a link preview, and the schematic folded away.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            self._run_with_gds()
+            os.makedirs("runs/blinky_run/final/render")
+            open("runs/blinky_run/final/render/blinky.png", "w").close()
+            os.makedirs("build")
+            with open("build/schematic.svg", "w") as f:
+                f.write("<svg/>")
+            env = {"GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "Some/repo",
+                   "GITHUB_SHA": "9b2e3e3abcdef"}
+            with patch.dict(os.environ, env):
+                page = self._site({"DESIGN_NAME": "blinky", "PDK": "sky130A",
+                                   "//DESCRIPTION": "A clock divider that blinks an LED."})
+            self.assertLess(page.index('id="layout"'), page.index('id="summary"'))
+            self.assertLess(page.index('id="summary"'), page.index('id="signoff"'))
+            self.assertIn('<p class="lede">A clock divider that blinks an LED.</p>', page)
+            self.assertIn('content="A clock divider that blinks an LED."', page)
+            self.assertIn('<meta property="og:image" content="https://some.github.io/repo/layout.png">', page)
+            self.assertIn('<a class="btn" href="https://github.com/Some/repo">View source</a>', page)
+            self.assertIn("<details><summary>Schematic (RTL)</summary>", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_has_no_link_preview_image_off_actions(self):
+        # og:image must be absolute, and the Pages URL is only known on Actions.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._run_with_render()
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("GITHUB_REPOSITORY", None)
+                page = self._site()
+            self.assertIn('property="og:title"', page)
+            self.assertNotIn("og:image", page)
+            self.assertNotIn("View source", page)
         finally:
             os.chdir(cwd)
 
