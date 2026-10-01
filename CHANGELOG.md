@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.14.1](https://github.com/anlit75/c4o-core/compare/v2.14.0...v2.14.1) (2026-10-01)
+
+
+### Fixes
+
+* the area and cell-class figures read as what the chip is made of, not as highlighted text ([#51](https://github.com/anlit75/c4o-core/issues/51)) ([e721254](https://github.com/anlit75/c4o-core/commit/e7212541639353f167dedaf1d72efb671a6f8499))
+
 ## [2.14.0](https://github.com/anlit75/c4o-core/compare/v2.13.2...v2.14.0) (2026-10-01)
 
 
