@@ -8,6 +8,7 @@ markup. Nothing here touches the filesystem except to parse the XML it is
 handed.
 """
 import html
+import os
 import re
 from datetime import datetime, timezone
 from xml.etree import ElementTree
@@ -109,6 +110,7 @@ img { max-width: 100%; height: auto; background: #fff; }
 .zoom-tools { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--line);
               align-items: center; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
 .zoom-tools span { margin-left: auto; font-size: 12px; }
+.zoom-dl { margin-left: 12px; font-size: 13px; font-weight: 500; white-space: nowrap; }
 .zoom-tools button { font: inherit; min-width: 32px; padding: 2px 8px; color: var(--fg); cursor: pointer;
                      background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
 .zoom-view { overflow: hidden; background: #fff; cursor: grab; }
@@ -142,6 +144,7 @@ details > .zoom { border: 0; border-top: 1px solid var(--line); border-radius: 0
 @media (max-width: 600px) { section { padding: 16px; }
   .kpi { flex-basis: 140px; padding: 12px; } .kpi .value { font-size: 20px; }
   .zoom-tools span { display: none; }
+  .zoom-dl { margin-left: auto; }
   table.power td:nth-child(2), table.power th:nth-child(2),
   table.power td:nth-child(3), table.power th:nth-child(3),
   table.power td:nth-child(4), table.power th:nth-child(4) { display: none; }
@@ -183,7 +186,11 @@ def zoomable(target, alt):
             '<button type="button" data-zoom="in" aria-label="Zoom in">+</button>'
             '<button type="button" data-zoom="out" aria-label="Zoom out">&minus;</button>'
             '<button type="button" data-zoom="reset">reset</button>'
-            '<span>Ctrl + wheel or pinch to zoom, drag to pan, click to open</span></div>'
+            '<span>Ctrl + wheel or pinch to zoom, drag to pan, click to open</span>'
+            # The file itself, for a slide or a report: the page is not the
+            # only place a diagram gets shown.
+            f'<a class="zoom-dl" href="{esc(target)}" download>Download '
+            f'{esc(os.path.splitext(target)[1].lstrip(".").upper())}</a></div>'
             f'<div class="zoom-view"><a href="{esc(target)}"><img src="{esc(target)}" '
             f'alt="{esc(alt)}" draggable="false"></a></div></div>')
 

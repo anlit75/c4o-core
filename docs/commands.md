@@ -350,7 +350,7 @@ absolute against is known (`https://<owner>.github.io/<repo>/`).
 
 Every picture on the page zooms in place: the + / − / reset buttons, Ctrl +
 wheel or a trackpad pinch to zoom around the pointer, drag to pan. A plain
-wheel still scrolls the page. A click that did not drag opens the file itself.
+wheel still scrolls the page. A click that did not drag opens the file itself. Each also has a **Download SVG** link, for a slide or a report.
 
 Like `report`, it shows a failed test and still succeeds: the command that ran
 the test is the gate, not the page.
