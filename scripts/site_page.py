@@ -463,14 +463,16 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     if cases:
         passed = cases.count("PASS")
         if len(cocotb_runs) > 1:
-            # Per run, so "6/6 on RTL · 6/6 on gates" says the same tests
-            # held after synthesis, which a single 12/12 hides.
-            text = " · ".join(
-                f"{sum(v == 'PASS' for _, v, _ in run)}/{len(run)} on {run_name(title)}"
-                for title, _, run in cocotb_runs)
+            # One chip per run, so "6/6 on RTL" and "6/6 on gates" say the
+            # same tests held after synthesis, which a single 12/12 hides --
+            # and a run that failed is red on its own, not dragging the other.
+            for title, _, run in cocotb_runs:
+                ok = sum(v == "PASS" for _, v, _ in run)
+                chips.append(("PASS" if ok == len(run) else "FAIL",
+                              f"{ok}/{len(run)} on {run_name(title)}"))
         else:
-            text = f"{passed}/{len(cases)} tests passed"
-        chips.append(("PASS" if passed == len(cases) else "FAIL", text))
+            chips.append(("PASS" if passed == len(cases) else "FAIL",
+                          f"{passed}/{len(cases)} tests passed"))
     if signoff:
         errors = sum(count for _, count in signoff)
         chips.append(("FAIL", f"Signoff: {errors} errors") if errors

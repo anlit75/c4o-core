@@ -1633,6 +1633,24 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    def test_site_colours_each_runs_chip_by_its_own_verdict(self):
+        # Gates failing where the RTL passed is the finding; one shared red
+        # chip would hide which side broke.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML.replace(
+                    '<failure message="AssertionError" />', ""))
+            with open("build/cocotb-gl-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            page = self._site()
+            self.assertIn('<span class="chip PASS">2/2 on RTL</span>'
+                          '<span class="chip FAIL">1/2 on gates</span>', page)
+        finally:
+            os.chdir(cwd)
+
     def test_site_puts_rtl_and_gate_runs_in_one_table(self):
         # The same tests on the RTL and on the gates: side by side that reads
         # as "still passes after synthesis", not as one table printed twice.
@@ -1645,7 +1663,9 @@ class TestEntrypoint(unittest.TestCase):
                     f.write(self.COCOTB_XML)
             page = self._site()
             self.assertIn("<h2>Tests: 1/2 on RTL, 1/2 on gates</h2>", page)
-            self.assertIn('<span class="chip FAIL">1/2 on RTL · 1/2 on gates</span>', page)
+            # A chip per run, each with its own verdict.
+            self.assertIn('<span class="chip FAIL">1/2 on RTL</span>'
+                          '<span class="chip FAIL">1/2 on gates</span>', page)
             self.assertEqual(page.count("<th>test</th>"), 1)
             self.assertIn("<th>RTL</th><th>gates</th></tr>", page)
             # No sim-time column: it could only ever have been one run's.
