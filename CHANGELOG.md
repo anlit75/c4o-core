@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.14.0](https://github.com/anlit75/c4o-core/compare/v2.13.2...v2.14.0) (2026-10-01)
+
+
+### Features
+
+* the results page reads as a portfolio piece: layout first, one test table, buttons and a description ([#48](https://github.com/anlit75/c4o-core/issues/48)) ([8628c76](https://github.com/anlit75/c4o-core/commit/8628c763b5a2452d78e47cbb9f5e5937238a5de5))
+
 ## [2.13.2](https://github.com/anlit75/c4o-core/compare/v2.13.1...v2.13.2) (2026-10-01)
 
 
