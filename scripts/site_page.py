@@ -97,9 +97,6 @@ h3 { margin: 16px 0 0; font-size: 16px; }
        background: var(--card); color: var(--fg); font-weight: 600; font-size: 14px; }
 .btn:hover, .actions a[download]:hover { text-decoration: none; border-color: var(--accent); }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
-/* .actions a[download] above outranks a bare .btn.ghost; match it. */
-.btn.ghost, .actions a.btn.ghost { border-color: transparent; background: none; color: var(--muted);
-                                   font-weight: 500; }
 .hint { color: var(--muted); font-size: 13px; }
 details { border: 1px solid var(--line); border-radius: 8px; }
 summary { cursor: pointer; padding: 8px 12px; font-weight: 600; }
@@ -611,9 +608,10 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     if server and repo:
         actions.append(f'<a class="btn" href="{esc(server)}/{esc(repo)}">View source</a>')
     if gds_name:
-        # Last and quiet: a visitor rarely has the tools to open a GDS.
+        # Last, and framed like View source: a visitor rarely has the tools
+        # to open a GDS, but it is the chip itself and should read as a button.
         size = f" &middot; {human_size(gds_size)}" if gds_size else ""
-        actions.append(f'<a class="btn ghost" href="{esc(gds_name)}" download>GDS{size}</a>')
+        actions.append(f'<a class="btn" href="{esc(gds_name)}" download>GDS{size}</a>')
     if gds_pdk:
         actions.append('<span class="hint" data-viewer-off>The 3D view, in Tiny Tapeout\'s '
                        'viewer, opens from the published page.</span>')

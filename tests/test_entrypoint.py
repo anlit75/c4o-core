@@ -1464,7 +1464,7 @@ class TestEntrypoint(unittest.TestCase):
             page = self._site({"DESIGN_NAME": "blinky", "PDK": "sky130A"})
 
             self.assertTrue(os.path.exists("build/site/blinky.gds"))
-            self.assertIn('<a class="btn ghost" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
+            self.assertIn('<a class="btn" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
             # Hidden until the script finds the page has a URL to hand over.
             self.assertIn('data-viewer="sky130A" data-gds="blinky.gds" hidden', page)
             self.assertIn("gds-viewer.tinytapeout.com", page)
@@ -1480,7 +1480,7 @@ class TestEntrypoint(unittest.TestCase):
 
             page = self._site({"DESIGN_NAME": "blinky", "PDK": "some130"})
 
-            self.assertIn('<a class="btn ghost" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
+            self.assertIn('<a class="btn" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
             self.assertNotIn("data-viewer", page)
             self.assertNotIn("gds-viewer.tinytapeout.com", page)
         finally:
@@ -1622,14 +1622,11 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    def test_site_keeps_the_gds_button_quiet_and_the_primary_readable(self):
+    def test_site_keeps_the_primary_button_readable_in_both_themes(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
             page = self._run_site()
-            # .actions a[download] outranks a bare .btn.ghost, which left the
-            # GDS link as heavy as View source.
-            self.assertIn(".actions a.btn.ghost {", page)
             # White on dark mode's #4493f8 is 3.1:1, under AA's 4.5:1.
             self.assertIn("--primary: #1f6feb;", page)
             self.assertIn("color-scheme: light dark;", page)
