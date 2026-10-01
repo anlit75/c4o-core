@@ -8,48 +8,33 @@
 **c4o-core** is the underlying EDA toolchain engine for the [ChipForAll](https://github.com/anlit75/ChipForAll) project.
 It packages open-source silicon tools into a unified, Python-driven Docker container.
 
-> **Note**: If you are a beginner, please use the [ChipForAll Template](https://github.com/anlit75/ChipForAll) instead of using this engine directly.
+> **Note**: This is an internal component of [ChipForAll](https://github.com/anlit75/ChipForAll), documented for the people who maintain it and for anyone reading an error it printed. To use it, start from the ChipForAll template; its `Makefile` is the reference for how this image is meant to be called.
 
 ## 🚀 Quick Start
 
 You can run `c4o-core` directly via Docker.
-Mount your current directory (`$(PWD)`) to `/workspace` (or any workspace path) to persist artifacts.
+Mount your current directory to `/workspace` (or any workspace path) to persist artifacts, and run as yourself so they are not owned by root:
 
 ```bash
-docker run --rm -v $(PWD):/workspace -w /workspace ghcr.io/anlit75/c4o-core:latest <command>
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/workspace -w /workspace ghcr.io/anlit75/c4o-core:latest <command>
 ```
+
+The examples below shorten that line to `c4o-core <command>`. The image is built for `amd64` only; on an `arm64` machine Docker runs it emulated.
 
 Every release publishes four tags:
 
 | tag | for |
 |---|---|
 | `X.Y.Z` | a build that will never change under you |
-| `X.Y` | **what a repository should pin.** Patches arrive without editing anything; a new behaviour never does |
+| `X.Y` | **what a repository should pin.** Patches arrive without editing anything, while `X.Y` is the newest minor; a new behaviour never does |
 | `X` | the current major |
 | `latest` | one-off runs like the line above. Nothing should pin it |
 
+**Only the newest minor gets fixes.** Releases come from `main` alone, with no
+maintenance branches, so once `X.Y+1` is out `X.Y` stops moving: a fix made
+after that reaches you only when you move your pin up.
+
 The current numbers are on the [releases page](https://github.com/anlit75/c4o-core/releases).
-
-### Releasing
-
-Nobody pushes a tag. Merging anything to `main` updates a **Release PR** holding
-the next version and its CHANGELOG entry, both computed from the commit titles
-— which is why this repository writes them as
-[Conventional Commits](https://www.conventionalcommits.org/): `feat:` moves the
-minor, `fix:` the patch.
-
-Merging that Release PR is the release. The tag, the GitHub release and the
-four images above all follow from it.
-
-The PR in the middle is deliberate. A version and a changelog derived from
-commit messages are worth reading before they are permanent, and a wrong one is
-a pull request to close rather than a release to yank.
-
-It needs `RELEASE_PLEASE_TOKEN`: a fine-grained PAT scoped to this repository
-with **Contents: read and write** and **Pull requests: read and write**. The
-automatic `GITHUB_TOKEN` will not do, because a tag pushed with it does not
-trigger other workflows — the tag would appear and no image would ever be
-built.
 
 ## 🛠 Command Reference
 
@@ -83,7 +68,7 @@ image and run `yosys` there.
 and `schematic` read with `read_verilog -sv`, `cocotb` and `gatesim` always did,
 and LibreLane reads with `-sv` too -- so `logic`, `always_ff` and the rest of the
 synthesisable subset behave the same whichever command opens the file. Before
-2.8.4 they did not: the same file passed two of these commands and failed two.
+2.8.3 they did not: the same file passed two of these commands and failed two.
 
 What that costs, measured rather than assumed: `iverilog -g2012` rejects `bit`,
 `do`, `final`, `soft`, `global`, `byte` and `type` as identifiers, which
@@ -371,6 +356,7 @@ a port of it, and that is the typo the warning catches:
 [WARN] CLOCK_PORT is 'wall_clock', which does not appear anywhere in
        VERILOG_FILES. The flow will not find a clock to constrain.
 [INFO] Configuration verified for the physical design flow.
+[INFO] No layout was produced: this only checks the config. LibreLane builds the layout.
 ```
 
 Module detection strips comments first, so a commented-out module does not
@@ -440,7 +426,7 @@ path — `final/render/<design>.png`, falling back to the render step's own
 directory. It appears only when the `metrics.json` sits where a run left it,
 at `<run>/final/metrics.json`.
 
-Two details worth knowing:
+Three details worth knowing:
 
 *   **Slack is the worst corner.** LibreLane writes every timing metric once per
     corner and again with no `__corner:` suffix; the bare key is already the
@@ -554,6 +540,27 @@ peakrdl pyuvm    regs.rdl -o rdl/regs_ral.py       # the same source, as pyuvm
 `sv2v` writes signed one-bit zeroes into wider assignments, which verilator
 calls `WIDTHEXPAND`, so a config that lints generated Verilog wants
 `LINTER_DISABLE_WARNINGS: [WIDTHEXPAND]`.
+
+## Releasing
+
+Nobody pushes a tag. Merging anything to `main` updates a **Release PR** holding
+the next version and its CHANGELOG entry, both computed from the commit titles
+— which is why this repository writes them as
+[Conventional Commits](https://www.conventionalcommits.org/): `feat:` moves the
+minor, `fix:` the patch.
+
+Merging that Release PR is the release. The tag, the GitHub release and the
+four images above all follow from it.
+
+The PR in the middle is deliberate. A version and a changelog derived from
+commit messages are worth reading before they are permanent, and a wrong one is
+a pull request to close rather than a release to yank.
+
+It needs `RELEASE_PLEASE_TOKEN`: a fine-grained PAT scoped to this repository
+with **Contents: read and write** and **Pull requests: read and write**. The
+automatic `GITHUB_TOKEN` will not do, because a tag pushed with it does not
+trigger other workflows — the tag would appear and no image would ever be
+built.
 
 ## License
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.

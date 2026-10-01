@@ -707,13 +707,13 @@ def cmd_check(args, config):
     missing_keys = [key for key in required_keys if key not in config]
 
     if missing_keys:
-        log_error(f"Missing required keys in the config file for GDS generation: {', '.join(missing_keys)}")
+        log_error(f"Missing required keys in the config file for the physical design flow: {', '.join(missing_keys)}")
         sys.exit(1)
 
     # Validate that we have RTL files
     files = get_files(args, config, key="VERILOG_FILES")
     if not files:
-        log_error("No RTL files found. GDS generation requires valid RTL.")
+        log_error("No RTL files found. The physical design flow requires valid RTL.")
         sys.exit(1)
 
     # Checked whenever it is there, not only when it is the sizing variable:
@@ -748,6 +748,9 @@ def cmd_check(args, config):
         )
 
     log_info("Configuration verified for the physical design flow.")
+    # `gds` is an alias of this command, and it exits 0 -- so say outright
+    # that nothing was built, or "make gds" reads as a finished layout.
+    log_info("No layout was produced: this only checks the config. LibreLane builds the layout.")
 
 # LibreLane writes each timing metric once per corner and again with no
 # '__corner:' suffix. The bare key already holds the worst value across every

@@ -63,7 +63,7 @@ sys.exit(0) if got == want else sys.exit(f'sv2v.zip is {got}, expected {want}')"
 
 # 24.04 marks its Python installation as externally managed (PEP 668), so the
 # Python tooling lives in a venv rather than fighting apt over site-packages.
-# Putting the venv first on PATH also keeps `ciel` resolvable for `c4o-core pdk`.
+# Putting the venv first on PATH also keeps `ciel` resolvable for the `pdk` command.
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
