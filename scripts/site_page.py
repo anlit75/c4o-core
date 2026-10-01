@@ -8,6 +8,7 @@ markup. Nothing here touches the filesystem except to parse the XML it is
 handed.
 """
 import html
+import re
 from datetime import datetime, timezone
 from xml.etree import ElementTree
 
@@ -18,7 +19,7 @@ CSS = """
 @media (prefers-color-scheme: dark) {
   :root { --bg: #0d1117; --card: #151b23; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
           --accent: #4493f8; --pass: #3fb950; --fail: #f85149; --skip: #d29922;
-          --pass-bg: #2ea04326; --fail-bg: #f8514926; --skip-bg: #bb800926; --accent2: #1f6feb; }
+          --pass-bg: #2ea04326; --fail-bg: #f8514926; --skip-bg: #bb800926; --accent2: #79c0ff; }
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; scroll-padding-top: 64px; }
@@ -42,17 +43,19 @@ nav { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom
 nav .wrap { display: flex; gap: 4px; overflow-x: auto; padding-top: 8px; padding-bottom: 8px; }
 nav a { flex: none; padding: 4px 10px; border-radius: 6px; color: var(--muted); font-size: 14px; }
 nav a:hover { background: var(--card); color: var(--fg); text-decoration: none; }
-main { padding: 24px 0 8px; }
+main.wrap { padding-top: 32px; padding-bottom: 8px; }
 section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-          padding: 20px 24px; margin: 0 0 16px; }
-h2 { margin: 0 0 12px; font-size: 20px; }
+          padding: 24px 28px; margin: 0 0 20px; }
+h2 { margin: 0 0 12px; font-size: 22px; letter-spacing: -.01em; }
 section > p, .note { color: var(--muted); font-size: 14px; }
-.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
-.kpi { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
-.kpi.wide { grid-column: 1 / -1; }
-.kpi .label { color: var(--muted); font-size: 13px; text-transform: capitalize; }
-.kpi .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;
-              overflow-wrap: anywhere; }
+.kpis { display: flex; flex-wrap: wrap; gap: 12px; }
+.kpi { flex: 1 1 260px; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.kpi.wide { flex-basis: 100%; }
+.kpi .label { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .05em;
+              text-transform: uppercase; }
+.kpi .value { font-size: 26px; font-weight: 650; letter-spacing: -.01em; line-height: 1.25;
+              font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.kpi.good .value { color: var(--pass); }
 .kpi.wide .value { font-size: 15px; font-weight: 500; }
 .kpi .detail { color: var(--muted); font-size: 13px; }
 .scroll { overflow-x: auto; }
@@ -60,15 +63,21 @@ table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nu
 th, td { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line);
          overflow-wrap: break-word; }
 tr:last-child > th, tr:last-child > td { border-bottom: 0; }
-th { font-weight: 600; }
+th { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+     letter-spacing: .05em; }
+td > th, tr > th[scope] { font-size: inherit; }
 td.num, th.num { text-align: right; }
 td.num, td.PASS, td.FAIL, td.SKIP { white-space: nowrap; }
-td.PASS, td.FAIL, td.SKIP { font-weight: 600; }
+td.FAIL { font-weight: 600; } td.PASS { font-weight: 500; }
+td.PASS::before { content: "\u2713"; margin-right: 6px; }
+td.FAIL::before { content: "\u2715"; margin-right: 6px; }
+table.tests th:not(:first-child), table.tests td:not(:first-child) { width: 96px; }
+tr.total td { font-weight: 650; border-top: 2px solid var(--fg); }
 .PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
 td.bar, th.bar { width: 120px; padding-right: 0; }
-td.bar span { display: block; height: 10px; border-radius: 3px; background: var(--accent); }
-.stack { display: flex; height: 22px; border-radius: 6px; overflow: hidden; margin: 8px 0 6px;
-         background: var(--line); }
+td.bar span { display: block; height: 8px; border-radius: 4px; background: var(--accent); }
+.stack { display: flex; gap: 2px; height: 22px; border-radius: 6px; overflow: hidden;
+         margin: 8px 0 6px; background: var(--card); }
 .stack span { display: block; height: 100%; }
 .seg-synthesis, .seg-ff { background: var(--accent); } .seg-logic { background: var(--accent2); }
 .seg-flow { background: var(--muted); } .seg-other { background: var(--skip); }
@@ -83,6 +92,7 @@ h3 { margin: 16px 0 0; font-size: 16px; }
        background: var(--card); color: var(--fg); font-weight: 600; font-size: 14px; }
 .btn:hover, .actions a[download]:hover { text-decoration: none; border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.ghost { border-color: transparent; background: none; color: var(--muted); font-weight: 500; }
 .hint { color: var(--muted); font-size: 13px; }
 details { border: 1px solid var(--line); border-radius: 8px; }
 summary { cursor: pointer; padding: 8px 12px; font-weight: 600; }
@@ -92,17 +102,40 @@ img { max-width: 100%; height: auto; background: #fff; }
 .zoom { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: 4px 0 0; }
 .zoom-tools { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--line);
               align-items: center; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+.zoom-tools span { margin-left: auto; font-size: 12px; }
 .zoom-tools button { font: inherit; min-width: 32px; padding: 2px 8px; color: var(--fg); cursor: pointer;
                      background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
 .zoom-view { overflow: hidden; background: #fff; cursor: grab; }
 .zoom-view img { display: block; border: 0; transform-origin: 0 0; user-select: none; }
-footer { color: var(--muted); font-size: 14px; padding: 8px 0 40px; }
+footer { color: var(--muted); font-size: 14px; }
+footer.wrap { padding-top: 8px; padding-bottom: 48px; }
 .lede { margin: 0 0 8px; font-size: 18px; max-width: 46em; }
+.byline { margin: 0 0 12px; font-size: 16px; color: var(--muted); }
+.byline a { color: var(--fg); font-weight: 600; }
 header .actions { margin: 16px 0 0; }
-#layout .zoom-view img { max-height: 480px; width: auto; }
-#layout .zoom { width: fit-content; max-width: 100%; margin: 4px auto 0; }
+h1 { font-size: clamp(32px, 5vw, 48px); letter-spacing: -.02em; }
+.hero { display: grid; gap: 40px; align-items: center; }
+header.has-art .hero { grid-template-columns: minmax(0, 1fr) minmax(280px, 400px); }
+.hero-art { margin: 0; }
+.hero-art a { display: block; background: #fff; padding: 12px; border-radius: 14px;
+              border: 1px solid var(--line);
+              box-shadow: 0 1px 2px rgb(0 0 0 / .06), 0 24px 48px -24px rgb(0 0 0 / .35); }
+.hero-art img { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; }
+.hero-art figcaption { margin-top: 8px; font-size: 13px; color: var(--muted); text-align: center;
+                       font-variant-numeric: tabular-nums; }
+nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
+@media (prefers-color-scheme: dark) {
+  .zoom-view, .hero-art a { filter: brightness(.88); }
+  .zoom { border-color: #ffffff1f; }
+}
+@media (max-width: 760px) {
+  header.has-art .hero { grid-template-columns: 1fr; gap: 20px; }
+  .hero-art { max-width: 320px; }
+}
 details > .zoom { border: 0; border-top: 1px solid var(--line); border-radius: 0; margin: 0; }
-@media (max-width: 600px) { h1 { font-size: 30px; } section { padding: 16px; }
+@media (max-width: 600px) { section { padding: 16px; }
+  .kpi { flex-basis: 140px; padding: 12px; } .kpi .value { font-size: 20px; }
+  .zoom-tools span { display: none; }
   table.power td:nth-child(2), table.power th:nth-child(2),
   table.power td:nth-child(3), table.power th:nth-child(3),
   table.power td:nth-child(4), table.power th:nth-child(4) { display: none; }
@@ -247,15 +280,25 @@ def kpi(label, value):
     and the part in brackets is the detail under the headline figure.
     """
     esc = html.escape
-    # `report` writes um^2 for a terminal; on the page it is a real superscript.
-    value = value.replace("um^2", "um\u00b2")
     main, _, detail = value.partition("  (")
+    detail = detail.rstrip(")")
+    # `report` writes for a terminal: "69.485 x 80.205 um  (5573.04 um^2)".
+    # The page rounds the sides, uses the real symbols and groups thousands.
+    die = re.fullmatch(r"([\d.]+) x ([\d.]+) um", main)
+    if die:
+        main = f"{float(die[1]):,.1f} \u00d7 {float(die[2]):,.1f} \u00b5m"
+        area = re.fullmatch(r"([\d.]+) um\^2", detail)
+        detail = f"{float(area[1]):,.1f} \u00b5m\u00b2" if area else detail
+    elif main.isdigit():
+        main = f"{int(main):,}"
+    detail = detail.replace("um^2", "\u00b5m\u00b2")
+    good = " good" if label.endswith("slack") and main.startswith("+") else ""
     if label == "lint warnings" and not detail:
         # A bare count reads as a flaw; say what it counts.
         detail = "Verilator on the RTL, inside the flow: warnings, not errors"
     wide = " wide" if len(main) > 32 else ""
-    detail = f'<div class="detail">{esc(detail.rstrip(")"))}</div>' if detail else ""
-    return (f'<div class="kpi{wide}"><div class="label">{esc(label)}</div>'
+    detail = f'<div class="detail">{esc(detail)}</div>' if detail else ""
+    return (f'<div class="kpi{wide}{good}"><div class="label">{esc(label)}</div>'
             f'<div class="value">{esc(main)}</div>{detail}</div>')
 
 def stack(parts, label):
@@ -279,7 +322,7 @@ def makeup(area, cells):
     peers when one of them contains the other two.
     """
     esc = html.escape
-    um2 = lambda v: f"{v:,.1f} um&sup2;"
+    um2 = lambda v: f"{v:,.1f} &micro;m&sup2;"
     out = ""
     ff, logic, routed = area.get("flip_flops"), area.get("logic"), area.get("routed")
     if ff is not None and logic is not None:
@@ -311,6 +354,36 @@ def makeup(area, cells):
                           for g, colour, name in groups if sums[g]]))
     return out
 
+def human_size(n):
+    """Bytes as a short size: 6 B, 12.3 kB, 3.8 MB."""
+    for unit in ("B", "kB", "MB"):
+        if n < 1000 or unit == "MB":
+            return f"{n:g} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1000
+
+def hero_art(layout, design, numbers, pdk):
+    """
+    The layout as the page's picture, framed like a print beside the title.
+    The render is drawn on white, so it gets a white mount in either theme.
+    It opens the full image on a click; at this size it is a texture to zoom
+    into, which the full image does better than an in-page zoom.
+    """
+    if not layout:
+        return ""
+    esc = html.escape
+    rows = dict(numbers)
+    caption = []
+    die = re.match(r"([\d.]+) x ([\d.]+) um", rows.get("die", ""))
+    if die:
+        caption.append(f"{float(die[1]):,.1f} \u00d7 {float(die[2]):,.1f} \u00b5m")
+    if str(rows.get("standard cells", "")).isdigit():
+        caption.append(f"{int(rows['standard cells']):,} cells")
+    if pdk:
+        caption.append(esc(pdk))
+    caption = (f"<figcaption>{' &middot; '.join(caption)}</figcaption>" if caption else "")
+    return (f'<figure class="hero-art" id="layout"><a href="{esc(layout)}">'
+            f'<img src="{esc(layout)}" alt="Layout of {esc(design)}"></a>{caption}</figure>')
+
 def run_name(title):
     """"cocotb, RTL" -> "RTL", "cocotb, gate level" -> "gates": a column head."""
     return {"cocotb, RTL": "RTL", "cocotb, gate level": "gates"}.get(title, title)
@@ -330,13 +403,14 @@ def merged_tests(cocotb_runs):
     heads = [run_name(title) for title, _, _ in cocotb_runs]
     score = ", ".join(f"{sum(v == 'PASS' for v in vs.values())}/{len(vs)} on {h}"
                       for h, vs in zip(heads, verdicts))
-    seeds = "".join(f"<p>Seed <code>{esc(seed)}</code> reruns the {esc(h)} run exactly.</p>"
-                    for h, (_, seed, _) in zip(heads, cocotb_runs) if seed)
+    seeds = " &middot; ".join(f"{esc(h)} <code>{esc(seed)}</code>"
+                              for h, (_, seed, _) in zip(heads, cocotb_runs) if seed)
+    seeds = f"<p>Seeds, which rerun each run exactly: {seeds}.</p>" if seeds else ""
     def cell(verdict):
         return f'<td class="{verdict}">{verdict}</td>' if verdict else "<td>&mdash;</td>"
     return (f"<h2>Tests: {score}</h2><p>The same cocotb tests, run on the RTL and again "
             f"on the gates synthesis produced.</p>{seeds}"
-            '<div class="scroll"><table><tr><th>test</th>'
+            '<div class="scroll"><table class="tests"><tr><th>test</th>'
             + "".join(f"<th>{esc(h)}</th>" for h in heads) + "</tr>" + "".join(
                 f"<tr><td><code>{esc(name)}</code></td>"
                 + "".join(cell(vs.get(name)) for vs in verdicts) + "</tr>"
@@ -427,8 +501,6 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
                 f'<td class="{"FAIL" if count else "PASS"}">{"FAIL" if count else "PASS"}</td></tr>'
                 for check, count in signoff) + "</table></div>")
 
-    if layout:
-        add("layout", "Layout", "<h2>Layout</h2>" + zoomable(layout, f"Layout of {design}"))
 
     if wave:
         image, vcd = wave
@@ -454,7 +526,11 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     if power:
         corner, rows = power
         total = next((r[4] for r in rows if r[0] == "Total"), 0) or 1
-        uw = lambda w: f"{w * 1e6:.4g}"
+        rows = [r for r in rows if r[4] or r[0] == "Total"]  # Macro, Pad: zero here
+        largest = max((r[4] for r in rows if r[0] != "Total"), default=0) or 1
+        # One decimal throughout; leakage is orders of magnitude below the
+        # rest, and four significant digits of it were noise.
+        uw = lambda w: f"{w * 1e6:,.1f}" if w * 1e6 >= 0.05 or not w else "&lt;0.1"
         add("power", "Power",
             f"<h2>Power</h2><p>Corner <code>{esc(corner)}</code>, in &micro;W. Dynamic is internal "
             "plus switching; static is leakage. Switching activity is OpenSTA's default, "
@@ -463,10 +539,12 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             '<div class="scroll"><table class="power"><tr><th>group</th><th class="num">internal</th>'
             '<th class="num">switching</th><th class="num">leakage</th>'
             '<th class="num">total</th><th class="num">share</th><th class="bar"></th></tr>' + "".join(
-                f'<tr><td>{esc(group)}</td><td class="num">{uw(i)}</td><td class="num">{uw(sw)}</td>'
+                ('<tr class="total">' if group == "Total" else "<tr>") + f'<td>{esc(group)}</td>'
+                f'<td class="num">{uw(i)}</td><td class="num">{uw(sw)}</td>'
                 f'<td class="num">{uw(lk)}</td><td class="num">{uw(t)}</td>'
-                f'<td class="num">{t / total:.1%}</td>'
-                f'<td class="bar"><span style="width:{t / total:.0%}"></span></td></tr>'
+                f'<td class="num">{t / total:.1%}</td><td class="bar">'
+                + ("" if group == "Total" else f'<span style="width:{t / largest:.0%}"></span>')
+                + "</td></tr>"
                 for group, i, sw, lk, t in rows) + "</table></div>")
 
     if blocks:
@@ -501,20 +579,27 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         if run:
             meta.append(f'<a href="{esc(server)}/{esc(repo)}/actions/runs/{esc(run)}">CI run</a>')
     source = f'<p class="meta">{" &middot; ".join(meta)}</p>'
+    # Whose chip it is: a portfolio page is about a person, and the owner of
+    # the repository is the one name the build knows.
+    owner = repo.split("/", 1)[0] if repo and "/" in repo else None
+    byline = (f'<p class="byline">by <a href="{esc(server)}/{esc(owner)}">{esc(owner)}</a></p>'
+              if owner and server else "")
 
     # What a visitor does with a chip: turn it around in 3D, take the GDS,
     # read the code. Each button only when there is something behind it.
     actions = []
-    if gds:
-        name, pdk = gds
-        if pdk:
-            actions.append(f'<span data-viewer="{esc(pdk)}" data-gds="{esc(name)}" hidden>'
-                           '<a class="btn primary" target="_blank" rel="noopener">'
-                           'Open in 3D</a></span>')
-        actions.append(f'<a class="btn" href="{esc(name)}" download>Download GDS</a>')
+    gds_name, gds_pdk, gds_size = (tuple(gds) + (None,))[:3] if gds else (None, None, None)
+    if gds_pdk:
+        actions.append(f'<span data-viewer="{esc(gds_pdk)}" data-gds="{esc(gds_name)}" hidden>'
+                       '<a class="btn primary" target="_blank" rel="noopener">'
+                       'Open in 3D</a></span>')
     if server and repo:
         actions.append(f'<a class="btn" href="{esc(server)}/{esc(repo)}">View source</a>')
-    if gds and gds[1]:
+    if gds_name:
+        # Last and quiet: a visitor rarely has the tools to open a GDS.
+        size = f" &middot; {human_size(gds_size)}" if gds_size else ""
+        actions.append(f'<a class="btn ghost" href="{esc(gds_name)}" download>GDS{size}</a>')
+    if gds_pdk:
         actions.append('<span class="hint" data-viewer-off>The 3D view, in Tiny Tapeout\'s '
                        'viewer, opens from the published page.</span>')
     actions = f'<p class="actions">{"".join(actions)}</p>' if actions else ""
@@ -528,7 +613,7 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     if layout and repo and "/" in repo:
         owner, name = repo.split("/", 1)
         og += (f'<meta property="og:image" content="https://{esc(owner.lower())}.github.io/'
-               f'{esc(name)}/{esc(layout)}"><meta name="twitter:card" content="summary_large_image">')
+               f'{esc(name)}/{esc(layout)}"><meta name="twitter:card" content="summary">')
 
     order = ["layout", "summary", "tests", "blocks", "waveform", "signoff",
              "timing", "area", "power", "schematic"]
@@ -541,15 +626,19 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f'<meta name="description" content="{esc(summary)}">{og}'
         f"<title>{esc(design)} · chip design</title><style>{CSS}</style></head><body>"
-        f'<header><div class="wrap"><p class="eyebrow">Chip design · open-source flow</p>'
+        
+        + (f'<header class="has-art">' if layout else "<header>")
+        + '<div class="wrap hero"><div class="hero-text">'
+        '<p class="eyebrow">Chip design · open-source flow</p>'
         f"<h1>{esc(design)}</h1>"
+        + byline
         + (f'<p class="lede">{esc(description)}</p>' if description else "")
         + f"{source}"
         + ('<div class="chips">' + "".join(
             f'<span class="chip {state}">{esc(text)}</span>' for state, text in chips)
            + "</div>" if chips else "")
         + actions
-        + "</div></header>"
+        + "</div>" + hero_art(layout, design, numbers, gds_pdk) + "</div></header>"
         + ('<nav aria-label="Sections"><div class="wrap">' + "".join(
             f'<a href="#{anchor}">{esc(label)}</a>' for anchor, label, _ in parts)
            + "</div></nav>" if len(parts) > 1 else "")
