@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.2](https://github.com/anlit75/c4o-core/compare/v2.13.1...v2.13.2) (2026-10-01)
+
+
+### Fixes
+
+* the results page says when it was built, and Timing met reads hold as well as setup ([#47](https://github.com/anlit75/c4o-core/issues/47)) ([ee6b55c](https://github.com/anlit75/c4o-core/commit/ee6b55cfd39a5ce836f3cb6df38e00b5f39af91a))
+
 ## [2.13.1](https://github.com/anlit75/c4o-core/compare/v2.13.0...v2.13.1) (2026-10-01)
 
 
