@@ -1177,7 +1177,7 @@ def cmd_site(args, config):
         else:
             # The newest VCD that declares every signal: with two testbenches
             # the newest file may be the other one's, which is no error.
-            svg = source = first_error = None
+            svg = source = first_error = declared = None
             for vcd in reversed(vcds):
                 with open(vcd) as f:
                     text = f.read()
@@ -1185,11 +1185,18 @@ def cmd_site(args, config):
                     svg, source = diagrams.waveform_svg(text, wanted), vcd
                     break
                 except KeyError as e:
-                    first_error = first_error or f"{vcd} does not declare {e.args[0]}"
+                    if first_error is None:
+                        first_error = f"{vcd} does not declare {e.args[0]}"
+                        declared = sorted(diagrams.read_vcd(text)[1])
             if svg is None:
+                # A typo is the usual cause, and the fix is a name the VCD has:
+                # list them, so nobody has to grep a VCD to find one.
+                shown = ", ".join(declared[:20]) + (
+                    f", and {len(declared) - 20} more" if len(declared) > 20 else "")
                 log_error(
                     f"No VCD in build/ declares every WAVE_SIGNALS name; {first_error}. "
-                    "Names are dotted from the testbench top, e.g. tb_blinky.uut.count."
+                    "Names are dotted from the testbench top, e.g. tb_blinky.uut.count. "
+                    f"It declares: {shown}."
                 )
                 sys.exit(1)
             with open(os.path.join(SITE_DIR, "wave.svg"), "w") as f:

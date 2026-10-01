@@ -323,7 +323,7 @@ copied next to it. The directory is the whole site: upload it with
 `actions/upload-pages-artifact` and GitHub Pages serves it.
 
 Each part appears when the file behind it exists, so the page works after
-`cocotb` alone. The directory is emptied first, so a render from an earlier run
+`cocotb` alone; until a run directory exists, the heading says what `make gds` adds. The directory is emptied first, so a render from an earlier run
 cannot be published under a later one. Each cocotb table carries the run's seed,
 which is what reproduces a failure the page shows. The heading says when the
 page was built (`SOURCE_DATE_EPOCH` pins it), and on GitHub Actions also links
@@ -363,7 +363,7 @@ From the run directory's own reports, when the `metrics.json` sits at
 | Signoff checks | `metrics.json` | One row per check, with its error count. |
 | Worst setup path | `*-openroad-stapostpnr/<corner>/max.rpt` | The corner whose `timing__setup__ws__corner:*` is lowest, and that report's first path, printed as OpenSTA wrote it. Left out if that corner has no `max.rpt`, rather than showing a path that is not the worst one. |
 | Area | synthesis's `reports/stat.json` and `metrics.json` | One bar of the standard-cell area after routing, split into synthesis's flip-flops and logic and the difference place and route added (a difference, since routing also resizes cells); then one bar of the cell count by class, split into what synthesis produced, what the flow added (taps, timing-repair and clock buffers and inverters) and anything unclassified. Not per module: LibreLane's default `SYNTH_HIERARCHY_MODE` is `flatten`, so module boundaries are gone by then. |
-| Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential / combinational / clock split, as internal, switching and leakage, with groups at zero (a design with no macros or pads) left out and the bars scaled to the largest group. The activity is OpenSTA's default, not a simulation's, so it shows where power goes, not what a workload draws. |
+| Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential / combinational / clock split, as internal, switching and leakage, with groups at zero (a design with no macros or pads) left out and each bar the group's share of the total, on a track that stands for the whole. The activity is OpenSTA's default, not a simulation's, so it shows where power goes, not what a workload draws. |
 
 The power table reads `power.rpt` rather than the bare `power__*` metrics
 because those carry one corner's numbers without naming it. `report`'s `power`
@@ -387,7 +387,8 @@ Two more sections, when their files exist:
 *   **Waveform**: the signals `"//WAVE_SIGNALS"` names, drawn across the whole
     run from the newest `build/*.vcd` that declares all of them, so a second
     testbench's VCD being newer is no error. When no VCD declares them all,
-    `site` fails and lists every name missing from the newest one. No VCD yet, as after `cocotb` alone,
+    `site` fails, lists every name missing from the newest one, and lists up to 20
+    names it does declare, since a typo is the usual cause. No VCD yet, as after `cocotb` alone,
     leaves the section out.
 
 ## Generated register blocks
