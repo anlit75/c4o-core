@@ -224,7 +224,7 @@ a port of it, and that is the typo the warning catches:
 [WARN] CLOCK_PORT is 'wall_clock', which does not appear anywhere in
        VERILOG_FILES. The flow will not find a clock to constrain.
 [INFO] Configuration verified for the physical design flow.
-[INFO] No layout was produced: this only checks the config. LibreLane builds the layout.
+[INFO] This step builds no layout; LibreLane does that.
 ```
 
 Module detection strips comments first, so a commented-out module does not

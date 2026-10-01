@@ -26,7 +26,7 @@ Every release publishes four tags:
 | tag | for |
 |---|---|
 | `X.Y.Z` | a build that will never change under you |
-| `X.Y` | **what a repository should pin.** Patches arrive without editing anything, while `X.Y` is the newest minor; a new behaviour never does |
+| `X.Y` | **what a repository should pin.** Patches arrive without editing anything while `X.Y` is the newest minor (see below); new behaviour only arrives with a new minor |
 | `X` | the current major |
 | `latest` | one-off runs like the line above. Nothing should pin it |
 
@@ -46,7 +46,7 @@ The engine supports the following commands via its Python entrypoint:
 | `sim` | Compiles and runs simulation using Icarus Verilog on `VERILOG_FILES` + `TEST_FILES`. |
 | `cocotb` | Runs cocotb tests — Python coroutines driving the RTL — on `VERILOG_FILES` + `COCOTB_TESTS`. `--netlist` runs the same tests against the synthesised gates. |
 | `gatesim` | Simulates the **synthesised netlist** against the PDK cell models, on `GATE_TESTS`. |
-| `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. One fixed script -- see below. |
+| `synth` | Performs logic synthesis using Yosys on `VERILOG_FILES` only. Generates `build/synthesis.json`. One fixed script -- see [docs/commands.md](docs/commands.md#synth-and-systemverilog-in-every-command). |
 | `schematic` | Draws the circuit as `build/schematic.svg` — the RTL as written, not the synthesised netlist. |
 | `pdk` | Installs/Enables the Sky130 PDK via Ciel into `$PDK_ROOT`, or `./pdks` when that is unset. |
 | `check` | Validates the configuration for the physical design flow, values included. Produces no layout — LibreLane does that. `gds` is an alias. |

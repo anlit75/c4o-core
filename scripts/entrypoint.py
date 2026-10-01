@@ -749,8 +749,10 @@ def cmd_check(args, config):
 
     log_info("Configuration verified for the physical design flow.")
     # `gds` is an alias of this command, and it exits 0 -- so say outright
-    # that nothing was built, or "make gds" reads as a finished layout.
-    log_info("No layout was produced: this only checks the config. LibreLane builds the layout.")
+    # that nothing was built, or "make gds" reads as a finished layout. Worded
+    # to hold both run alone and as the step before LibreLane in a template's
+    # `make gds`, where "no layout was produced" read like a failure.
+    log_info("This step builds no layout; LibreLane does that.")
 
 # LibreLane writes each timing metric once per corner and again with no
 # '__corner:' suffix. The bare key already holds the worst value across every

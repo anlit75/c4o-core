@@ -592,7 +592,7 @@ class TestEntrypoint(unittest.TestCase):
     def test_check_says_it_built_no_layout(self):
         # `gds` is an alias of check and exits 0. Without this line a passing
         # run reads as a finished layout when nothing was built.
-        self.assertIn("No layout was produced", self._check(self._gds_config()))
+        self.assertIn("builds no layout", self._check(self._gds_config()))
 
     def test_check_is_reachable_under_both_names(self):
         parser_args = entrypoint.build_parser().parse_args(["gds"])
