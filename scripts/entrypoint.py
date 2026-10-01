@@ -902,6 +902,7 @@ CELL_CLASSES = {
     "inverter": "inverters",
     "timing_repair_buffer": "timing-repair buffers",
     "clock_buffer": "clock buffers",
+    "clock_inverter": "clock inverters",
     "tap_cell": "well taps",
 }
 

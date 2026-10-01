@@ -1459,6 +1459,47 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    def test_site_says_when_it_was_built(self):
+        # A published page stays up until the next one replaces it, and a red
+        # main does not replace it, so the date is how a reader tells its age.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):
+                page = self._run_site()
+            self.assertIn("Built 1970-01-01 00:00 UTC", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_misses_timing_on_a_negative_hold_slack(self):
+        # Setup met and hold violated is a chip that fails at any clock: the
+        # chip has to read both, not setup alone.
+        def hold_violated(metrics):
+            metrics["timing__hold__ws"] = -0.05
+            metrics["timing__hold_vio__count"] = 2
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site(hold_violated)
+            self.assertIn('<span class="chip FAIL">Timing missed</span>', page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_writes_units_and_cell_classes_as_words(self):
+        def clock_inverters(metrics):
+            metrics["design__instance__count__class:clock_inverter"] = 5
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site(clock_inverters)
+            self.assertIn("5 clock inverters", page)
+            # report's terminal spelling, um^2, does not reach the page.
+            self.assertNotIn("um^2", page)
+            self.assertIn("um\u00b2", page)
+            self.assertIn('<th class="num">errors</th>', page)
+        finally:
+            os.chdir(cwd)
+
     def test_site_marks_a_failed_signoff_check(self):
         def dirty(metrics):
             metrics["design__lvs_error__count"] = 3
