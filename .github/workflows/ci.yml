@@ -1,9 +1,13 @@
 name: c4o-core ci
 
 on:
+  # Branches, not tags-ignore. A push trigger that filters only tags does not
+  # run for branches at all, so for a while nothing here ran when a pull
+  # request was merged: main went untested, and the image publish.yml builds
+  # from the tag had only ever been tested as a pull request. Naming the
+  # branch also keeps tag pushes out, which is what tags-ignore was for.
   push:
-    tags-ignore:
-      - '**'
+    branches: [ main ]
     paths-ignore:
       - '**.md'
       - 'LICENSE'
@@ -13,7 +17,43 @@ on:
   workflow_dispatch:
 
 jobs:
+  # A release-please pull request changes three files -- the changelog, the
+  # manifest and version.txt -- and none of them is read by scripts/ or tests/,
+  # so building and testing the image for it tests main again. The commit it
+  # releases was tested when it reached main, by the push trigger above.
+  #
+  # Decided in a job, not with paths-ignore on pull_request: a required check
+  # that never runs stays "Expected" and the pull request cannot be merged; a
+  # job skipped by `if:` reports as skipped, which a required check accepts.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - name: Does this change anything the image is built from?
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/${{ github.event.pull_request.number }}/files" --jq '.[].filename')
+          echo "$files"
+          other=$(grep -vxE 'CHANGELOG\.md|\.release-please-manifest\.json|version\.txt' <<<"$files" || true)
+          if [ -n "$files" ] && [ -z "$other" ]; then
+            echo "::notice::Release files only: the image is not rebuilt for this pull request."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-and-test-image:
+    needs: changes
+    # Runs unless the job above said no. If that job fails, its output is
+    # empty and this still runs: a broken decision must not look like a pass.
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
