@@ -836,21 +836,61 @@ def signoff_row(metrics):
 # LibreLane 3.0.14 run, not inferred from the step's f-string.
 RENDER_GLOBS = ["final/render/*.png", "*-klayout-render/*.png"]
 
+def step_ordinal(path, run_dir):
+    """The number LibreLane gave the step directory a path is under, or -1."""
+    head = os.path.relpath(path, run_dir).split("-", 1)[0]
+    return int(head) if head.isdigit() else -1
+
+def last_finished_step(run_dir):
+    """
+    The number of the last step of the run final/metrics.json describes, or
+    None when no step directory says.
+
+    LibreLane writes final/ only when a flow reaches its end. A resume that is
+    interrupted -- a crash, a kill, Ctrl-C -- leaves step directories newer
+    than final/, and reading those puts the timing of a run that never
+    finished under the summary of the one that did. Measured on 3.0.14: the
+    last step of a finished flow carries exactly final/'s metrics in its
+    state_out.json, and no step of a later, different run does.
+
+    Compared as text, so that a NaN in the metrics still equals itself.
+    """
+    def text(metrics):
+        return json.dumps(metrics, sort_keys=True)
+
+    try:
+        with open(os.path.join(run_dir, "final", "metrics.json")) as f:
+            final = text(json.load(f))
+    except (OSError, ValueError):
+        return None
+    states = glob.glob(os.path.join(run_dir, "*-*", "state_out.json"))
+    for state in sorted(states, key=lambda p: -step_ordinal(p, run_dir)):
+        try:
+            with open(state) as f:
+                metrics = json.load(f).get("metrics")
+        except (OSError, ValueError):
+            continue
+        if metrics is not None and text(metrics) == final:
+            return step_ordinal(state, run_dir)
+    return None
+
 def newest_step(run_dir, pattern):
     """
-    The newest match of a pattern that starts with a step directory, or None.
+    The newest match of a pattern that starts with a step directory, among the
+    steps of the run final/ describes, or None.
 
     LibreLane numbers the step directories, and a resumed run adds its steps
     after the ones already there. So 119-openroad-stapostpnr is newer than
     55-openroad-stapostpnr -- and sorts before it as a string, which is how
     the page once showed the timing of the run before the resume.
-    """
-    def ordinal(path):
-        head = os.path.relpath(path, run_dir).split("-", 1)[0]
-        return int(head) if head.isdigit() else -1
 
-    found = sorted(glob.glob(os.path.join(run_dir, pattern)))
-    return max(found, key=ordinal) if found else None
+    Steps after last_finished_step() are left out. When it has no answer --
+    a run directory copied without its state files -- every step counts.
+    """
+    last = last_finished_step(run_dir)
+    found = [path for path in sorted(glob.glob(os.path.join(run_dir, pattern)))
+             if last is None or step_ordinal(path, run_dir) <= last]
+    return max(found, key=lambda p: step_ordinal(p, run_dir)) if found else None
 
 def find_render(metrics_path):
     """
