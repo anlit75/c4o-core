@@ -775,6 +775,73 @@ class TestEntrypoint(unittest.TestCase):
 
         self.assertEqual(found, new)
 
+    def _run_with_states(self, final_metrics, steps):
+        """A run directory: final/metrics.json, and each step with the metrics its state_out.json holds."""
+        run = os.path.join(self.test_dir, "runs", "blinky_run")
+        os.makedirs(os.path.join(run, "final"))
+        with open(os.path.join(run, "final", "metrics.json"), "w") as f:
+            json.dump(final_metrics, f)
+        for name, metrics in steps:
+            os.makedirs(os.path.join(run, name))
+            if metrics is not None:
+                with open(os.path.join(run, name, "state_out.json"), "w") as f:
+                    json.dump({"metrics": metrics}, f)
+        return run
+
+    def test_sta_step_ignores_a_resume_that_never_finished(self):
+        # Shape of a real 3.0.14 run: a full flow (76 steps), then a resume
+        # from floorplan killed after its post-PnR STA. LibreLane did not
+        # rewrite final/, so the summary is the first run's and the timing
+        # under it has to be too. 121 was cut off before it wrote its state.
+        first, resumed = {"timing__setup__ws": 4.70}, {"timing__setup__ws": 4.63}
+        run = self._run_with_states(first, [
+            ("55-openroad-stapostpnr", first),
+            ("76-misc-reportmanufacturability", first),
+            ("119-openroad-stapostpnr", resumed),
+            ("121-magic-streamout", None),
+        ])
+
+        found = entrypoint.sta_step(os.path.join(run, "final", "metrics.json"))
+
+        self.assertEqual(found, os.path.join(run, "55-openroad-stapostpnr"))
+
+    def test_sta_step_takes_the_resume_that_did_finish(self):
+        first, resumed = {"timing__setup__ws": 4.70}, {"timing__setup__ws": 4.63}
+        run = self._run_with_states(resumed, [
+            ("55-openroad-stapostpnr", first),
+            ("76-misc-reportmanufacturability", first),
+            ("119-openroad-stapostpnr", resumed),
+            ("140-misc-reportmanufacturability", resumed),
+        ])
+
+        found = entrypoint.sta_step(os.path.join(run, "final", "metrics.json"))
+
+        self.assertEqual(found, os.path.join(run, "119-openroad-stapostpnr"))
+
+    def test_last_finished_step_is_the_newest_step_holding_the_final_metrics(self):
+        # Every step after the last one that changes a metric holds the same
+        # metrics, so the newest of them is the one final/ was written after.
+        # A NaN must not make the run unrecognisable: NaN != NaN as a number.
+        final = {"timing__setup__ws": 4.70, "design__max_slew": float("nan")}
+        run = self._run_with_states(final, [
+            ("70-netgen-lvs", final),
+            ("76-misc-reportmanufacturability", final),
+            ("119-openroad-stapostpnr", {"timing__setup__ws": 4.63}),
+        ])
+
+        self.assertEqual(entrypoint.last_finished_step(run), 76)
+
+    def test_last_finished_step_has_no_answer_without_state_files(self):
+        run = self._run_with_states({"timing__setup__ws": 4.70}, [
+            ("55-openroad-stapostpnr", None),
+            ("119-openroad-stapostpnr", None),
+        ])
+
+        self.assertIsNone(entrypoint.last_finished_step(run))
+        self.assertEqual(
+            entrypoint.sta_step(os.path.join(run, "final", "metrics.json")),
+            os.path.join(run, "119-openroad-stapostpnr"))
+
     def test_newest_step_reads_the_ordinal_as_a_number(self):
         # Two-digit against three-digit is where a string sort goes wrong, and
         # the file under the step is what the callers ask for.
