@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.15.3](https://github.com/anlit75/c4o-core/compare/v2.15.2...v2.15.3) (2026-10-03)
+
+
+### Fixes
+
+* report and site read only the steps of the run final/ describes ([#62](https://github.com/anlit75/c4o-core/issues/62)) ([c261ac5](https://github.com/anlit75/c4o-core/commit/c261ac516f0ca6bd61f6fea9220117450dd1769e))
+
 ## [2.15.2](https://github.com/anlit75/c4o-core/compare/v2.15.1...v2.15.2) (2026-10-03)
 
 
