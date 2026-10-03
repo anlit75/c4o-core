@@ -338,11 +338,16 @@ and the PDK. Under the title, on Actions, a byline names the repository's owner;
 `"//DESCRIPTION"` from the config says what the design is, and the buttons are
 what a visitor does with a chip, most wanted first: **Open in 3D**, **View
 source** (on Actions), and the GDS with its size. The summary writes the die as
-`69.5 × 80.2 µm`, groups thousands, and colours a non-negative slack green. The
+`69.5 × 80.2 µm`, groups thousands, and colours a non-negative slack green. It
+adds what a physical designer asks next: the clock (config's `CLOCK_PERIOD`),
+the core that utilization is a share of (`design__core__bbox` -- not the die
+beside it), how many of the standard cells are well taps, and the reg-to-reg
+setup and hold slack (`timing__*_r2r__ws`) beside the worst. The
 sections then run summary, tests, block diagram, waveform, signoff, timing,
-area, power, and the RTL schematic
-folded into a `<details>`, since past a few hundred cells it is a texture
-rather than a picture. When both an RTL and a gate-level cocotb run exist they
+area and power. The RTL schematic is a link under the block diagram when there
+is one, since past a few hundred cells it is a texture rather than a picture
+and the blocks already click through to each module's own; without a block
+diagram it is a section of its own, folded into a `<details>`. When both an RTL and a gate-level cocotb run exist they
 share one table, a column each, which is what makes "the same tests still pass
 after synthesis" visible. The page carries Open Graph tags for link previews;
 `og:image` is the layout, as a `summary` card, and only on Actions, where the Pages URL it must be
@@ -360,8 +365,8 @@ From the run directory's own reports, when the `metrics.json` sits at
 
 | Section | Read from | What to keep in mind |
 |---|---|---|
-| Signoff checks | `metrics.json` | One row per check, with its error count. |
-| Worst setup path | `*-openroad-stapostpnr/<corner>/max.rpt` | The corner whose `timing__setup__ws__corner:*` is lowest, and that report's first path, printed as OpenSTA wrote it. Left out if that corner has no `max.rpt`, rather than showing a path that is not the worst one. |
+| Signoff checks | `metrics.json` | One row per check, with its error count. Under it, the max slew, capacitance and fanout violations (`design__max_*_violation__count`) and the worst static IR drop (`ir__drop__worst`), which the flow reports without stopping on, so they never turn the "Signoff clean" chip red; and a line naming what it does not analyse: electromigration, crosstalk, dynamic IR. |
+| Worst setup path | `*-openroad-stapostpnr/<corner>/max.rpt` | The corner whose `timing__setup__ws__corner:*` is lowest, and that report's first path. Read into one sentence (from where to where, the clock period and MHz, when the clock reaches the start point, how long logic and wires take, and when the data arrives against its deadline) and a bar from the launch edge to the capture clock in four parts, each a number in the report: launch clock latency (or input delay), logic and wires, slack, and what the capture side holds back (setup time or output delay, plus uncertainty). The corner is in words (`max_ss_100C_1v60` is maximum wire RC, slow transistors, 100 °C, 1.60 V). On an I/O path it says so and gives the reg-to-reg slack, and it gives the worst clock skew (`clock__skew__worst_setup`); the report as OpenSTA wrote it stays one click away. A path that cannot be read that way -- a field missing, or a launch edge off zero, where the gap to the capture edge is not the clock period -- shows the report alone. Left out if that corner has no `max.rpt`, rather than showing a path that is not the worst one. |
 | Area | synthesis's `reports/stat.json` and `metrics.json` | One bar of the standard-cell area after routing, split into synthesis's flip-flops and logic and the difference place and route added (a difference, since routing also resizes cells); then one bar of the cell count by class, split into what synthesis produced, what the flow added (taps, timing-repair and clock buffers and inverters) and anything unclassified. Not per module: LibreLane's default `SYNTH_HIERARCHY_MODE` is `flatten`, so module boundaries are gone by then. |
 | Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential / combinational / clock split, as internal, switching and leakage, with groups at zero (a design with no macros or pads) left out and each bar the group's share of the total, on a track that stands for the whole. The activity is OpenSTA's default, not a simulation's, so it shows where power goes, not what a workload draws. |
 

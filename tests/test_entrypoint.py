@@ -1417,6 +1417,29 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("<code>max_ss_100C_1v60</code>", page)
             self.assertIn("Startpoint: _182_", page)
             self.assertIn("4.697966   slack (MET)", page)
+            # What the report says, in a sentence: the clock is the edge at
+            # 10.0; count[1] is the net _182_ drives; _172_'s D net is
+            # auto-named, so the instance stays.
+            # Arrival counts from the clock edge, so the clock tree's 0.61 ns
+            # to _182_/CLK is not logic; setup 0.148 + uncertainty 0.25 are
+            # what the capture side holds back.
+            self.assertIn("From <code>count[1]</code> (flip-flop) to <code>_172_</code> (flip-flop). "
+                          "Clock 10.0 ns (100 MHz): the clock reaches the start point at 0.61 ns, "
+                          "logic and wires take 4.88 ns, and the data arrives 4.70 ns before its "
+                          "10.19 ns deadline.", page)
+            self.assertIn('<span class="launch" style="width:5.75%"></span>'
+                          '<span class="used" style="width:46.11%"></span>'
+                          '<span class="spare" style="width:44.37%"></span>'
+                          '<span class="reserved" style="width:3.76%"></span>', page)
+            self.assertIn("setup time and clock uncertainty 0.40 ns", page)
+            self.assertIn("(maximum wire RC, slow transistors, 100 &deg;C, 1.60 V)", page)
+            # Utilization is of the core, not the die beside it.
+            self.assertIn('<div class="label">core utilization</div><div class="value">57.1%</div>'
+                          '<div class="detail">of a 58.4 \u00d7 57.1 \u00b5m core</div>', page)
+            self.assertIn("46 of them well taps", page)
+            self.assertIn("35 timing-repair buffers, 26 of them for hold", page)
+            self.assertIn("timing repair also resizes cells", page)
+            self.assertIn("<details><summary>Full OpenSTA report</summary>", page)
             # stat.json: 1366.3104 total, 683.1552 of it sequential -- this
             # design splits exactly in half. Routing's 1906.8 contains both, so
             # the third part is the difference, not a third peer.
@@ -1464,10 +1487,12 @@ class TestEntrypoint(unittest.TestCase):
             page = self._site({"DESIGN_NAME": "blinky", "PDK": "sky130A"})
 
             self.assertTrue(os.path.exists("build/site/blinky.gds"))
-            self.assertIn('<a class="btn ghost" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
+            self.assertIn('<a class="btn" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
             # Hidden until the script finds the page has a URL to hand over.
             self.assertIn('data-viewer="sky130A" data-gds="blinky.gds" hidden', page)
             self.assertIn("gds-viewer.tinytapeout.com", page)
+            # No note about where the 3D view works: on Pages the button is there.
+            self.assertNotIn("opens from the published page", page)
         finally:
             os.chdir(cwd)
 
@@ -1480,7 +1505,7 @@ class TestEntrypoint(unittest.TestCase):
 
             page = self._site({"DESIGN_NAME": "blinky", "PDK": "some130"})
 
-            self.assertIn('<a class="btn ghost" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
+            self.assertIn('<a class="btn" href="blinky.gds" download>GDS &middot; 6 B</a>', page)
             self.assertNotIn("data-viewer", page)
             self.assertNotIn("gds-viewer.tinytapeout.com", page)
         finally:
@@ -1581,6 +1606,16 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    def test_site_takes_the_clock_from_the_config(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            page = self._site({"DESIGN_NAME": "blinky", "CLOCK_PERIOD": 10.0})
+            self.assertIn('<div class="label">clock</div><div class="value">10.0 ns</div>', page)
+        finally:
+            os.chdir(cwd)
+
     def test_site_puts_the_layout_beside_the_title_and_names_the_author(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
@@ -1596,7 +1631,7 @@ class TestEntrypoint(unittest.TestCase):
             header = page[page.index("<header"):page.index("</header>")]
             self.assertIn('<header class="has-art">', page)
             self.assertIn('<figure class="hero-art" id="layout">', header)
-            self.assertIn("69.5 \u00d7 80.2 \u00b5m &middot; 198 cells &middot; sky130A", header)
+            self.assertIn("69.5 \u00d7 80.2 \u00b5m &middot; 152 cells + 46 taps &middot; sky130A", header)
             self.assertIn('<p class="byline">by <a href="https://github.com/someone">someone</a></p>', header)
             # The layout is the hero now, not a section of its own further down.
             self.assertNotIn('<section id="layout"', page)
@@ -1622,17 +1657,32 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    def test_site_keeps_the_gds_button_quiet_and_the_primary_readable(self):
+    def test_site_keeps_the_primary_button_readable_in_both_themes(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
             page = self._run_site()
-            # .actions a[download] outranks a bare .btn.ghost, which left the
-            # GDS link as heavy as View source.
-            self.assertIn(".actions a.btn.ghost {", page)
             # White on dark mode's #4493f8 is 3.1:1, under AA's 4.5:1.
             self.assertIn("--primary: #1f6feb;", page)
             self.assertIn("color-scheme: light dark;", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_colours_each_runs_chip_by_its_own_verdict(self):
+        # Gates failing where the RTL passed is the finding; one shared red
+        # chip would hide which side broke.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML.replace(
+                    '<failure message="AssertionError" />', ""))
+            with open("build/cocotb-gl-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            page = self._site()
+            self.assertIn('<span class="chip PASS">2/2 on RTL</span>'
+                          '<span class="chip FAIL">1/2 on gates</span>', page)
         finally:
             os.chdir(cwd)
 
@@ -1648,7 +1698,9 @@ class TestEntrypoint(unittest.TestCase):
                     f.write(self.COCOTB_XML)
             page = self._site()
             self.assertIn("<h2>Tests: 1/2 on RTL, 1/2 on gates</h2>", page)
-            self.assertIn('<span class="chip FAIL">1/2 on RTL · 1/2 on gates</span>', page)
+            # A chip per run, each with its own verdict.
+            self.assertIn('<span class="chip FAIL">1/2 on RTL</span>'
+                          '<span class="chip FAIL">1/2 on gates</span>', page)
             self.assertEqual(page.count("<th>test</th>"), 1)
             self.assertIn("<th>RTL</th><th>gates</th></tr>", page)
             # No sim-time column: it could only ever have been one run's.
@@ -1680,7 +1732,9 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn('content="A clock divider that blinks an LED."', page)
             self.assertIn('<meta property="og:image" content="https://some.github.io/repo/layout.png">', page)
             self.assertIn('<a class="btn" href="https://github.com/Some/repo">View source</a>', page)
-            self.assertIn("<details><summary>Schematic (RTL)</summary>", page)
+            # No block diagram here, so the schematic keeps a section, folded.
+            self.assertIn("<h2>Schematic</h2>", page)
+            self.assertIn("<details><summary>Show the schematic</summary>", page)
         finally:
             os.chdir(cwd)
 
@@ -1721,6 +1775,103 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("<div class=\"label\">power</div>", page)
         finally:
             os.chdir(cwd)
+
+    UART_PATH = """Startpoint: _2086_ (rising edge-triggered flip-flop clocked by CLK)
+Endpoint: PRDATA[4] (output port clocked by CLK)
+                                  0.000000    0.000000   clock CLK (rise edge)
+                      0.1   0.2   0.6 ^ _2086_/CLK (sky130_fd_sc_hd__dfrtp_1)
+     3    0.01   0.2   0.5   1.1 ^ _2086_/Q (sky130_fd_sc_hd__dfrtp_1)
+                                                         uart_rx_fifo_i.pointer_out[0] (net)
+                                              9.275290   data arrival time
+                                 11.000000   11.000000   clock CLK (rise edge)
+                                 -0.250000   10.750000   clock uncertainty
+                                 -0.550000   10.200000   output external delay
+                                             10.200000   data required time
+                                              {slack}   slack ({verdict})
+"""
+
+    def test_timing_story_names_the_path_and_the_clock(self):
+        s = entrypoint.site_page.timing_story(self.UART_PATH.format(slack="0.924710", verdict="MET"))
+        self.assertEqual(s["start"], "uart_rx_fifo_i.pointer_out[0]")
+        self.assertEqual((s["end"], s["end_kind"]), ("PRDATA[4]", "output"))
+        self.assertEqual(s["period"], 11.0)
+        self.assertEqual((s["arrival"], s["required"]), (9.27529, 10.2))
+
+    def test_timing_story_gives_up_rather_than_guess(self):
+        # No required time: the page shows the report as printed instead.
+        path = self.UART_PATH.replace("data required time", "something else")
+        self.assertIsNone(entrypoint.site_page.timing_story(path.format(slack="0.9", verdict="MET")))
+
+    def test_timing_story_leaves_a_half_cycle_path_to_the_report(self):
+        # Launched on a falling edge at 5.5: the 5.5 ns to the capture edge is
+        # not the clock period, and the page must not call it one.
+        path = self.UART_PATH.replace("0.000000    0.000000   clock CLK (rise edge)",
+                                      "5.500000    5.500000   clock CLK (fall edge)")
+        self.assertIsNone(entrypoint.site_page.timing_story(path.format(slack="0.9", verdict="MET")))
+
+    def test_site_draws_a_violated_path_late_not_spare(self):
+        path = self.UART_PATH.replace("9.275290", "10.500000").format(slack="-0.300000",
+                                                                      verdict="VIOLATED")
+        page = entrypoint.site_page.render("uart", [], None, [], None, {},
+                                           timing=("max_ss_100C_1v60", path))
+        self.assertIn("0.30 ns after its 10.20 ns deadline", page)
+        self.assertIn('<span class="late"', page)
+        # The bar has a key: which colour is the overrun.
+        self.assertIn("late by 0.30 ns", page)
+        self.assertNotIn('<span class="spare"', page)
+
+    UART_PHYSICAL = {"clock": 11.0, "core": (225.4, 223.04), "taps": 714, "hold_buffers": 315,
+                     "r2r_setup": 2.109539, "r2r_hold": 0.108761, "skew": 0.2862,
+                     "drv": {"slew": 297, "cap": 0, "fanout": 7}, "ir_worst": 0.000524}
+
+    def test_site_reads_the_uart_path_as_a_physical_designer_would(self):
+        # The real apb_uart_sv run: the clock reaches _2086_/CLK at 1.30 ns,
+        # so of the 9.28 ns arrival only 7.97 is logic; it ends at a port.
+        path = self.UART_PATH.replace(
+            "0.1   0.2   0.6 ^ _2086_/CLK", "0.1   0.2   1.300449 ^ _2086_/CLK"
+        ).format(slack="0.924710", verdict="MET")
+        page = entrypoint.site_page.render(
+            "uart", [("die", "236.605 x 247.325 um  (58518.3 um^2)"),
+                     ("setup slack", "+0.92 ns  (0 violations)")], None, [], None, {},
+            timing=("max_ss_100C_1v60", path), physical=self.UART_PHYSICAL)
+        self.assertIn("the clock reaches the start point at 1.30 ns, logic and wires take "
+                      "7.97 ns, and the data arrives 0.92 ns before its 10.20 ns deadline", page)
+        self.assertIn("output delay and clock uncertainty 0.80 ns", page)
+        # The worst path is an I/O path; between flops there is more room.
+        self.assertIn("This is an I/O path, so the output delay the constraints assume", page)
+        self.assertIn("between flip-flops the worst setup slack is +2.11 ns", page)
+        self.assertIn("0 violations; reg-to-reg +2.11 ns", page)
+        self.assertIn('<div class="label">clock</div><div class="value">11.0 ns</div>'
+                      '<div class="detail">91 MHz</div>', page)
+        self.assertIn("Worst clock skew on a setup path: 0.29 ns.", page)
+
+    def test_site_names_the_input_delay_on_a_path_from_a_port(self):
+        path = self.UART_PATH.replace(
+            "Startpoint: _2086_ (rising edge-triggered flip-flop clocked by CLK)",
+            "Startpoint: PADDR[2] (input port clocked by CLK)").replace(
+            "0.1   0.2   0.6 ^ _2086_/CLK (sky130_fd_sc_hd__dfrtp_1)",
+            "0.000000    0.550000 ^ PADDR[2] (in)").format(slack="0.9", verdict="MET")
+        s = entrypoint.site_page.timing_story(path)
+        self.assertEqual((s["start_kind"], s["leaves"]), ("input", 0.55))
+        page = entrypoint.site_page.render("uart", [], None, [], None, {},
+                                           timing=("max_ss_100C_1v60", path))
+        self.assertIn("the input delay puts the data at the input at 0.55 ns", page)
+
+    def test_site_shows_the_electrical_rules_beside_signoff(self):
+        page = entrypoint.site_page.render("uart", [], None, [], None, {},
+                                           signoff=[("LVS", 0)], physical=self.UART_PHYSICAL)
+        self.assertIn('<tr><td>max transition (slew)</td><td class="num">297</td></tr>', page)
+        self.assertIn('<tr><td>max fanout</td><td class="num">7</td></tr>', page)
+        self.assertIn("Static IR drop, worst: 0.52 mV.", page)
+        self.assertIn("Not analysed by this flow: electromigration", page)
+        # The flow does not stop on these, and neither does the chip.
+        self.assertIn('<span class="chip PASS">Signoff clean</span>', page)
+
+    def test_site_links_the_schematic_under_the_blocks_instead_of_a_section(self):
+        page = entrypoint.site_page.render("uart", [], None, [], "schematic.svg", {},
+                                           blocks="blocks/top.svg")
+        self.assertIn('<a href="schematic.svg">open the schematic</a>', page)
+        self.assertNotIn('<section id="schematic"', page)
 
     def test_first_path_stops_at_the_first_slack(self):
         text = ("Startpoint: a\nEndpoint: b\n  1.0   slack (VIOLATED)\n"

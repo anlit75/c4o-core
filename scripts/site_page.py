@@ -97,10 +97,13 @@ h3 { margin: 16px 0 0; font-size: 16px; }
        background: var(--card); color: var(--fg); font-weight: 600; font-size: 14px; }
 .btn:hover, .actions a[download]:hover { text-decoration: none; border-color: var(--accent); }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
-/* .actions a[download] above outranks a bare .btn.ghost; match it. */
-.btn.ghost, .actions a.btn.ghost { border-color: transparent; background: none; color: var(--muted);
-                                   font-weight: 500; }
 .hint { color: var(--muted); font-size: 13px; }
+.tbar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin: 4px 0 8px;
+        background: var(--line); }
+.tbar span { display: block; height: 100%; }
+.tbar .launch { background: var(--accent2); }
+.tbar .used { background: var(--accent); } .tbar .spare { background: var(--pass); }
+.tbar .late { background: var(--fail); } .tbar .reserved { background: var(--muted); }
 details { border: 1px solid var(--line); border-radius: 8px; }
 summary { cursor: pointer; padding: 8px 12px; font-weight: 600; }
 details .scroll { border-top: 1px solid var(--line); padding: 12px; }
@@ -241,7 +244,7 @@ document.querySelectorAll('.zoom').forEach(function (z) {
 
 # Tiny Tapeout's viewer fetches the GDS by URL, so the link can only be built
 # where the page itself has one: on a published page, not one opened from disk.
-# Until then the button stays hidden and a note says where it will work.
+# Until then the button stays hidden.
 GDS_VIEWER = "https://gds-viewer.tinytapeout.com/"
 GDS_VIEWER_JS = """
 document.querySelectorAll('[data-viewer]').forEach(function (s) {
@@ -250,8 +253,6 @@ document.querySelectorAll('[data-viewer]').forEach(function (s) {
   s.querySelector('a').href = '""" + GDS_VIEWER + """?pdk=' +
     encodeURIComponent(s.getAttribute('data-viewer')) + '&model=' + encodeURIComponent(gds);
   s.hidden = false;
-  var off = s.parentNode.querySelector('[data-viewer-off]');
-  if (off) off.hidden = true;
 });
 """
 
@@ -341,12 +342,12 @@ def makeup(area, cells):
     if ff is not None and logic is not None:
         synth = ff + logic
         parts = [("ff", ff), ("logic", logic)]
-        items = [("accent", f"flip-flops {um2(ff)}"), ("accent2", f"logic {um2(logic)}")]
+        items = [("accent", f"flip-flops {um2(ff)}"), ("accent2", f"combinational logic {um2(logic)}")]
         if routed is not None and routed >= synth:
             parts.append(("flow", routed - synth))
             items.append(("muted", f"added by place and route {um2(routed - synth)} "
-                          '<span class="of">(the difference: routing also resizes cells)</span>'))
-            out += (f"<p>Synthesis produced {um2(synth)} of logic; place and route grew it "
+                          '<span class="of">(the difference: timing repair also resizes cells)</span>'))
+            out += (f"<p>Synthesis produced {um2(synth)} of standard cells; place and route grew it "
                     f"{(routed - synth) / synth:.0%} to {um2(routed)}, with the clock tree, "
                     "timing buffers and well taps it added.</p>")
         out += stack(parts, "Standard-cell area by origin") + legend(items)
@@ -374,7 +375,7 @@ def human_size(n):
             return f"{n:g} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1000
 
-def hero_art(layout, design, numbers, pdk):
+def hero_art(layout, design, numbers, pdk, taps=None):
     """
     The layout as the page's picture, framed like a print beside the title.
     The render is drawn on white, so it gets a white mount in either theme.
@@ -390,12 +391,141 @@ def hero_art(layout, design, numbers, pdk):
     if die:
         caption.append(f"{float(die[1]):,.1f} \u00d7 {float(die[2]):,.1f} \u00b5m")
     if str(rows.get("standard cells", "")).isdigit():
-        caption.append(f"{int(rows['standard cells']):,} cells")
+        cells, taps = int(rows["standard cells"]), taps or 0
+        caption.append(f"{cells - taps:,} cells + {taps:,} taps" if taps else f"{cells:,} cells")
     if pdk:
         caption.append(esc(pdk))
     caption = (f"<figcaption>{' &middot; '.join(caption)}</figcaption>" if caption else "")
     return (f'<figure class="hero-art" id="layout"><a href="{esc(layout)}">'
             f'<img src="{esc(layout)}" alt="Layout of {esc(design)}"></a>{caption}</figure>')
+
+AUTO_NAME = re.compile(r"_\d+_$")
+CORNER = re.compile(r"(min|nom|max)_(ss|tt|ff|sf|fs)_(n?)(\d+)C_(\d+)v(\d+)$")
+PROCESS = {"ss": "slow", "tt": "typical", "ff": "fast", "sf": "slow-fast", "fs": "fast-slow"}
+RC = {"min": "minimum", "nom": "typical", "max": "maximum"}
+
+def corner_words(corner):
+    """'max_ss_100C_1v60' -> 'maximum wire RC, slow transistors, 100 °C, 1.60 V', or None."""
+    m = CORNER.match(corner)
+    if not m:
+        return None
+    rc, process, minus, temp, volts, frac = m.groups()
+    return (f"{RC[rc]} wire RC, {PROCESS[process]} transistors, {'-' if minus else ''}{temp} &deg;C, "
+            f"{volts}.{frac} V")
+
+def timing_story(path):
+    """
+    What a reader wants from an OpenSTA path report, pulled out of it: where
+    the path starts and ends, the clock period, and when the data arrives
+    against when it must. None when any of it cannot be found, so the page
+    falls back to the report as printed.
+    """
+    lines = path.splitlines()
+    head = {}
+    for line in lines:
+        for key in ("Startpoint", "Endpoint"):
+            if line.startswith(key + ":"):
+                name, _, kind = line.split(":", 1)[1].strip().partition(" ")
+                head[key] = (name, kind)
+    number = lambda pattern: next((float(m.group(1)) for line in lines
+                                   for m in [re.search(pattern, line)] if m), None)
+    edges = [float(m.group(1)) for line in lines
+             for m in [re.match(r"\s*\S+\s+(-?[\d.]+)\s+clock \S+ \((?:rise|fall) edge\)", line)] if m]
+    arrival = number(r"^\s*(-?[\d.]+)\s+data arrival time")
+    required = number(r"^\s*(-?[\d.]+)\s+data required time")
+    slack = number(r"^\s*(-?[\d.]+)\s+slack")
+    # What the capture side holds back after its clock edge: uncertainty,
+    # the flop's setup time or the port's output delay. Their sum is what
+    # separates the deadline from the moment the capture clock arrives.
+    capture = next((i for i, line in enumerate(lines)
+                    if re.match(r"\s*\S+\s+-?[\d.]+\s+clock \S+ \((?:rise|fall) edge\)", line)
+                    and i > 0 and any("data arrival time" in l for l in lines[:i])), None)
+    held = 0.0
+    if capture is not None:
+        for line in lines[capture + 1:]:
+            if "data required time" in line:
+                break
+            m = re.match(r"^\s*(-[\d.]+)\s+-?[\d.]+\s+[a-z]", line)
+            if m:
+                held -= float(m.group(1))
+    # A launch edge off zero is a half-cycle or multicycle path: the gap to
+    # the capture edge is not the clock period, so do not call it one.
+    if len(head) < 2 or len(edges) < 2 or edges[0] != 0 or None in (arrival, required, slack):
+        return None
+
+    def net_after(cell):
+        # An instance like _2086_ says nothing; the net it drives usually does.
+        hits = [i for i, line in enumerate(lines) if f" {cell}/" in line]
+        nets = [l.split()[0] for l in lines[hits[-1]:] if l.rstrip().endswith("(net)")] if hits else []
+        return nets[0] if nets and not AUTO_NAME.search(nets[0]) else cell
+
+    def net_before(cell):
+        hits = [i for i, line in enumerate(lines) if f" {cell}/" in line]
+        nets = [l.split()[0] for l in lines[:hits[0]] if l.rstrip().endswith("(net)")] if hits else []
+        return nets[-1] if nets and not AUTO_NAME.search(nets[-1]) else cell
+
+    def kind(text):
+        return ("input" if "input port" in text else "output" if "output port" in text
+                else "flip-flop" if "flip-flop" in text else "latch" if "latch" in text else "")
+
+    (start, start_kind), (end, end_kind) = head["Startpoint"], head["Endpoint"]
+    # When the data leaves the start point: the launch clock's arrival at a
+    # flip-flop's clock pin, or the input delay at a port. Arrival time counts
+    # from the clock edge, so without this the clock tree reads as logic.
+    leaves = next((float(m.group(1)) for line in lines
+                   for m in [re.search(r"(-?[\d.]+)\s+[\^v]\s+" + re.escape(start) + r"(?:/|\s)", line)]
+                   if m), 0.0)
+    return {
+        "leaves": leaves, "held": held,
+        "start": net_after(start) if AUTO_NAME.search(start) else start,
+        "start_kind": kind(start_kind),
+        "end": net_before(end) if AUTO_NAME.search(end) else end,
+        "end_kind": kind(end_kind),
+        "period": edges[1], "arrival": arrival, "required": required, "slack": slack,
+    }
+
+def summary_rows(numbers, physical):
+    """
+    `report`'s rows, with what a physical designer asks next folded into
+    their details: the clock, the core utilization is a share of, the taps in
+    the cell count, and the reg-to-reg slack beside the worst one.
+    """
+    rows = []
+    for label, value in numbers:
+        if label == "utilization" and physical.get("core"):
+            w, h = physical["core"]
+            label, value = "core utilization", f"{value}  (of a {w:,.1f} \u00d7 {h:,.1f} \u00b5m core)"
+        elif label == "standard cells" and physical.get("taps") and value.isdigit():
+            value = f"{value}  ({physical['taps']:,} of them well taps)"
+        elif label in ("setup slack", "hold slack"):
+            r2r = physical.get("r2r_" + label.split()[0])
+            if r2r is not None:
+                main, _, detail = value.partition("  (")
+                value = f"{main}  ({detail.rstrip(')')}; reg-to-reg {r2r:+.2f} ns)"
+        rows.append((label, value))
+        if label == "die" and physical.get("clock"):
+            period = physical["clock"]
+            rows.append(("clock", f"{period:.1f} ns  ({1000 / period:.0f} MHz)"))
+    return rows
+
+def electrical(physical):
+    """The flow's electrical checks beside physical verification, and what it does not check."""
+    drv, ir = physical.get("drv") or {}, physical.get("ir_worst")
+    if not drv and ir is None:
+        return ""
+    names = {"slew": "max transition (slew)", "cap": "max capacitance", "fanout": "max fanout"}
+    out = ""
+    if drv:
+        out += ("<h3>Electrical rules</h3><p>Limits from the cell library. The flow reports "
+                "violations here without stopping on them, so a layout can pass the checks above "
+                "and still have some.</p>"
+                '<div class="scroll"><table><tr><th>rule</th><th class="num">violations</th></tr>'
+                + "".join(f'<tr><td>{names[k]}</td><td class="num">{drv[k]:,}</td></tr>'
+                          for k in ("slew", "cap", "fanout") if k in drv) + "</table></div>")
+    if ir is not None:
+        out += f"<p>Static IR drop, worst: {ir * 1000:.2f} mV.</p>"
+    return out + ('<p class="hint">Not analysed by this flow: electromigration, signal '
+                  "integrity (crosstalk) and dynamic IR drop.</p>")
 
 def run_name(title):
     """"cocotb, RTL" -> "RTL", "cocotb, gate level" -> "gates": a column head."""
@@ -431,7 +561,7 @@ def merged_tests(cocotb_runs):
 
 def render(design, numbers, layout, cocotb_runs, schematic, env,
            signoff=(), timing=None, area=None, power=None, blocks=None, wave=None, gds=None,
-           description=None, cells=()):
+           description=None, cells=(), physical=None):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -450,6 +580,10 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     gds          -- (the GDS's name next to the page, PDK for the 3D viewer or
                     None when the viewer has no layers for it), or None
     description  -- one line saying what the design is, or None
+    physical     -- what a physical designer reads first, from metrics.json and
+                    config, any key absent: clock (ns), core (w, h um), taps,
+                    hold_buffers, r2r_setup, r2r_hold (ns), skew (ns),
+                    drv {slew, cap, fanout}, ir_worst (V)
     cells        -- (class, count, 'synthesis' | 'flow' | 'other') per cell class
 
     The page is laid out to be shared, as a portfolio piece: the layout first,
@@ -466,14 +600,16 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     if cases:
         passed = cases.count("PASS")
         if len(cocotb_runs) > 1:
-            # Per run, so "6/6 on RTL · 6/6 on gates" says the same tests
-            # held after synthesis, which a single 12/12 hides.
-            text = " · ".join(
-                f"{sum(v == 'PASS' for _, v, _ in run)}/{len(run)} on {run_name(title)}"
-                for title, _, run in cocotb_runs)
+            # One chip per run, so "6/6 on RTL" and "6/6 on gates" say the
+            # same tests held after synthesis, which a single 12/12 hides --
+            # and a run that failed is red on its own, not dragging the other.
+            for title, _, run in cocotb_runs:
+                ok = sum(v == "PASS" for _, v, _ in run)
+                chips.append(("PASS" if ok == len(run) else "FAIL",
+                              f"{ok}/{len(run)} on {run_name(title)}"))
         else:
-            text = f"{passed}/{len(cases)} tests passed"
-        chips.append(("PASS" if passed == len(cases) else "FAIL", text))
+            chips.append(("PASS" if passed == len(cases) else "FAIL",
+                          f"{passed}/{len(cases)} tests passed"))
     if signoff:
         errors = sum(count for _, count in signoff)
         chips.append(("FAIL", f"Signoff: {errors} errors") if errors
@@ -489,7 +625,8 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
 
     if numbers:
         add("summary", "Summary", '<h2>Summary</h2><div class="kpis">'
-            + "".join(kpi(label, value) for label, value in numbers) + "</div>")
+            + "".join(kpi(label, value) for label, value in summary_rows(numbers, physical or {}))
+            + "</div>")
 
     if len(cocotb_runs) > 1:
         add("tests", "Tests", merged_tests(cocotb_runs))
@@ -507,12 +644,14 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
 
     if signoff:
         add("signoff", "Signoff",
-            "<h2>Signoff checks</h2><p>The checks a layout has to pass before it can be "
-            'manufactured.</p><div class="scroll"><table><tr><th>check</th><th class="num">errors</th><th>result</th></tr>'
+            "<h2>Signoff checks</h2><p>Physical verification of the layout: design rules "
+            "(Magic and KLayout, two independent checkers), layout against the netlist (LVS), "
+            "antenna rules, and XOR, which checks the two tools wrote the same GDS.</p>"
+            '<div class="scroll"><table><tr><th>check</th><th class="num">errors</th><th>result</th></tr>'
             + "".join(
                 f'<tr><td>{esc(check)}</td><td class="num">{count}</td>'
                 f'<td class="{"FAIL" if count else "PASS"}">{"FAIL" if count else "PASS"}</td></tr>'
-                for check, count in signoff) + "</table></div>")
+                for check, count in signoff) + "</table></div>" + electrical(physical or {}))
 
 
     if wave:
@@ -523,17 +662,75 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
 
     if timing:
         corner, path = timing
-        # The whole path is long; its last line is the one that answers.
-        verdict = path.strip().splitlines()[-1].split()
-        headline = " ".join(verdict[-2:]) if len(verdict) >= 3 else "the path"
-        slack = f"{float(verdict[0]):+.3f} ns, " if len(verdict) >= 3 else ""
-        add("timing", "Timing",
-            f"<h2>Worst setup path</h2><p>Corner <code>{esc(corner)}</code>, the one with "
-            "the least setup slack. Printed as OpenSTA reports it.</p>"
-            f"<details><summary>{esc(slack + headline)}: show the full path</summary>"
+        story = timing_story(path)
+        words = corner_words(corner)
+        where = (f"Corner <code>{esc(corner)}</code>" + (f" ({words})" if words else "")
+                 + ", the one with the least setup slack.")
+        if story:
+            # The report's two facts worth a sentence -- the clock and which
+            # path -- and a bar from the launch edge to the capture clock.
+            s = story
+            point = lambda name, kind: (f"{kind} <code>{esc(name)}</code>" if kind in ("input", "output")
+                                        else f"<code>{esc(name)}</code>" + (f" ({kind})" if kind else ""))
+            mhz = f" ({1000 / s['period']:.0f} MHz)" if s["period"] > 0 else ""
+            when = (f"{s['slack']:.2f} ns before its {s['required']:.2f} ns deadline" if s["slack"] >= 0
+                    else f"{-s['slack']:.2f} ns after its {s['required']:.2f} ns deadline")
+            logic = s["arrival"] - s["leaves"]
+            source = ("the input delay puts the data at the input" if s["start_kind"] == "input"
+                      else "the clock reaches the start point")
+            # Launch edge to the capture clock: four parts, each a number in the report.
+            scale = max(s["arrival"], s["required"] + s["held"]) or 1
+            pct = lambda v: f"{max(v, 0) / scale:.2%}"
+            seg = lambda cls, v: f'<span class="{cls}" style="width:{pct(v)}"></span>'
+            key = [("accent2", f"{'input delay' if s['start_kind'] == 'input' else 'clock to the start point'} "
+                               f"{s['leaves']:.2f} ns"),
+                   ("accent", f"logic and wires {logic:.2f} ns")]
+            if s["slack"] >= 0:
+                bar = seg("launch", s["leaves"]) + seg("used", logic) + seg("spare", s["slack"])
+                key.append(("pass", f"slack {s['slack']:.2f} ns"))
+            else:
+                bar = (seg("launch", s["leaves"]) + seg("used", s["required"] - s["leaves"])
+                       + seg("late", -s["slack"]))
+                key.append(("fail", f"late by {-s['slack']:.2f} ns"))
+            spare_end = max(s["arrival"], s["required"])
+            bar += seg("reserved", s["required"] + s["held"] - spare_end)
+            if s["held"] > 0:
+                key.append(("muted", f"{'output delay' if s['end_kind'] == 'output' else 'setup time'} "
+                                     f"and clock uncertainty {s['held']:.2f} ns"))
+            # A path to or from a port is as much the constraints' assumed I/O
+            # delay as it is logic; between flip-flops says what the logic does.
+            io = s["start_kind"] == "input" or s["end_kind"] == "output"
+            r2r = (physical or {}).get("r2r_setup")
+            notes = []
+            if io:
+                which = " and ".join(w for w, on in (("input", s["start_kind"] == "input"),
+                                                      ("output", s["end_kind"] == "output")) if on)
+                notes.append(f"This is an I/O path, so the {which} delay the constraints "
+                             "assume is part of it"
+                             + (f"; between flip-flops the worst setup slack is {r2r:+.2f} ns." if r2r is not None
+                                else "."))
+            skew = (physical or {}).get("skew")
+            if skew is not None:
+                notes.append(f"Worst clock skew on a setup path: {skew:.2f} ns.")
+            body = (f"<p>From {point(s['start'], s['start_kind'])} to {point(s['end'], s['end_kind'])}. "
+                    f"Clock {s['period']:.1f} ns{mhz}: {source} at {s['leaves']:.2f} ns, logic and "
+                    f"wires take {logic:.2f} ns, and the data arrives {when}.</p>"
+                    f'<div class="tbar" role="img" aria-label="Data arrives at {s["arrival"]:.2f} ns, '
+                    f'slack {s["slack"]:+.2f} ns">{bar}</div>' + legend(key)
+                    + "".join(f'<p class="hint">{n}</p>' for n in notes)
+                    + f'<p class="hint">{where}</p>')
+        else:
+            body = f"<p>{where} Printed as OpenSTA reports it.</p>"
+        add("timing", "Timing", "<h2>Worst setup path</h2>" + body
+            + "<details><summary>Full OpenSTA report</summary>"
             f'<div class="scroll"><pre>{esc(path)}</pre></div></details>')
 
     if area or cells:
+        hold = (physical or {}).get("hold_buffers")
+        if hold:
+            # Most of them, in a design with a fast-corner hold problem.
+            cells = [(f"{name}, {hold:,} of them for hold" if name == "timing-repair buffers" else name, n, k)
+                     for name, n, k in cells]
         add("area", "Area", "<h2>Area</h2>" + makeup(area or {}, cells))
 
     if power:
@@ -568,13 +765,19 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             "nets between them. Wiring that passes through the top's own gates "
             "meets them at the dashed box. Open it and click a block to go one "
             "level down: to that module's own block diagram, or to its schematic "
-            "when it has no submodules.</p>" + zoomable(blocks, f"Block diagram of {design}"))
+            "when it has no submodules.</p>" + zoomable(blocks, f"Block diagram of {design}")
+            # With blocks to click through, the top's whole schematic is a
+            # texture on the page; it is a file to open, not a section.
+            + (f'<p class="hint">The whole top module as one drawing, from the RTL: '
+               f'<a href="{esc(schematic)}">open the schematic</a>, best on a large screen.</p>'
+               if schematic else ""))
 
-    if schematic:
-        # Collapsed: past a few hundred cells it is a texture, not a picture,
-        # and the block diagram above says more. One click away for a small one.
+    if schematic and not blocks:
+        # Collapsed: past a few hundred cells it is a texture, not a picture.
+        # One click away for a small one.
         add("schematic", "Schematic",
-            "<details><summary>Schematic (RTL)</summary>"
+            "<h2>Schematic</h2><p>The circuit the RTL describes, drawn by Yosys "
+            "before synthesis.</p><details><summary>Show the schematic</summary>"
             + zoomable(schematic, f"Schematic of {design}") + "</details>")
 
     # Only on GitHub Actions, where these say which commit the page shows.
@@ -611,12 +814,10 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     if server and repo:
         actions.append(f'<a class="btn" href="{esc(server)}/{esc(repo)}">View source</a>')
     if gds_name:
-        # Last and quiet: a visitor rarely has the tools to open a GDS.
+        # Last, and framed like View source: a visitor rarely has the tools
+        # to open a GDS, but it is the chip itself and should read as a button.
         size = f" &middot; {human_size(gds_size)}" if gds_size else ""
-        actions.append(f'<a class="btn ghost" href="{esc(gds_name)}" download>GDS{size}</a>')
-    if gds_pdk:
-        actions.append('<span class="hint" data-viewer-off>The 3D view, in Tiny Tapeout\'s '
-                       'viewer, opens from the published page.</span>')
+        actions.append(f'<a class="btn" href="{esc(gds_name)}" download>GDS{size}</a>')
     actions = f'<p class="actions">{"".join(actions)}</p>' if actions else ""
 
     # Link previews (chat apps, LinkedIn) need an absolute image URL; it is
@@ -657,7 +858,7 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         # only; say what is missing and what adds it, or it reads as all there is.
         + ("" if layout or signoff else '<p class="hint">The layout, signoff checks, timing, area and '
            "power appear here once <code>make gds</code> has run.</p>")
-        + "</div>" + hero_art(layout, design, numbers, gds_pdk) + "</div></header>"
+        + "</div>" + hero_art(layout, design, numbers, gds_pdk, (physical or {}).get("taps")) + "</div></header>"
         + ('<nav aria-label="Sections"><div class="wrap">' + "".join(
             f'<a href="#{anchor}">{esc(label)}</a>' for anchor, label, _ in parts)
            + "</div></nav>" if len(parts) > 1 else "")
