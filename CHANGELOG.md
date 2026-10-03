@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.15.1](https://github.com/anlit75/c4o-core/compare/v2.15.0...v2.15.1) (2026-10-03)
+
+
+### Fixes
+
+* **site:** GDS frame, per-run chips, timing and schematic reworked, numbers a physical designer can trust ([#58](https://github.com/anlit75/c4o-core/issues/58)) ([6bfee36](https://github.com/anlit75/c4o-core/commit/6bfee36773bcc51c7903e914210fc1657dc10166))
+
 ## [2.15.0](https://github.com/anlit75/c4o-core/compare/v2.14.2...v2.15.0) (2026-10-01)
 
 
