@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.15.2](https://github.com/anlit75/c4o-core/compare/v2.15.1...v2.15.2) (2026-10-03)
+
+
+### Fixes
+
+* site and report read the newest step of a resumed run, not the one that sorts last ([#60](https://github.com/anlit75/c4o-core/issues/60)) ([6bcc2c8](https://github.com/anlit75/c4o-core/commit/6bcc2c875eb21500ffd35675ce1db745ffba5c1b))
+
 ## [2.15.1](https://github.com/anlit75/c4o-core/compare/v2.15.0...v2.15.1) (2026-10-03)
 
 
