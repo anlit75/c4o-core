@@ -1420,13 +1420,25 @@ class TestEntrypoint(unittest.TestCase):
             # What the report says, in a sentence: the clock is the edge at
             # 10.0; count[1] is the net _182_ drives; _172_'s D net is
             # auto-named, so the instance stays.
+            # Arrival counts from the clock edge, so the clock tree's 0.61 ns
+            # to _182_/CLK is not logic; setup 0.148 + uncertainty 0.25 are
+            # what the capture side holds back.
             self.assertIn("From <code>count[1]</code> (flip-flop) to <code>_172_</code> (flip-flop). "
-                          "Clock 10.0 ns (100 MHz): the data arrives at 5.49 ns, "
-                          "4.70 ns before its 10.19 ns deadline.", page)
-            self.assertIn('<span class="used" style="width:53.89%"></span>'
-                          '<span class="spare" style="width:46.11%"></span>'
-                          '<span class="reserved" style="width:0.00%"></span>', page)
-            self.assertIn("(slow transistors, 100 &deg;C, 1.60 V)", page)
+                          "Clock 10.0 ns (100 MHz): the clock reaches the start point at 0.61 ns, "
+                          "logic and wires take 4.88 ns, and the data arrives 4.70 ns before its "
+                          "10.19 ns deadline.", page)
+            self.assertIn('<span class="launch" style="width:5.75%"></span>'
+                          '<span class="used" style="width:46.11%"></span>'
+                          '<span class="spare" style="width:44.37%"></span>'
+                          '<span class="reserved" style="width:3.76%"></span>', page)
+            self.assertIn("setup time and clock uncertainty 0.40 ns", page)
+            self.assertIn("(maximum wire RC, slow transistors, 100 &deg;C, 1.60 V)", page)
+            # Utilization is of the core, not the die beside it.
+            self.assertIn('<div class="label">core utilization</div><div class="value">57.1%</div>'
+                          '<div class="detail">of a 58.4 \u00d7 57.1 \u00b5m core</div>', page)
+            self.assertIn("46 of them well taps", page)
+            self.assertIn("35 timing-repair buffers, 26 of them for hold", page)
+            self.assertIn("timing repair also resizes cells", page)
             self.assertIn("<details><summary>Full OpenSTA report</summary>", page)
             # stat.json: 1366.3104 total, 683.1552 of it sequential -- this
             # design splits exactly in half. Routing's 1906.8 contains both, so
@@ -1592,6 +1604,16 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    def test_site_takes_the_clock_from_the_config(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            page = self._site({"DESIGN_NAME": "blinky", "CLOCK_PERIOD": 10.0})
+            self.assertIn('<div class="label">clock</div><div class="value">10.0 ns</div>', page)
+        finally:
+            os.chdir(cwd)
+
     def test_site_puts_the_layout_beside_the_title_and_names_the_author(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
@@ -1607,7 +1629,7 @@ class TestEntrypoint(unittest.TestCase):
             header = page[page.index("<header"):page.index("</header>")]
             self.assertIn('<header class="has-art">', page)
             self.assertIn('<figure class="hero-art" id="layout">', header)
-            self.assertIn("69.5 \u00d7 80.2 \u00b5m &middot; 198 cells &middot; sky130A", header)
+            self.assertIn("69.5 \u00d7 80.2 \u00b5m &middot; 152 cells + 46 taps &middot; sky130A", header)
             self.assertIn('<p class="byline">by <a href="https://github.com/someone">someone</a></p>', header)
             # The layout is the hero now, not a section of its own further down.
             self.assertNotIn('<section id="layout"', page)
@@ -1795,6 +1817,53 @@ Endpoint: PRDATA[4] (output port clocked by CLK)
         # The bar has a key: which colour is the overrun.
         self.assertIn("late by 0.30 ns", page)
         self.assertNotIn('<span class="spare"', page)
+
+    UART_PHYSICAL = {"clock": 11.0, "core": (225.4, 223.04), "taps": 714, "hold_buffers": 315,
+                     "r2r_setup": 2.109539, "r2r_hold": 0.108761, "skew": 0.2862,
+                     "drv": {"slew": 297, "cap": 0, "fanout": 7}, "ir_worst": 0.000524}
+
+    def test_site_reads_the_uart_path_as_a_physical_designer_would(self):
+        # The real apb_uart_sv run: the clock reaches _2086_/CLK at 1.30 ns,
+        # so of the 9.28 ns arrival only 7.97 is logic; it ends at a port.
+        path = self.UART_PATH.replace(
+            "0.1   0.2   0.6 ^ _2086_/CLK", "0.1   0.2   1.300449 ^ _2086_/CLK"
+        ).format(slack="0.924710", verdict="MET")
+        page = entrypoint.site_page.render(
+            "uart", [("die", "236.605 x 247.325 um  (58518.3 um^2)"),
+                     ("setup slack", "+0.92 ns  (0 violations)")], None, [], None, {},
+            timing=("max_ss_100C_1v60", path), physical=self.UART_PHYSICAL)
+        self.assertIn("the clock reaches the start point at 1.30 ns, logic and wires take "
+                      "7.97 ns, and the data arrives 0.92 ns before its 10.20 ns deadline", page)
+        self.assertIn("output delay and clock uncertainty 0.80 ns", page)
+        # The worst path is an I/O path; between flops there is more room.
+        self.assertIn("This is an I/O path, so the output delay the constraints assume", page)
+        self.assertIn("between flip-flops the worst setup slack is +2.11 ns", page)
+        self.assertIn("0 violations; reg-to-reg +2.11 ns", page)
+        self.assertIn('<div class="label">clock</div><div class="value">11.0 ns</div>'
+                      '<div class="detail">91 MHz</div>', page)
+        self.assertIn("Worst clock skew on a setup path: 0.29 ns.", page)
+
+    def test_site_names_the_input_delay_on_a_path_from_a_port(self):
+        path = self.UART_PATH.replace(
+            "Startpoint: _2086_ (rising edge-triggered flip-flop clocked by CLK)",
+            "Startpoint: PADDR[2] (input port clocked by CLK)").replace(
+            "0.1   0.2   0.6 ^ _2086_/CLK (sky130_fd_sc_hd__dfrtp_1)",
+            "0.000000    0.550000 ^ PADDR[2] (in)").format(slack="0.9", verdict="MET")
+        s = entrypoint.site_page.timing_story(path)
+        self.assertEqual((s["start_kind"], s["leaves"]), ("input", 0.55))
+        page = entrypoint.site_page.render("uart", [], None, [], None, {},
+                                           timing=("max_ss_100C_1v60", path))
+        self.assertIn("the input delay puts the data at the input at 0.55 ns", page)
+
+    def test_site_shows_the_electrical_rules_beside_signoff(self):
+        page = entrypoint.site_page.render("uart", [], None, [], None, {},
+                                           signoff=[("LVS", 0)], physical=self.UART_PHYSICAL)
+        self.assertIn('<tr><td>max transition (slew)</td><td class="num">297</td></tr>', page)
+        self.assertIn('<tr><td>max fanout</td><td class="num">7</td></tr>', page)
+        self.assertIn("Static IR drop, worst: 0.52 mV.", page)
+        self.assertIn("Not analysed by this flow: electromigration", page)
+        # The flow does not stop on these, and neither does the chip.
+        self.assertIn('<span class="chip PASS">Signoff clean</span>', page)
 
     def test_site_links_the_schematic_under_the_blocks_instead_of_a_section(self):
         page = entrypoint.site_page.render("uart", [], None, [], "schematic.svg", {},

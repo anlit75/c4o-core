@@ -953,8 +953,9 @@ def report_rows(metrics, path):
     if utilization is not None:
         rows.append(("utilization", f"{utilization * 100:.1f}%"))
 
-    # Not design__instance__count: that one counts fill and tap cells, which say
+    # Not design__instance__count: that one counts fill cells too, which say
     # nothing about the design -- 544 of this run's 787 instances were fill.
+    # Well taps are in it: 46 of this run's 198.
     cells = metrics.get("design__instance__count__stdcell")
     if cells is not None:
         rows.append(("standard cells", str(cells)))
@@ -1107,7 +1108,29 @@ def run_details(metrics_path, metrics):
              for name, count in cell_classes(metrics)]
     if cells:
         details["cells"] = cells
+    details["physical"] = physical_details(metrics)
     return details
+
+def physical_details(metrics):
+    """What a physical designer reads first, for the page; absent keys left out."""
+    get = metrics.get
+    out = {}
+    if get("design__core__bbox"):
+        x0, y0, x1, y1 = (float(v) for v in get("design__core__bbox").split())
+        out["core"] = (x1 - x0, y1 - y0)
+    for key, metric in (("taps", "design__instance__count__class:tap_cell"),
+                        ("hold_buffers", "design__instance__count__hold_buffer"),
+                        ("r2r_setup", "timing__setup_r2r__ws"),
+                        ("r2r_hold", "timing__hold_r2r__ws"),
+                        ("skew", "clock__skew__worst_setup"),
+                        ("ir_worst", "ir__drop__worst")):
+        if get(metric) is not None:
+            out[key] = get(metric)
+    drv = {key: get(f"design__max_{key}_violation__count") for key in ("slew", "cap", "fanout")}
+    drv = {key: value for key, value in drv.items() if value is not None}
+    if drv:
+        out["drv"] = drv
+    return out
 
 def cmd_site(args, config):
     """
@@ -1130,6 +1153,13 @@ def cmd_site(args, config):
         metrics = read_metrics(path)
         rows = report_rows(metrics, path)
         details = run_details(path, metrics)
+        # The clock the constraints ask for, which no metric carries.
+        try:
+            period = float(config_get(config, "CLOCK_PERIOD"))
+        except (TypeError, ValueError):
+            period = None
+        if period and period > 0:
+            details.setdefault("physical", {})["clock"] = period
         # Each has a section of their own on the page. Power only when that
         # section exists: its row is the bare metric, which names no corner
         # and would disagree with the table next to it.
