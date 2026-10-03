@@ -244,7 +244,7 @@ document.querySelectorAll('.zoom').forEach(function (z) {
 
 # Tiny Tapeout's viewer fetches the GDS by URL, so the link can only be built
 # where the page itself has one: on a published page, not one opened from disk.
-# Until then the button stays hidden and a note says where it will work.
+# Until then the button stays hidden.
 GDS_VIEWER = "https://gds-viewer.tinytapeout.com/"
 GDS_VIEWER_JS = """
 document.querySelectorAll('[data-viewer]').forEach(function (s) {
@@ -253,8 +253,6 @@ document.querySelectorAll('[data-viewer]').forEach(function (s) {
   s.querySelector('a').href = '""" + GDS_VIEWER + """?pdk=' +
     encodeURIComponent(s.getAttribute('data-viewer')) + '&model=' + encodeURIComponent(gds);
   s.hidden = false;
-  var off = s.parentNode.querySelector('[data-viewer-off]');
-  if (off) off.hidden = true;
 });
 """
 
@@ -820,9 +818,6 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         # to open a GDS, but it is the chip itself and should read as a button.
         size = f" &middot; {human_size(gds_size)}" if gds_size else ""
         actions.append(f'<a class="btn" href="{esc(gds_name)}" download>GDS{size}</a>')
-    if gds_pdk:
-        actions.append('<span class="hint" data-viewer-off>The 3D view, in Tiny Tapeout\'s '
-                       'viewer, opens from the published page.</span>')
     actions = f'<p class="actions">{"".join(actions)}</p>' if actions else ""
 
     # Link previews (chat apps, LinkedIn) need an absolute image URL; it is

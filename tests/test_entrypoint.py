@@ -1491,6 +1491,8 @@ class TestEntrypoint(unittest.TestCase):
             # Hidden until the script finds the page has a URL to hand over.
             self.assertIn('data-viewer="sky130A" data-gds="blinky.gds" hidden', page)
             self.assertIn("gds-viewer.tinytapeout.com", page)
+            # No note about where the 3D view works: on Pages the button is there.
+            self.assertNotIn("opens from the published page", page)
         finally:
             os.chdir(cwd)
 
