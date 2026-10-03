@@ -836,6 +836,22 @@ def signoff_row(metrics):
 # LibreLane 3.0.14 run, not inferred from the step's f-string.
 RENDER_GLOBS = ["final/render/*.png", "*-klayout-render/*.png"]
 
+def newest_step(run_dir, pattern):
+    """
+    The newest match of a pattern that starts with a step directory, or None.
+
+    LibreLane numbers the step directories, and a resumed run adds its steps
+    after the ones already there. So 119-openroad-stapostpnr is newer than
+    55-openroad-stapostpnr -- and sorts before it as a string, which is how
+    the page once showed the timing of the run before the resume.
+    """
+    def ordinal(path):
+        head = os.path.relpath(path, run_dir).split("-", 1)[0]
+        return int(head) if head.isdigit() else -1
+
+    found = sorted(glob.glob(os.path.join(run_dir, pattern)))
+    return max(found, key=ordinal) if found else None
+
 def find_render(metrics_path):
     """
     The PNG KLayout.Render drew of the finished layout.
@@ -862,12 +878,12 @@ def find_render(metrics_path):
 
     run_dir = os.path.dirname(final_dir)
     for pattern in RENDER_GLOBS:
-        found = sorted(glob.glob(os.path.join(run_dir, pattern)))
+        found = newest_step(run_dir, pattern)
         if not found:
             continue
         # Printed for a human to open, so spell it the way they would type it.
-        relative = os.path.relpath(found[0])
-        return found[0] if relative.startswith(os.pardir) else relative
+        relative = os.path.relpath(found)
+        return found if relative.startswith(os.pardir) else relative
     return None
 
 def find_gds(metrics_path):
@@ -894,8 +910,7 @@ def sta_step(metrics_path):
     final_dir = os.path.dirname(os.path.abspath(metrics_path))
     if os.path.basename(final_dir) != "final":
         return None
-    found = sorted(glob.glob(os.path.join(os.path.dirname(final_dir), "*-openroad-stapostpnr")))
-    return found[-1] if found else None
+    return newest_step(os.path.dirname(final_dir), "*-openroad-stapostpnr")
 
 def default_power(metrics_path):
     """(DEFAULT_CORNER, power_groups rows) from that corner's power.rpt, or None."""
@@ -1065,10 +1080,6 @@ def run_details(metrics_path, metrics):
         return details
     run_dir = os.path.dirname(final_dir)
 
-    def newest(pattern):
-        found = sorted(glob.glob(os.path.join(run_dir, pattern)))
-        return found[-1] if found else None
-
     def read(path):
         with open(path) as f:
             return f.read()
@@ -1087,7 +1098,7 @@ def run_details(metrics_path, metrics):
     if power:
         details["power"] = power
 
-    stat = newest("*-yosys-synthesis/reports/stat.json")
+    stat = newest_step(run_dir, "*-yosys-synthesis/reports/stat.json")
     design = json.loads(read(stat)).get("design", {}) if stat else {}
     # Two stages, not three peers: what synthesis produced (flip-flops and
     # logic), and the standard-cell total after routing, which contains them.
