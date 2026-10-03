@@ -761,6 +761,45 @@ class TestEntrypoint(unittest.TestCase):
 
         self.assertEqual(found, os.path.join(step, "blinky.png"))
 
+    def test_sta_step_takes_the_resumed_step_not_the_one_that_sorts_last(self):
+        # Directory names from a real LibreLane 3.0.14 run resumed from
+        # floorplan: the first pass left 55-, the resume added 119-. As
+        # strings "55-" sorts after "119-".
+        run = os.path.join(self.test_dir, "runs", "blinky_run")
+        old = os.path.join(run, "55-openroad-stapostpnr")
+        new = os.path.join(run, "119-openroad-stapostpnr")
+        for d in (old, new, os.path.join(run, "final")):
+            os.makedirs(d)
+
+        found = entrypoint.sta_step(os.path.join(run, "final", "metrics.json"))
+
+        self.assertEqual(found, new)
+
+    def test_newest_step_reads_the_ordinal_as_a_number(self):
+        # Two-digit against three-digit is where a string sort goes wrong, and
+        # the file under the step is what the callers ask for.
+        run = os.path.join(self.test_dir, "runs", "blinky_run")
+        for step in ("82-yosys-synthesis", "158-yosys-synthesis"):
+            os.makedirs(os.path.join(run, step, "reports"))
+            open(os.path.join(run, step, "reports", "stat.json"), "w").close()
+
+        found = entrypoint.newest_step(run, "*-yosys-synthesis/reports/stat.json")
+
+        self.assertEqual(
+            found, os.path.join(run, "158-yosys-synthesis", "reports", "stat.json"))
+        self.assertIsNone(entrypoint.newest_step(run, "*-openroad-cts"))
+
+    def test_find_render_falls_back_to_the_newest_step_directory(self):
+        run = os.path.join(self.test_dir, "runs", "blinky_run")
+        os.makedirs(os.path.join(run, "final"))
+        for step in ("59-klayout-render", "79-klayout-render"):
+            os.makedirs(os.path.join(run, step))
+            open(os.path.join(run, step, "blinky.png"), "w").close()
+
+        found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+
+        self.assertEqual(found, os.path.join(run, "79-klayout-render", "blinky.png"))
+
     def test_find_render_ignores_a_png_some_other_step_wrote(self):
         # Globbing the whole run for *.png would report an IR-drop heatmap, or
         # anything else a step happens to draw, as the layout.
