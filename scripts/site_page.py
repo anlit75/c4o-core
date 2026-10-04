@@ -270,6 +270,37 @@ def makeup(area, cells, instances=None):
                           for g, colour, name in groups if sums[g]]))
     return out
 
+def drive_table(drive):
+    """
+    Instances by drive strength, after synthesis and after routing, as a table
+    with a line reading what the flow changed. A stage with no source is None in
+    every row and has no column.
+
+    drive -- (strength, after synthesis, after routing) per strength, smallest first
+    """
+    if not drive:
+        return ""
+    stages = [(i, name) for i, name in ((1, "after synthesis"), (2, "after routing"))
+              if drive[0][i] is not None]
+    head = "".join(f'<th class="num">{name}</th>' for _, name in stages)
+    body = "".join(
+        f"<tr><td>X{n}</td>" + "".join(f'<td class="num">{row[i]:,}</td>' for i, _ in stages) + "</tr>"
+        for row in drive for n in (row[0],))
+    total = "".join(f'<td class="num">{sum(row[i] for row in drive):,}</td>' for i, _ in stages)
+    out = ("<h3>Drive strength</h3>"
+           "<p>Instances by the <code>_N</code> that ends their library name, as in <code>dfrtp_2</code>. "
+           "Well taps, decap, fill and antenna diodes have no drive strength and are left out.</p>"
+           f'<div class="scroll"><table class="drive"><tr><th>drive strength</th>{head}</tr>'
+           f'{body}<tr class="total"><td>Total</td>{total}</tr></table></div>')
+    if len(stages) == 2:
+        changed = sorted(((r[2] - r[1], r[0]) for r in drive if r[2] != r[1]),
+                         key=lambda c: (-abs(c[0]), c[1]))
+        words = [f"{'added' if d > 0 else 'removed'} {abs(d):,} at X{n}" for d, n in changed]
+        sentence = " and ".join(filter(None, [", ".join(words[:-1]), words[-1:] and words[-1]]))
+        out += (f"<p>Place and route {sentence}.</p>" if words
+                else "<p>Place and route did not change the mix.</p>")
+    return out
+
 def human_size(n):
     """Bytes as a short size: 6 B, 12.3 kB, 3.8 MB."""
     for unit in ("B", "kB", "MB"):
@@ -465,7 +496,7 @@ def signoff_section(signoff, physical):
 
 def render(design, numbers, layout, cocotb_runs, env,
            signoff=(), area=None, power=None, gds=None,
-           description=None, cells=(), physical=None):
+           description=None, cells=(), physical=None, drive=()):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -488,6 +519,8 @@ def render(design, numbers, layout, cocotb_runs, env,
                     set in config.yaml)}, corner, synthesized (instances),
                     ir_worst (V)
     cells        -- (class, count, 'synthesis' | 'flow' | 'other') per instance class
+    drive        -- (drive strength, after synthesis, after routing) per strength,
+                    a stage with no source None; physical may also carry library
 
     The page is laid out to be shared, as a portfolio piece: the layout first,
     then the verdicts (tests, timing and its constraints), then what the chip
@@ -546,15 +579,22 @@ def render(design, numbers, layout, cocotb_runs, env,
         add("timing", "Timing", timing)
 
     cards = "".join(kpi(label, value) for label, value in summary_rows(numbers, physical))
-    if area or cells or cards:
+    if area or cells or cards or drive:
         hold = physical.get("hold_buffers")
         if hold:
             # Most of them, in a design with a fast-corner hold problem.
             cells = [(f"{name}, {hold:,} of them for hold" if name == "timing-repair buffers" else name, n, k)
                      for name, n, k in cells]
-        add("area", "Area and instances", "<h2>Area and instances</h2>"
+        library = physical.get("library")
+        # Single-VT is a fact of the sky130 libraries, one device pair each.
+        # Another PDK's library is named and nothing more is claimed.
+        library_line = (f"<p>Standard cell library <code>{esc(library)}</code>"
+                        + (", single threshold voltage" if library.startswith("sky130_fd_sc_") else "")
+                        + ".</p>" if library else "")
+        add("area", "Area and instances", "<h2>Area and instances</h2>" + library_line
             + (f'<div class="kpis">{cards}</div>' if cards else "")
-            + makeup(area or {}, cells, physical.get("synthesized")))
+            + makeup(area or {}, cells, physical.get("synthesized"))
+            + drive_table(drive))
 
     if power:
         corner, rows = power

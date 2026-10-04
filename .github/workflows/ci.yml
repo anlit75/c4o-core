@@ -904,6 +904,38 @@ jobs:
             fi
           done
           grep -o '<tr><td>clock [a-z]*</td><td>[^<]*</td><td>[^<]*' "$page" | sed 's/<[^>]*>/ /g'
+          # Drive strength comes from the routed netlist in final/nl and from
+          # synthesis's stat.json. Each routed instance is a logic cell, a well
+          # tap or an antenna diode here (fill is not in the page's count), so
+          # the table's routed total is the page's routed count less the taps
+          # and diodes. A netlist read wrongly breaks that sum.
+          python3 - "$page" <<'PY'
+          import re, sys
+          page = open(sys.argv[1]).read()
+          num = lambda text: int(text.replace(",", ""))
+          table = re.search(r'<table class="drive">(.*?)</table>', page, re.S)
+          if not table:
+              sys.exit("::error::The page has no drive strength table.")
+          rows = re.findall(r'<tr><td>X(\d+)</td><td class="num">([\d,]+)</td><td class="num">([\d,]+)</td></tr>',
+                            table.group(1))
+          if not rows:
+              sys.exit("::error::The drive strength table has no row with both stages.")
+          heading = re.search(r"<h3>Instances: ([\d,]+) after synthesis, ([\d,]+) after routing</h3>", page)
+          if not heading:
+              sys.exit("::error::The page has no instance count for both stages.")
+          synthesized, routed = num(heading[1]), num(heading[2])
+          taps = re.search(r"([\d,]+) well taps", page)
+          diodes = re.search(r"([\d,]+) antenna cell", page)
+          physical = (num(taps[1]) if taps else 0) + (num(diodes[1]) if diodes else 0)
+          got = (sum(num(r[1]) for r in rows), sum(num(r[2]) for r in rows))
+          want = (synthesized, routed - physical)
+          print("drive strength:", ", ".join(f"X{r[0]} {r[1]}->{r[2]}" for r in rows),
+                "| totals", got, "| instances less taps and diodes", want)
+          if got != want:
+              sys.exit(f"::error::Drive strength totals {got} are not the instance counts {want}.")
+          if "<code>sky130_fd_sc_hd</code>, single threshold voltage" not in page:
+              sys.exit("::error::The page does not name the library from the run's config.json.")
+          PY
           # Not asserted: whether the real run wrote ir__drop__worst. The
           # line is printed so the log says what a real run gives.
           grep -o 'Static IR drop[^<]*' "$page" || echo "the page has no IR drop line: the run reported no ir__drop__worst"
