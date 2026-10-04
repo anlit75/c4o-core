@@ -39,7 +39,7 @@ These names stay the same in all 2.x releases.
 |---|---|
 | `C4O_IMAGE`, `LIBRELANE_IMAGE` | The two images. You set them. |
 | `C4O_CMD` | Runs a c4o-core command: `$(C4O_CMD) lint`. |
-| `C4O_COCOTB` | The same, with `SEED` passed on: `$(C4O_COCOTB) cocotb --netlist`. |
+| `C4O_COCOTB` | The same, with `SEED` and `WAVES` passed on: `$(C4O_COCOTB) cocotb --netlist`. |
 | `$(call c4o_tool,<program>)` | Runs a different program of the image: `$(call c4o_tool,sv2v) src/a.sv`. |
 | `DOCKER_RUN` | `docker run` with the repository mounted at `/workspace` and your user id. |
 | `C4O_IN_CONTAINER` | Not empty when `make` runs inside the image. |
@@ -47,6 +47,7 @@ These names stay the same in all 2.x releases.
 | `PDK_ROOT` | Where the PDK is on the host. Default: `pdks/` in the repository. |
 | `LIBRELANE_ARGS` | More flags for LibreLane. With `--from`, `-F` or `--only`, `make gds` keeps the previous run. |
 | `SEED` | The seed for `make cocotb` and for `make gatesim` with Python tests. |
+| `WAVES` | `make cocotb WAVES=1` writes `build/<DESIGN_NAME>.vcd`. `make gatesim` passes it on and writes no VCD. |
 
 `C4O_CMD`, `C4O_COCOTB` and `c4o_tool` call the program directly inside the image, and start a container on a host. You write the target one time and it works in the two places.
 

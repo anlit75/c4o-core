@@ -98,26 +98,7 @@ h3 { margin: 16px 0 0; font-size: 16px; }
 .btn:hover, .actions a[download]:hover { text-decoration: none; border-color: var(--accent); }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .hint { color: var(--muted); font-size: 13px; }
-.tbar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin: 4px 0 8px;
-        background: var(--line); }
-.tbar span { display: block; height: 100%; }
-.tbar .launch { background: var(--accent2); }
-.tbar .used { background: var(--accent); } .tbar .spare { background: var(--pass); }
-.tbar .late { background: var(--fail); } .tbar .reserved { background: var(--muted); }
-details { border: 1px solid var(--line); border-radius: 8px; }
-summary { cursor: pointer; padding: 8px 12px; font-weight: 600; }
-details .scroll { border-top: 1px solid var(--line); padding: 12px; }
-pre { margin: 0; font-size: 13px; line-height: 1.4; }
 img { max-width: 100%; height: auto; background: #fff; }
-.zoom { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: 4px 0 0; }
-.zoom-tools { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--line);
-              align-items: center; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
-.zoom-tools span { margin-left: auto; font-size: 12px; }
-.zoom-dl { margin-left: 12px; font-size: 13px; font-weight: 500; white-space: nowrap; }
-.zoom-tools button { font: inherit; min-width: 32px; padding: 2px 8px; color: var(--fg); cursor: pointer;
-                     background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
-.zoom-view { overflow: hidden; background: #fff; cursor: grab; }
-.zoom-view img { display: block; border: 0; transform-origin: 0 0; user-select: none; }
 footer { color: var(--muted); font-size: 14px; }
 footer.wrap { padding-top: 8px; padding-bottom: 48px; }
 .lede { margin: 0 0 8px; font-size: 18px; max-width: 46em; }
@@ -136,18 +117,14 @@ header.has-art .hero { grid-template-columns: minmax(0, 1fr) minmax(280px, 400px
                        font-variant-numeric: tabular-nums; }
 nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
 @media (prefers-color-scheme: dark) {
-  .zoom-view, .hero-art a { filter: brightness(.88); }
-  .zoom { border-color: #ffffff1f; }
+  .hero-art a { filter: brightness(.88); }
 }
 @media (max-width: 760px) {
   header.has-art .hero { grid-template-columns: 1fr; gap: 20px; }
   .hero-art { max-width: 320px; margin-inline: auto; }
 }
-details > .zoom { border: 0; border-top: 1px solid var(--line); border-radius: 0; margin: 0; }
 @media (max-width: 600px) { section { padding: 16px; }
   .kpi { flex-basis: 140px; padding: 12px; } .kpi .value { font-size: 20px; }
-  .zoom-tools span { display: none; }
-  .zoom-dl { margin-left: auto; }
   table.power td:nth-child(2), table.power th:nth-child(2),
   table.power td:nth-child(3), table.power th:nth-child(3),
   table.power td:nth-child(4), table.power th:nth-child(4) { display: none; }
@@ -178,73 +155,6 @@ def cocotb_cases(path):
         cases.append((case.get("name", "?"), verdict, float(case.get("sim_time_ns", 0))))
     return seed, cases
 
-def zoomable(target, alt):
-    """
-    A diagram the reader can zoom and pan in place (ZOOM_JS), which still
-    opens the file itself on a click -- where a block diagram's own links work.
-    Without JavaScript it is the plain link it always was.
-    """
-    esc = html.escape
-    return ('<div class="zoom"><div class="zoom-tools">'
-            '<button type="button" data-zoom="in" aria-label="Zoom in">+</button>'
-            '<button type="button" data-zoom="out" aria-label="Zoom out">&minus;</button>'
-            '<button type="button" data-zoom="reset">reset</button>'
-            '<span>Ctrl + wheel or pinch to zoom, drag to pan, click to open</span>'
-            # The file itself, for a slide or a report: the page is not the
-            # only place a diagram gets shown.
-            f'<a class="zoom-dl" href="{esc(target)}" download>Download '
-            f'{esc(os.path.splitext(target)[1].lstrip(".").upper())}</a></div>'
-            f'<div class="zoom-view"><a href="{esc(target)}"><img src="{esc(target)}" '
-            f'alt="{esc(alt)}" draggable="false"></a></div></div>')
-
-# Plain wheel scrolling is left to the page: a diagram that swallowed it would
-# trap anyone scrolling past. Ctrl + wheel is also what a trackpad pinch sends.
-ZOOM_JS = """
-document.querySelectorAll('.zoom').forEach(function (z) {
-  var view = z.querySelector('.zoom-view'), img = view.querySelector('img'),
-      link = view.querySelector('a'), s = 1, x = 0, y = 0, drag = null, moved = false;
-  function apply() {
-    if (s <= 1) { s = 1; x = 0; y = 0; }
-    img.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
-    view.style.touchAction = s > 1 ? 'none' : '';
-  }
-  function zoomAt(f, cx, cy) {
-    var n = Math.min(20, Math.max(1, s * f));
-    x = cx - (cx - x) * n / s; y = cy - (cy - y) * n / s; s = n; apply();
-  }
-  function centre(f) { zoomAt(f, view.clientWidth / 2, view.clientHeight / 2); }
-  view.addEventListener('wheel', function (e) {
-    if (!e.ctrlKey && !e.metaKey) return;
-    e.preventDefault();
-    var r = view.getBoundingClientRect();
-    zoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX - r.left, e.clientY - r.top);
-  }, { passive: false });
-  view.addEventListener('pointerdown', function (e) {
-    if (e.pointerType === 'touch' && s <= 1) return;  /* let the page scroll */
-    drag = { x: e.clientX - x, y: e.clientY - y }; moved = false;
-  });
-  view.addEventListener('pointermove', function (e) {
-    if (!drag) return;
-    var nx = e.clientX - drag.x, ny = e.clientY - drag.y;
-    if (Math.abs(nx - x) + Math.abs(ny - y) > 3) moved = true;
-    x = nx; y = ny; if (s > 1) apply();
-  });
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
-    view.addEventListener(t, function () { drag = null; });
-  });
-  link.addEventListener('click', function (e) { if (moved) e.preventDefault(); });
-  z.querySelectorAll('[data-zoom]').forEach(function (b) {
-    b.addEventListener('click', function () {
-      var k = b.getAttribute('data-zoom');
-      if (k === 'in') centre(1.5); else if (k === 'out') centre(1 / 1.5); else { s = 1; apply(); }
-    });
-  });
-});
-"""
-
-# Tiny Tapeout's viewer fetches the GDS by URL, so the link can only be built
-# where the page itself has one: on a published page, not one opened from disk.
-# Until then the button stays hidden.
 GDS_VIEWER = "https://gds-viewer.tinytapeout.com/"
 GDS_VIEWER_JS = """
 document.querySelectorAll('[data-viewer]').forEach(function (s) {
@@ -272,21 +182,6 @@ def power_groups(text):
             except ValueError:
                 continue
     return rows
-
-def first_path(text):
-    """
-    The first path of an OpenSTA `report_checks`, from its Startpoint line to
-    its slack line inclusive, or None. report_checks sorts by slack, so the
-    first path is the worst one in that file.
-    """
-    lines = text.splitlines()
-    start = next((i for i, line in enumerate(lines) if line.startswith("Startpoint:")), None)
-    if start is None:
-        return None
-    for end in range(start, len(lines)):
-        if lines[end].rstrip().endswith(("slack (MET)", "slack (VIOLATED)")):
-            return "\n".join(lines[start:end + 1])
-    return None
 
 def kpi(label, value):
     """
@@ -327,13 +222,15 @@ def legend(items):
     return ('<ul class="legend">' + "".join(
         f'<li style="--c: var(--{c})">{text}</li>' for c, text in items) + "</ul>")
 
-def makeup(area, cells):
+def makeup(area, cells, instances=None):
     """
-    What the chip is made of, in area and in cells. Synthesis's flip-flops and
-    logic are one stage; the standard-cell total after routing contains them,
-    so the part the flow added is the difference. One bar per measure, split
-    by where each part came from -- not three bars side by side, which read as
-    peers when one of them contains the other two.
+    What the chip is made of, in area and in instances. Synthesis's flip-flops
+    and logic are one stage; the instance total after routing contains
+    them, so the part the flow added is the difference. One bar per measure,
+    split by where each part came from -- not three bars side by side, which
+    read as peers when one of them contains the other two.
+
+    instances -- the count after synthesis, when stat.json gave one
     """
     esc = html.escape
     um2 = lambda v: f"{v:,.1f} &micro;m&sup2;"
@@ -346,13 +243,13 @@ def makeup(area, cells):
         if routed is not None and routed >= synth:
             parts.append(("flow", routed - synth))
             items.append(("muted", f"added by place and route {um2(routed - synth)} "
-                          '<span class="of">(the difference: timing repair also resizes cells)</span>'))
-            out += (f"<p>Synthesis produced {um2(synth)} of standard cells; place and route grew it "
+                          '<span class="of">(the difference: timing repair also resizes instances)</span>'))
+            out += (f"<p>Synthesis produced {um2(synth)} of instances; place and route grew it "
                     f"{(routed - synth) / synth:.0%} to {um2(routed)}, with the clock tree, "
                     "timing buffers and well taps it added.</p>")
-        out += stack(parts, "Standard-cell area by origin") + legend(items)
+        out += stack(parts, "Instance area by origin") + legend(items)
     elif routed is not None:
-        out += f"<p>Standard cells after routing: {um2(routed)}.</p>"
+        out += f"<p>Instance area after routing: {um2(routed)}.</p>"
     if area.get("macros"):
         out += f"<p>Macros (memories, hard blocks): {um2(area['macros'])}.</p>"
 
@@ -360,8 +257,13 @@ def makeup(area, cells):
         groups = [("synthesis", "accent", "from synthesis"), ("flow", "muted", "added by the flow"),
                   ("other", "skip", "other")]
         sums = {g: sum(n for _, n, k in cells if k == g) for g, _, _ in groups}
-        out += (f"<h3>Cells: {sum(sums.values()):,}</h3>"
-                + stack([(g, sums[g]) for g, _, _ in groups], "Cells by origin")
+        total = sum(sums.values())
+        head = (f"{instances:,} after synthesis, {total:,} after routing" if instances is not None
+                else f"{total:,} after routing")
+        out += (f"<h3>Instances: {head}</h3>"
+                "<p>Placed instances, by the class LibreLane files each under. "
+                "Fill is not counted.</p>"
+                + stack([(g, sums[g]) for g, _, _ in groups], "Instances by origin")
                 + legend([(colour, f"{name} {sums[g]:,} " + '<span class="of">('
                            + ", ".join(f"{n:,} {esc(cls)}" for cls, n, k in cells if k == g)
                            + ")</span>")
@@ -375,12 +277,12 @@ def human_size(n):
             return f"{n:g} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1000
 
-def hero_art(layout, design, numbers, pdk, taps=None):
+def hero_art(layout, design, numbers, pdk):
     """
     The layout as the page's picture, framed like a print beside the title.
     The render is drawn on white, so it gets a white mount in either theme.
     It opens the full image on a click; at this size it is a texture to zoom
-    into, which the full image does better than an in-page zoom.
+    into, which the full image does better.
     """
     if not layout:
         return ""
@@ -390,16 +292,16 @@ def hero_art(layout, design, numbers, pdk, taps=None):
     die = re.match(r"([\d.]+) x ([\d.]+) um", rows.get("die", ""))
     if die:
         caption.append(f"{float(die[1]):,.1f} \u00d7 {float(die[2]):,.1f} \u00b5m")
-    if str(rows.get("standard cells", "")).isdigit():
-        cells, taps = int(rows["standard cells"]), taps or 0
-        caption.append(f"{cells - taps:,} cells + {taps:,} taps" if taps else f"{cells:,} cells")
+    # The headline instance count, the first number of the row.
+    count = re.match(r"\d+", rows.get("instances", ""))
+    if count:
+        caption.append(f"{int(count[0]):,} instances")
     if pdk:
         caption.append(esc(pdk))
     caption = (f"<figcaption>{' &middot; '.join(caption)}</figcaption>" if caption else "")
     return (f'<figure class="hero-art" id="layout"><a href="{esc(layout)}">'
             f'<img src="{esc(layout)}" alt="Layout of {esc(design)}"></a>{caption}</figure>')
 
-AUTO_NAME = re.compile(r"_\d+_$")
 CORNER = re.compile(r"(min|nom|max)_(ss|tt|ff|sf|fs)_(n?)(\d+)C_(\d+)v(\d+)$")
 PROCESS = {"ss": "slow", "tt": "typical", "ff": "fast", "sf": "slow-fast", "fs": "fast-slow"}
 RC = {"min": "minimum", "nom": "typical", "max": "maximum"}
@@ -413,119 +315,30 @@ def corner_words(corner):
     return (f"{RC[rc]} wire RC, {PROCESS[process]} transistors, {'-' if minus else ''}{temp} &deg;C, "
             f"{volts}.{frac} V")
 
-def timing_story(path):
-    """
-    What a reader wants from an OpenSTA path report, pulled out of it: where
-    the path starts and ends, the clock period, and when the data arrives
-    against when it must. None when any of it cannot be found, so the page
-    falls back to the report as printed.
-    """
-    lines = path.splitlines()
-    head = {}
-    for line in lines:
-        for key in ("Startpoint", "Endpoint"):
-            if line.startswith(key + ":"):
-                name, _, kind = line.split(":", 1)[1].strip().partition(" ")
-                head[key] = (name, kind)
-    number = lambda pattern: next((float(m.group(1)) for line in lines
-                                   for m in [re.search(pattern, line)] if m), None)
-    edges = [float(m.group(1)) for line in lines
-             for m in [re.match(r"\s*\S+\s+(-?[\d.]+)\s+clock \S+ \((?:rise|fall) edge\)", line)] if m]
-    arrival = number(r"^\s*(-?[\d.]+)\s+data arrival time")
-    required = number(r"^\s*(-?[\d.]+)\s+data required time")
-    slack = number(r"^\s*(-?[\d.]+)\s+slack")
-    # What the capture side holds back after its clock edge: uncertainty,
-    # the flop's setup time or the port's output delay. Their sum is what
-    # separates the deadline from the moment the capture clock arrives.
-    capture = next((i for i, line in enumerate(lines)
-                    if re.match(r"\s*\S+\s+-?[\d.]+\s+clock \S+ \((?:rise|fall) edge\)", line)
-                    and i > 0 and any("data arrival time" in l for l in lines[:i])), None)
-    held = 0.0
-    if capture is not None:
-        for line in lines[capture + 1:]:
-            if "data required time" in line:
-                break
-            m = re.match(r"^\s*(-[\d.]+)\s+-?[\d.]+\s+[a-z]", line)
-            if m:
-                held -= float(m.group(1))
-    # A launch edge off zero is a half-cycle or multicycle path: the gap to
-    # the capture edge is not the clock period, so do not call it one.
-    if len(head) < 2 or len(edges) < 2 or edges[0] != 0 or None in (arrival, required, slack):
-        return None
-
-    def net_after(cell):
-        # An instance like _2086_ says nothing; the net it drives usually does.
-        hits = [i for i, line in enumerate(lines) if f" {cell}/" in line]
-        nets = [l.split()[0] for l in lines[hits[-1]:] if l.rstrip().endswith("(net)")] if hits else []
-        return nets[0] if nets and not AUTO_NAME.search(nets[0]) else cell
-
-    def net_before(cell):
-        hits = [i for i, line in enumerate(lines) if f" {cell}/" in line]
-        nets = [l.split()[0] for l in lines[:hits[0]] if l.rstrip().endswith("(net)")] if hits else []
-        return nets[-1] if nets and not AUTO_NAME.search(nets[-1]) else cell
-
-    def kind(text):
-        return ("input" if "input port" in text else "output" if "output port" in text
-                else "flip-flop" if "flip-flop" in text else "latch" if "latch" in text else "")
-
-    (start, start_kind), (end, end_kind) = head["Startpoint"], head["Endpoint"]
-    # When the data leaves the start point: the launch clock's arrival at a
-    # flip-flop's clock pin, or the input delay at a port. Arrival time counts
-    # from the clock edge, so without this the clock tree reads as logic.
-    leaves = next((float(m.group(1)) for line in lines
-                   for m in [re.search(r"(-?[\d.]+)\s+[\^v]\s+" + re.escape(start) + r"(?:/|\s)", line)]
-                   if m), 0.0)
-    return {
-        "leaves": leaves, "held": held,
-        "start": net_after(start) if AUTO_NAME.search(start) else start,
-        "start_kind": kind(start_kind),
-        "end": net_before(end) if AUTO_NAME.search(end) else end,
-        "end_kind": kind(end_kind),
-        "period": edges[1], "arrival": arrival, "required": required, "slack": slack,
-    }
-
 def summary_rows(numbers, physical):
     """
-    `report`'s rows, with what a physical designer asks next folded into
-    their details: the clock, the core utilization is a share of, the taps in
-    the cell count, and the reg-to-reg slack beside the worst one.
+    `report`'s rows for the cards of the area section, with what a physical
+    designer asks next folded into their details: the core the utilization is
+    a share of, and the well taps among the instances. The slacks are left
+    out, since the timing section gives them.
     """
     rows = []
     for label, value in numbers:
+        if label in ("setup slack", "hold slack"):
+            continue
         if label == "utilization" and physical.get("core"):
             w, h = physical["core"]
             label, value = "core utilization", f"{value}  (of a {w:,.1f} \u00d7 {h:,.1f} \u00b5m core)"
-        elif label == "standard cells" and physical.get("taps") and value.isdigit():
-            value = f"{value}  ({physical['taps']:,} of them well taps)"
-        elif label in ("setup slack", "hold slack"):
-            r2r = physical.get("r2r_" + label.split()[0])
-            if r2r is not None:
-                main, _, detail = value.partition("  (")
-                value = f"{main}  ({detail.rstrip(')')}; reg-to-reg {r2r:+.2f} ns)"
+        elif label == "instances":
+            m = re.fullmatch(r"(\d+) after synthesis, (\d+) after routing", value)
+            if m:
+                taps = physical.get("taps")
+                value = (f"{m[1]}  (after synthesis; {int(m[2]):,} after routing"
+                         + (f", {taps:,} of them well taps" if taps else "") + ")")
+            elif physical.get("taps") and value.endswith(" after routing"):
+                value += f"  ({physical['taps']:,} of them well taps)"
         rows.append((label, value))
-        if label == "die" and physical.get("clock"):
-            period = physical["clock"]
-            rows.append(("clock", f"{period:.1f} ns  ({1000 / period:.0f} MHz)"))
     return rows
-
-def electrical(physical):
-    """The flow's electrical checks beside physical verification, and what it does not check."""
-    drv, ir = physical.get("drv") or {}, physical.get("ir_worst")
-    if not drv and ir is None:
-        return ""
-    names = {"slew": "max transition (slew)", "cap": "max capacitance", "fanout": "max fanout"}
-    out = ""
-    if drv:
-        out += ("<h3>Electrical rules</h3><p>Limits from the cell library. The flow reports "
-                "violations here without stopping on them, so a layout can pass the checks above "
-                "and still have some.</p>"
-                '<div class="scroll"><table><tr><th>rule</th><th class="num">violations</th></tr>'
-                + "".join(f'<tr><td>{names[k]}</td><td class="num">{drv[k]:,}</td></tr>'
-                          for k in ("slew", "cap", "fanout") if k in drv) + "</table></div>")
-    if ir is not None:
-        out += f"<p>Static IR drop, worst: {ir * 1000:.2f} mV.</p>"
-    return out + ('<p class="hint">Not analysed by this flow: electromigration, signal '
-                  "integrity (crosstalk) and dynamic IR drop.</p>")
 
 def run_name(title):
     """"cocotb, RTL" -> "RTL", "cocotb, gate level" -> "gates": a column head."""
@@ -559,8 +372,99 @@ def merged_tests(cocotb_runs):
                 + "".join(cell(vs.get(name)) for vs in verdicts) + "</tr>"
                 for name in names) + "</table></div>")
 
-def render(design, numbers, layout, cocotb_runs, schematic, env,
-           signoff=(), timing=None, area=None, power=None, blocks=None, wave=None, gds=None,
+def corner_volts(corner):
+    """'nom_tt_025C_1v80' -> 1.8, or None. The supply the corner's liberty files are for."""
+    m = CORNER.match(corner or "")
+    return float(f"{m[5]}.{m[6]}") if m else None
+
+def significant(value):
+    """Two significant digits below 100, whole numbers above: 12, 0.67, 0.0029, 340."""
+    return f"{value:.2g}" if abs(value) < 100 else f"{value:.0f}"
+
+def timing_section(physical):
+    """
+    Whether timing is met, then the constraints that verdict depends on. Slack
+    is the worst over every corner the flow analysed, and each constraint is
+    labelled with where its value came from: config.yaml, or the flow's default.
+    """
+    checks = [(name, physical[name]) for name in ("setup", "hold") if name in physical]
+    if not checks:
+        return ""
+    met = all(ws >= 0 for _, (ws, _) in checks)
+    count = lambda n: "?" if n is None else f"{n:,}"
+    def row(name, ws, vio):
+        r2r = physical.get("r2r_" + name)
+        return (f'<tr><td>{name}</td><td class="num {"PASS" if ws >= 0 else "FAIL"}">{ws:+.2f} ns</td>'
+                f'<td class="num">{count(vio)}</td>'
+                f'<td class="num">{f"{r2r:+.2f} ns" if r2r is not None else "&mdash;"}</td></tr>')
+    rows = "".join(row(name, ws, vio) for name, (ws, vio) in checks)
+    out = (f'<h2>Timing</h2><p class="{"PASS" if met else "FAIL"}"><strong>'
+           f'{"Timing is met: no setup or hold slack is negative." if met else "Timing is not met."}'
+           "</strong></p>"
+           '<p>Worst slack over every corner the flow analysed, after routing. Reg-to-reg is the '
+           "worst slack between flip-flops, without the I/O paths.</p>"
+           '<div class="scroll"><table><tr><th>check</th><th class="num">worst slack</th>'
+           '<th class="num">violations</th><th class="num">reg-to-reg</th></tr>'
+           + rows + "</table></div>")
+
+    constraints = physical.get("constraints") or {}
+    if constraints:
+        period = constraints.get("clock_period", (None,))[0]
+        value = {
+            "clock_period": lambda v: f"{v:g} ns" + (f" ({1000 / v:.0f} MHz)" if v > 0 else ""),
+            "uncertainty": lambda v: f"{v:g} ns",
+            "transition": lambda v: f"{v:g} ns",
+            "derate": lambda v: f"{v:g}%",
+            "io_delay": lambda v: f"{v:g}% of the clock period"
+                                  + (f" ({v * period / 100:.3g} ns)" if period else ""),
+        }
+        source = {True: "set in config.yaml", False: "flow default"}
+        label = {"clock_period": "clock period", "uncertainty": "clock uncertainty",
+                 "transition": "clock transition", "derate": "timing derate",
+                 "io_delay": "input and output delay"}
+        out += ("<h3>Constraints the run used</h3><p>Read from the post-route timing step of the run. "
+                "The slack above holds for these values only.</p>"
+                '<div class="scroll"><table><tr><th>constraint</th><th>value</th><th>source</th></tr>'
+                + "".join(f"<tr><td>{label[name]}</td><td>{value[name](v)}</td>"
+                          f"<td>{source[mine]}</td></tr>"
+                          for name, (v, mine) in ((n, constraints[n]) for n in value if n in constraints))
+                + "</table></div>")
+    return out
+
+def signoff_section(signoff, physical):
+    """
+    The physical verification rows, then static IR drop when the run reported
+    it. DRC is one row for the two tools; antenna says it is not part of them.
+    """
+    esc = html.escape
+    rows = ""
+    for check, count, tools, failed in signoff:
+        result = "FAIL" if count else "PASS"
+        note = {"DRC": tools and f"{tools}", "antenna": "checked by OpenROAD in this flow, not inside DRC"}.get(check, "")
+        errors = f"{count} ({esc(failed)})" if failed else str(count)
+        rows += (f'<tr><td>{esc(check)}'
+                 + (f' <span class="hint">{esc(note)}</span>' if note else "")
+                 + f'</td><td class="num">{errors}</td><td class="{result}">{result}</td></tr>')
+    out = ("<h2>Signoff checks</h2><p>Physical verification of the layout: design rules, layout "
+           "against the netlist (LVS), antenna rules, and XOR, which checks the two tools wrote the same GDS. "
+           "The two DRC tools are independent checkers, and the row adds their errors.</p>"
+           '<div class="scroll"><table><tr><th>check</th><th class="num">errors</th><th>result</th></tr>'
+           + rows + "</table></div>")
+    ir = physical.get("ir_worst")
+    if ir is not None:
+        mv = f"{significant(ir * 1000)} mV"
+        volts = corner_volts(physical.get("corner"))
+        share = f", {significant(ir / volts * 100)}% of {volts:.2f} V" if volts else ""
+        out += (f"<p>Static IR drop, worst: {mv}{share}.</p>"
+                '<p class="hint">From OpenROAD (<code>ir__drop__worst</code>), which reports it without '
+                "stopping on it. The supply is the voltage in the name of the run's default corner"
+                + (f", <code>{esc(physical['corner'])}</code>" if volts else "")
+                + ". LibreLane sets no limit, so none is claimed. Not analysed: electromigration, "
+                "crosstalk and dynamic IR drop.</p>")
+    return out
+
+def render(design, numbers, layout, cocotb_runs, env,
+           signoff=(), area=None, power=None, gds=None,
            description=None, cells=(), physical=None):
     """
     The page, as a string. Every argument may be empty, and its section is
@@ -569,27 +473,28 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
     numbers      -- (label, value) rows, as `report` prints them
     layout       -- the layout image's name next to the page, or None
     cocotb_runs  -- (title, seed, cases) per results file, cases as above
-    schematic    -- the schematic's name next to the page, or None
     env          -- os.environ; on GitHub Actions it names the commit and run
-    signoff      -- (check, error count) per signoff check the run reported
-    timing       -- (corner, path text) for the worst setup path, or None
+    signoff      -- (check, errors, tools, failed) per signoff check the run
+                    reported, as entrypoint.signoff_checks gives them
     area         -- {flip_flops, logic, routed, macros: um^2}, any of them absent
     power        -- (corner, power_groups rows), or None
-    blocks       -- the block diagram's name next to the page, or None
-    wave         -- (waveform's name next to the page, VCD it came from), or None
     gds          -- (the GDS's name next to the page, PDK for the 3D viewer or
                     None when the viewer has no layers for it), or None
     description  -- one line saying what the design is, or None
     physical     -- what a physical designer reads first, from metrics.json and
-                    config, any key absent: clock (ns), core (w, h um), taps,
-                    hold_buffers, r2r_setup, r2r_hold (ns), skew (ns),
-                    drv {slew, cap, fanout}, ir_worst (V)
-    cells        -- (class, count, 'synthesis' | 'flow' | 'other') per cell class
+                    the run's config, any key absent: core (w, h um), taps,
+                    hold_buffers, r2r_setup, r2r_hold (ns), setup and hold
+                    (worst slack ns, violations), constraints {name: (value,
+                    set in config.yaml)}, corner, synthesized (instances),
+                    ir_worst (V)
+    cells        -- (class, count, 'synthesis' | 'flow' | 'other') per instance class
 
     The page is laid out to be shared, as a portfolio piece: the layout first,
-    then the numbers, then the evidence that it works, then the detail.
+    then the verdicts (tests, timing and its constraints), then what the chip
+    is made of, what it burns, and the physical verification last.
     """
     esc = html.escape
+    physical = physical or {}
     parts = []  # (anchor, nav label, markup), in page order
     add = lambda anchor, label, markup: parts.append((anchor, label, markup))
 
@@ -611,22 +516,16 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             chips.append(("PASS" if passed == len(cases) else "FAIL",
                           f"{passed}/{len(cases)} tests passed"))
     if signoff:
-        errors = sum(count for _, count in signoff)
+        errors = sum(item[1] for item in signoff)
         chips.append(("FAIL", f"Signoff: {errors} errors") if errors
                      else ("PASS", "Signoff clean"))
     # Setup and hold both: a negative hold slack is a chip that fails on
     # silicon at any clock speed, so "Timing met" on setup alone would be a
     # wrong verdict, not a partial one.
-    slacks = [dict(numbers).get(k) for k in ("setup slack", "hold slack")]
-    slacks = [s for s in slacks if s]
+    slacks = [physical[k][0] for k in ("setup", "hold") if k in physical]
     if slacks:
-        chips.append(("FAIL", "Timing missed") if any(s.startswith("-") for s in slacks)
+        chips.append(("FAIL", "Timing missed") if any(s < 0 for s in slacks)
                      else ("PASS", "Timing met"))
-
-    if numbers:
-        add("summary", "Summary", '<h2>Summary</h2><div class="kpis">'
-            + "".join(kpi(label, value) for label, value in summary_rows(numbers, physical or {}))
-            + "</div>")
 
     if len(cocotb_runs) > 1:
         add("tests", "Tests", merged_tests(cocotb_runs))
@@ -642,96 +541,20 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
                 f'<td class="num">{sim_ns:g}</td></tr>'
                 for name, verdict, sim_ns in run) + "</table></div>")
 
-    if signoff:
-        add("signoff", "Signoff",
-            "<h2>Signoff checks</h2><p>Physical verification of the layout: design rules "
-            "(Magic and KLayout, two independent checkers), layout against the netlist (LVS), "
-            "antenna rules, and XOR, which checks the two tools wrote the same GDS.</p>"
-            '<div class="scroll"><table><tr><th>check</th><th class="num">errors</th><th>result</th></tr>'
-            + "".join(
-                f'<tr><td>{esc(check)}</td><td class="num">{count}</td>'
-                f'<td class="{"FAIL" if count else "PASS"}">{"FAIL" if count else "PASS"}</td></tr>'
-                for check, count in signoff) + "</table></div>" + electrical(physical or {}))
-
-
-    if wave:
-        image, vcd = wave
-        add("waveform", "Waveform",
-            f"<h2>Waveform</h2><p>From <code>{esc(vcd)}</code>, the signals "
-            "<code>WAVE_SIGNALS</code> names.</p>" + zoomable(image, f"Waveform of {design}"))
-
+    timing = timing_section(physical)
     if timing:
-        corner, path = timing
-        story = timing_story(path)
-        words = corner_words(corner)
-        where = (f"Corner <code>{esc(corner)}</code>" + (f" ({words})" if words else "")
-                 + ", the one with the least setup slack.")
-        if story:
-            # The report's two facts worth a sentence -- the clock and which
-            # path -- and a bar from the launch edge to the capture clock.
-            s = story
-            point = lambda name, kind: (f"{kind} <code>{esc(name)}</code>" if kind in ("input", "output")
-                                        else f"<code>{esc(name)}</code>" + (f" ({kind})" if kind else ""))
-            mhz = f" ({1000 / s['period']:.0f} MHz)" if s["period"] > 0 else ""
-            when = (f"{s['slack']:.2f} ns before its {s['required']:.2f} ns deadline" if s["slack"] >= 0
-                    else f"{-s['slack']:.2f} ns after its {s['required']:.2f} ns deadline")
-            logic = s["arrival"] - s["leaves"]
-            source = ("the input delay puts the data at the input" if s["start_kind"] == "input"
-                      else "the clock reaches the start point")
-            # Launch edge to the capture clock: four parts, each a number in the report.
-            scale = max(s["arrival"], s["required"] + s["held"]) or 1
-            pct = lambda v: f"{max(v, 0) / scale:.2%}"
-            seg = lambda cls, v: f'<span class="{cls}" style="width:{pct(v)}"></span>'
-            key = [("accent2", f"{'input delay' if s['start_kind'] == 'input' else 'clock to the start point'} "
-                               f"{s['leaves']:.2f} ns"),
-                   ("accent", f"logic and wires {logic:.2f} ns")]
-            if s["slack"] >= 0:
-                bar = seg("launch", s["leaves"]) + seg("used", logic) + seg("spare", s["slack"])
-                key.append(("pass", f"slack {s['slack']:.2f} ns"))
-            else:
-                bar = (seg("launch", s["leaves"]) + seg("used", s["required"] - s["leaves"])
-                       + seg("late", -s["slack"]))
-                key.append(("fail", f"late by {-s['slack']:.2f} ns"))
-            spare_end = max(s["arrival"], s["required"])
-            bar += seg("reserved", s["required"] + s["held"] - spare_end)
-            if s["held"] > 0:
-                key.append(("muted", f"{'output delay' if s['end_kind'] == 'output' else 'setup time'} "
-                                     f"and clock uncertainty {s['held']:.2f} ns"))
-            # A path to or from a port is as much the constraints' assumed I/O
-            # delay as it is logic; between flip-flops says what the logic does.
-            io = s["start_kind"] == "input" or s["end_kind"] == "output"
-            r2r = (physical or {}).get("r2r_setup")
-            notes = []
-            if io:
-                which = " and ".join(w for w, on in (("input", s["start_kind"] == "input"),
-                                                      ("output", s["end_kind"] == "output")) if on)
-                notes.append(f"This is an I/O path, so the {which} delay the constraints "
-                             "assume is part of it"
-                             + (f"; between flip-flops the worst setup slack is {r2r:+.2f} ns." if r2r is not None
-                                else "."))
-            skew = (physical or {}).get("skew")
-            if skew is not None:
-                notes.append(f"Worst clock skew on a setup path: {skew:.2f} ns.")
-            body = (f"<p>From {point(s['start'], s['start_kind'])} to {point(s['end'], s['end_kind'])}. "
-                    f"Clock {s['period']:.1f} ns{mhz}: {source} at {s['leaves']:.2f} ns, logic and "
-                    f"wires take {logic:.2f} ns, and the data arrives {when}.</p>"
-                    f'<div class="tbar" role="img" aria-label="Data arrives at {s["arrival"]:.2f} ns, '
-                    f'slack {s["slack"]:+.2f} ns">{bar}</div>' + legend(key)
-                    + "".join(f'<p class="hint">{n}</p>' for n in notes)
-                    + f'<p class="hint">{where}</p>')
-        else:
-            body = f"<p>{where} Printed as OpenSTA reports it.</p>"
-        add("timing", "Timing", "<h2>Worst setup path</h2>" + body
-            + "<details><summary>Full OpenSTA report</summary>"
-            f'<div class="scroll"><pre>{esc(path)}</pre></div></details>')
+        add("timing", "Timing", timing)
 
-    if area or cells:
-        hold = (physical or {}).get("hold_buffers")
+    cards = "".join(kpi(label, value) for label, value in summary_rows(numbers, physical))
+    if area or cells or cards:
+        hold = physical.get("hold_buffers")
         if hold:
             # Most of them, in a design with a fast-corner hold problem.
             cells = [(f"{name}, {hold:,} of them for hold" if name == "timing-repair buffers" else name, n, k)
                      for name, n, k in cells]
-        add("area", "Area", "<h2>Area</h2>" + makeup(area or {}, cells))
+        add("area", "Area and instances", "<h2>Area and instances</h2>"
+            + (f'<div class="kpis">{cards}</div>' if cards else "")
+            + makeup(area or {}, cells, physical.get("synthesized")))
 
     if power:
         corner, rows = power
@@ -740,11 +563,16 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         # One decimal throughout; leakage is orders of magnitude below the
         # rest, and four significant digits of it were noise.
         uw = lambda w: f"{w * 1e6:,.1f}" if w * 1e6 >= 0.05 or not w else "&lt;0.1"
+        words = corner_words(corner)
+        period = (physical.get("constraints") or {}).get("clock_period", (None,))[0]
+        clock = (f" Clock {1000 / period:.0f} MHz, from a period of {period:g} ns."
+                 if period and period > 0 else "")
         add("power", "Power",
-            f"<h2>Power</h2><p>Corner <code>{esc(corner)}</code>, in &micro;W. Dynamic is internal "
-            "plus switching; static is leakage. Switching activity is OpenSTA's default, "
-            "not taken from simulation, so this is an estimate of where power goes, "
-            "not a measurement of a workload.</p>"
+            f"<h2>Power</h2><p>Corner <code>{esc(corner)}</code>" + (f" ({words})" if words else "")
+            + f", in &micro;W.{clock} Dynamic is internal plus switching; static is leakage.</p>"
+            "<p>Switching activity is OpenSTA's default, 0.1 toggles per clock on data nets. "
+            "It is not taken from simulation, so this estimates where power goes. "
+            "It does not measure a workload.</p>"
             '<div class="scroll"><table class="power"><tr><th>group</th><th class="num">internal</th>'
             '<th class="num">switching</th><th class="num">leakage</th>'
             '<th class="num">total</th><th class="num">share</th><th class="bar"></th></tr>' + "".join(
@@ -759,26 +587,8 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
                 + "</td></tr>"
                 for group, i, sw, lk, t in rows) + "</table></div>")
 
-    if blocks:
-        add("blocks", "Blocks",
-            "<h2>Block diagram</h2><p>The top module as its submodules and the "
-            "nets between them. Wiring that passes through the top's own gates "
-            "meets them at the dashed box. Open it and click a block to go one "
-            "level down: to that module's own block diagram, or to its schematic "
-            "when it has no submodules.</p>" + zoomable(blocks, f"Block diagram of {design}")
-            # With blocks to click through, the top's whole schematic is a
-            # texture on the page; it is a file to open, not a section.
-            + (f'<p class="hint">The whole top module as one drawing, from the RTL: '
-               f'<a href="{esc(schematic)}">open the schematic</a>, best on a large screen.</p>'
-               if schematic else ""))
-
-    if schematic and not blocks:
-        # Collapsed: past a few hundred cells it is a texture, not a picture.
-        # One click away for a small one.
-        add("schematic", "Schematic",
-            "<h2>Schematic</h2><p>The circuit the RTL describes, drawn by Yosys "
-            "before synthesis.</p><details><summary>Show the schematic</summary>"
-            + zoomable(schematic, f"Schematic of {design}") + "</details>")
+    if signoff:
+        add("signoff", "Signoff", signoff_section(signoff, physical))
 
     # Only on GitHub Actions, where these say which commit the page shows.
     # When the page was built, always: a published page stays up until the
@@ -831,8 +641,7 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         og += (f'<meta property="og:image" content="https://{esc(owner.lower())}.github.io/'
                f'{esc(name)}/{esc(layout)}"><meta name="twitter:card" content="summary">')
 
-    order = ["layout", "summary", "tests", "blocks", "waveform", "signoff",
-             "timing", "area", "power", "schematic"]
+    order = ["layout", "tests", "timing", "area", "power", "signoff"]
     parts.sort(key=lambda p: order.index(p[0].split("-")[0]) if p[0].split("-")[0] in order
                else len(order))
 
@@ -854,11 +663,10 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
             f'<span class="chip {state}">{esc(text)}</span>' for state, text in chips)
            + "</div>" if chips else "")
         + actions
-        # Locally, before the flow has run, the page is tests and waveform
-        # only; say what is missing and what adds it, or it reads as all there is.
+        # Locally, before the flow has run, the page is the tests only; say what is missing and what adds it, or it reads as all there is.
         + ("" if layout or signoff else '<p class="hint">The layout, signoff checks, timing, area and '
            "power appear here once <code>make gds</code> has run.</p>")
-        + "</div>" + hero_art(layout, design, numbers, gds_pdk, (physical or {}).get("taps")) + "</div></header>"
+        + "</div>" + hero_art(layout, design, numbers, gds_pdk) + "</div></header>"
         + ('<nav aria-label="Sections"><div class="wrap">' + "".join(
             f'<a href="#{anchor}">{esc(label)}</a>' for anchor, label, _ in parts)
            + "</div></nav>" if len(parts) > 1 else "")
@@ -870,7 +678,6 @@ def render(design, numbers, layout, cocotb_runs, schematic, env,
         + 'Built with <a href="https://github.com/anlit75/ChipForAll">'
           "ChipForAll</a>, on open-source EDA tools. Generated by c4o-core "
           "<code>site</code>.</p></footer>"
-        + (f"<script>{ZOOM_JS}</script>" if 'class="zoom"' in body else "")
         + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in actions else "")
         + "</body></html>\n"
     )

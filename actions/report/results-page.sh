@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# One page with what `make report` prints, the layout, the schematic and the
-# cocotb verdicts.
+# One page with the cocotb verdicts, timing, area, power, signoff and the layout.
 set -euo pipefail
 make site
 ls -lh build/site/
 
-# After make gds these four come from the run's own reports. Each is left out
+# After make gds these two come from the run's own reports. Each is left out
 # silently when its report is missing, so a LibreLane upgrade that moved one
 # would otherwise just shrink the page.
-sections=("Signoff checks" "Worst setup path" "Area" "Power")
-# Only when asked for: deleting the key is how a design opts out of it.
-if grep -q '^"//WAVE_SIGNALS":' config.yaml; then
-  sections+=("Waveform")
-fi
+# Only the headings that every 2.x image gives its page. This script runs with
+# any 2.x image, so it must not demand a section a newer image renamed. The
+# page's own structure is tested in c4o-core.
+sections=("Power" "Signoff checks")
 while IFS= read -r extra; do
   if [ -n "$extra" ]; then
     sections+=("$extra")

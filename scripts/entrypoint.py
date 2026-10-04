@@ -11,7 +11,6 @@ from xml.etree import ElementTree
 
 import yaml
 
-import diagrams
 import site_page
 
 # ANSI color codes
@@ -467,9 +466,9 @@ def cmd_cocotb(args, config):
         compile_cmd += [f"-I{inc}" for inc in get_include_dirs(config)]
         sources = get_files(args, config, key="VERILOG_FILES")
         compile_cmd += sources
-        # The waveform is opt-in, like the picture it is for. Only the RTL run
-        # dumps: the netlist's names are not the ones WAVE_SIGNALS lists.
-        if config_get(config, "WAVE_SIGNALS"):
+        # A debug VCD is opt-in: WAVES=1 in the environment, which `make
+        # cocotb WAVES=1` passes into the container. Only the RTL run dumps.
+        if os.environ.get("WAVES") == "1":
             compile_cmd += ["-s", "c4o_dump", write_dump_module(toplevel)]
         # Without a `timescale Icarus runs at 1 s precision, and the first
         # Clock(..., units="ns") dies with "Unable to accurately represent
@@ -636,7 +635,6 @@ def die_area_error(value):
 # yosys writes <prefix>.dot and, with -format svg, runs dot over it to produce
 # <prefix>.svg beside it.
 SCHEMATIC_PREFIX = "build/schematic"
-BLOCKS_DIR = "build/blocks"
 
 def cmd_schematic(args, config):
     """
@@ -687,58 +685,9 @@ def cmd_schematic(args, config):
     # attribute `hierarchy` has just set on the root, which makes this the same
     # one module whether DESIGN_NAME named it or -auto-top worked it out.
     parts.append(f"show -format svg -viewer none -prefix {SCHEMATIC_PREFIX} A:top")
-    parts.append(f"write_json {SCHEMATIC_PREFIX}.json")
 
-    # Never draw a previous design's blocks.
-    if os.path.exists(SCHEMATIC_PREFIX + ".json"):
-        os.remove(SCHEMATIC_PREFIX + ".json")
-    if os.path.isdir(BLOCKS_DIR):
-        shutil.rmtree(BLOCKS_DIR)
-    prepare = parts[:parts.index("opt") + 1]
     run_command(["yosys", "-p", "; ".join(parts)])
     log_info(f"Wrote {SCHEMATIC_PREFIX}.svg")
-    draw_blocks(SCHEMATIC_PREFIX + ".json", prepare)
-
-def draw_blocks(netlist_path, prepare):
-    """
-    build/blocks/: top.svg draws the top module as its submodules and the
-    wiring between them, and each block links to a file of its own -- another
-    block diagram for a module with submodules, that module's schematic for
-    one without. A design of any depth is then read one level at a time; the
-    single schematic of the top buries the blocks of anything built from them.
-
-    `prepare` is the yosys script up to `opt`, reused to draw the leaves.
-    Skipped for a top with no submodule, where it would be one box.
-    """
-    if not os.path.exists(netlist_path):
-        return
-    with open(netlist_path) as f:
-        netlist = json.load(f)
-    top = next((name for name, mod in netlist["modules"].items()
-                if mod.get("attributes", {}).get("top")), None)
-    if not top or not diagrams.has_submodules(netlist, top):
-        log_info("The top module instantiates no submodule; no block diagram to draw.")
-        return
-    os.makedirs(BLOCKS_DIR, exist_ok=True)
-    plan = diagrams.diagram_plan(netlist, top)
-    links = {name: f"{stem}.svg" for name, stem in plan.items()}
-    parents = {}
-    for name in plan:  # plan lists the top first, so each child gets its nearest parent
-        for cell in netlist["modules"][name].get("cells", {}).values():
-            parents.setdefault(cell["type"], (diagrams.module_label(name), links[name]))
-
-    leaves = []
-    for name, stem in plan.items():
-        if not diagrams.has_submodules(netlist, name):
-            leaves.append(f"show -format svg -viewer none -prefix {BLOCKS_DIR}/{stem} {name}")
-            continue
-        dot_path = os.path.join(BLOCKS_DIR, f"{stem}.dot")
-        with open(dot_path, "w") as f:
-            f.write(diagrams.block_diagram_dot(netlist, name, links, parents.get(name)))
-        run_command(["dot", "-Tsvg", dot_path, "-o", os.path.join(BLOCKS_DIR, f"{stem}.svg")])
-    if leaves:
-        run_command(["yosys", "-p", "; ".join(prepare + leaves)])
-    log_info(f"Wrote {BLOCKS_DIR}/: {len(plan)} diagrams, top.svg first")
 
 def cmd_check(args, config):
     """
@@ -847,38 +796,56 @@ def find_metrics(explicit):
 # passed them -- which is exactly why they are worth printing. The other rows
 # answer 'is my design any good'; without these, nothing answers 'can it be
 # made', and the reader is left inferring it from the absence of a crash.
+#
+# The two DRC decks are one check, "DRC": two independent tools asked the same
+# question. Antenna is its own row because in this flow neither deck checks it.
+DRC_TOOLS = [("Magic", "magic__drc_error__count"), ("KLayout", "klayout__drc_error__count")]
 SIGNOFF_CHECKS = [
-    ("Magic DRC", "magic__drc_error__count"),
-    ("KLayout DRC", "klayout__drc_error__count"),
     ("LVS", "design__lvs_error__count"),
     ("antenna", "route__antenna_violation__count"),
     ("XOR", "design__xor_difference__count"),
 ]
 
+def signoff_checks(metrics):
+    """
+    (check, errors, tools, failed) per check the run reported, DRC first.
+
+    `tools` names the DRC tools that reported, `failed` the ones with errors
+    and their counts: "KLayout", or "Magic 2, KLayout 3" when both. Both are
+    empty for the other checks. A key present but null is not a check that
+    ran, so it is left out.
+    """
+    out = []
+    drc = [(tool, metrics[key]) for tool, key in DRC_TOOLS if metrics.get(key) is not None]
+    if drc:
+        bad = [(tool, count) for tool, count in drc if count]
+        failed = (bad[0][0] if len(bad) == 1 else ", ".join(f"{t} {c}" for t, c in bad)) if bad else ""
+        out.append(("DRC", sum(count for _, count in drc), " and ".join(t for t, _ in drc), failed))
+    out += [(label, metrics[key], "", "") for label, key in SIGNOFF_CHECKS
+            if metrics.get(key) is not None]
+    return out
+
 def signoff_row(metrics):
     """
     One line summarising the checks above, or None when the run reported none.
 
-    Named rather than counted when something is wrong -- '2 Magic DRC, 1 LVS'
+    Named rather than counted when something is wrong -- '3 DRC (KLayout), 1 LVS'
     is the sentence you want; a column of zeroes with one non-zero hidden in it
     is not.
-
-    A key present but null is not a check that passed, so it does not count
-    towards 'clean' either.
     """
-    present = [
-        (label, metrics[key])
-        for label, key in SIGNOFF_CHECKS
-        if metrics.get(key) is not None
-    ]
+    present = signoff_checks(metrics)
     if not present:
         return None
 
-    failed = [f"{count} {label}" for label, count in present if count]
+    failed = [f"{count} {label}" + (f" ({bad})" if bad else "")
+              for label, count, _, bad in present if count]
     if failed:
         return ("signoff", ", ".join(failed))
     # Name the checks that actually ran: 'clean' is only as strong as its list.
-    return ("signoff", "clean  (" + ", ".join(label for label, _ in present) + ")")
+    # DRC says its tools, since one of the two may be all that reported.
+    return ("signoff", "clean  (" + ", ".join(
+        f"{tools} DRC" if label == "DRC" and " and " not in tools else label
+        for label, _, tools, _ in present) + ")")
 
 # KLAYOUT_RENDER is registered with extension "png" and folder "render", so the
 # file is <design>.png -- not <design>.klayout.png, which is what the format's
@@ -1002,20 +969,53 @@ def sta_step(metrics_path):
         return None
     return newest_step(os.path.dirname(final_dir), "*-openroad-stapostpnr")
 
+def sta_config(metrics_path):
+    """
+    The config.json the newest post-PnR STA step ran with, as a dict, or {}.
+    It holds the whole resolved config, so it states the constraints the
+    result depends on whether config.yaml set them or the flow defaulted them.
+    """
+    sta = sta_step(metrics_path)
+    path = os.path.join(sta, "config.json") if sta else None
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except ValueError:
+        return {}
+
 def default_power(metrics_path):
     """(DEFAULT_CORNER, power_groups rows) from that corner's power.rpt, or None."""
     sta = sta_step(metrics_path)
-    config_path = os.path.join(sta, "config.json") if sta else None
-    if not config_path or not os.path.exists(config_path):
+    corner = sta_config(metrics_path).get("DEFAULT_CORNER")
+    if not sta or not corner:
         return None
-    with open(config_path) as f:
-        corner = json.load(f).get("DEFAULT_CORNER")
-    report = os.path.join(sta, corner or "", "power.rpt")
-    if not corner or not os.path.exists(report):
+    report = os.path.join(sta, corner, "power.rpt")
+    if not os.path.exists(report):
         return None
     with open(report) as f:
         rows = site_page.power_groups(f.read())
     return (corner, rows) if any(r[0] == "Total" for r in rows) else None
+
+def synthesis_instances(metrics_path):
+    """
+    The cell count Yosys.Synthesis reported (stat.json design.num_cells), or
+    None. Read from the run's own step directory, for the reason find_render
+    gives, and from the steps of the run final/ describes.
+    """
+    final_dir = os.path.dirname(os.path.abspath(metrics_path))
+    if os.path.basename(final_dir) != "final":
+        return None
+    stat = newest_step(os.path.dirname(final_dir), "*-yosys-synthesis/reports/stat.json")
+    if not stat:
+        return None
+    try:
+        with open(stat) as f:
+            count = json.load(f).get("design", {}).get("num_cells")
+    except (OSError, ValueError):
+        return None
+    return count if isinstance(count, int) else None
 
 # LibreLane's names for the classes a real 3.0.14 run reported, in words. A
 # class not listed here is printed under its own name, underscores spaced.
@@ -1030,7 +1030,7 @@ CELL_CLASSES = {
 }
 
 # Which classes the flow adds rather than synthesis producing them. Counted
-# against a real run: its 198 standard cells were synthesis's 110 plus 42
+# against a real run: its 198 instances were synthesis's 110 plus 42
 # clock-tree, hold and fanout buffers and 46 well taps. A class in neither set
 # is shown as "other" rather than guessed at.
 FROM_SYNTHESIS = {"multi_input_combinational_cell", "sequential_cell", "inverter"}
@@ -1058,20 +1058,27 @@ def report_rows(metrics, path):
     if utilization is not None:
         rows.append(("utilization", f"{utilization * 100:.1f}%"))
 
-    # Not design__instance__count: that one counts fill cells too, which say
-    # nothing about the design -- 544 of this run's 787 instances were fill.
-    # Well taps are in it: 46 of this run's 198.
-    cells = metrics.get("design__instance__count__stdcell")
-    if cells is not None:
-        rows.append(("standard cells", str(cells)))
+    # Instances, not "cells": the count after synthesis is what the design is,
+    # and the count after routing adds what the flow put in.
+    # Not design__instance__count: that one counts fill instances too, which
+    # say nothing about the design -- 544 of this run's 787 were fill. Well
+    # taps are in the stdcell count: 46 of this run's 198.
+    routed = metrics.get("design__instance__count__stdcell")
+    synthesized = synthesis_instances(path)
+    if synthesized is not None and routed is not None:
+        rows.append(("instances", f"{synthesized} after synthesis, {routed} after routing"))
+    elif routed is not None:
+        rows.append(("instances", f"{routed} after routing"))
+    elif synthesized is not None:
+        rows.append(("instances", f"{synthesized} after synthesis"))
 
-    # What those cells are, by the class LibreLane files each one under,
-    # largest first. Fill is left out for the reason above; in a real run the
-    # rest add up to the row before -- 198, of which 88 are buffers and taps
-    # the flow added, not logic the RTL asked for.
+    # What the routed instances are, by the class LibreLane files each one
+    # under, largest first. Fill is left out for the reason above; in a real
+    # run the rest add up to the routed count -- 198, of which 88 are buffers
+    # and taps the flow added, not logic the RTL asked for.
     classes = cell_classes(metrics)
     if classes:
-        rows.append(("cell classes", ", ".join(
+        rows.append(("instance classes", ", ".join(
             f"{count} {CELL_CLASSES.get(name, name.replace('_', ' '))}"
             for name, count in classes)))
 
@@ -1144,7 +1151,7 @@ def cmd_report(args, config):
         print(f"  {label.ljust(label_width)}   {value}")
     print()
 
-# One page with what `report` prints, the layout, the schematic and every
+# One page with what `report` prints, the layout and every
 # cocotb verdict, for publishing on GitHub Pages. Everything it needs is copied
 # into this directory, so the directory is the whole site. The markup is in
 # site_page.py; this half finds the files.
@@ -1155,17 +1162,38 @@ COCOTB_RESULTS = [
     ("cocotb, gate level", "build/cocotb-gl-results.xml"),
 ]
 
-def run_details(metrics_path, metrics):
+# The constraints the timing result depends on, as the STA step's config.json
+# names them, with the unit LibreLane gives each.
+CONSTRAINTS = [
+    ("clock_period", "CLOCK_PERIOD"),
+    ("uncertainty", "CLOCK_UNCERTAINTY_CONSTRAINT"),
+    ("transition", "CLOCK_TRANSITION_CONSTRAINT"),
+    ("derate", "TIME_DERATING_CONSTRAINT"),
+    ("io_delay", "IO_DELAY_CONSTRAINT"),
+]
+
+def number(value):
+    """A config value as a float, or None. LibreLane writes Decimals as numbers."""
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+def run_details(metrics_path, metrics, config):
     """
     What the page shows beyond `report`'s rows, from the reports LibreLane
     leaves next to a run's metrics.json. Only when the file sits at
     <run>/final/metrics.json, for the reason find_render gives. Any part whose
     report is missing is left out.
 
+    `config` is the design's config, which tells a constraint it set from one
+    the flow defaulted.
     """
-    details = {"signoff": [(label, metrics[key]) for label, key in SIGNOFF_CHECKS
-                           if metrics.get(key) is not None]}
+    details = {"signoff": signoff_checks(metrics)}
     final_dir = os.path.dirname(os.path.abspath(metrics_path))
+    physical = details["physical"] = physical_details(metrics)
     if os.path.basename(final_dir) != "final":
         return details
     run_dir = os.path.dirname(final_dir)
@@ -1174,15 +1202,20 @@ def run_details(metrics_path, metrics):
         with open(path) as f:
             return f.read()
 
-    sta = sta_step(metrics_path)
-    corners = {key.split(":", 1)[1]: value for key, value in metrics.items()
-               if key.startswith("timing__setup__ws__corner:") and value is not None}
-    if sta and corners:
-        worst = min(corners, key=corners.get)
-        report = os.path.join(sta, worst, "max.rpt")
-        path = site_page.first_path(read(report)) if os.path.exists(report) else None
-        if path:
-            details["timing"] = (worst, path)
+    run_config = sta_config(metrics_path)
+    constraints = {}
+    for name, key in CONSTRAINTS:
+        value = number(run_config.get(key))
+        if value is not None:
+            constraints[name] = (value, key in config)
+    if constraints:
+        physical["constraints"] = constraints
+    corner = run_config.get("DEFAULT_CORNER")
+    if corner:
+        physical["corner"] = corner
+    synthesized = synthesis_instances(metrics_path)
+    if synthesized is not None:
+        physical["synthesized"] = synthesized
 
     power = default_power(metrics_path)
     if power:
@@ -1209,7 +1242,6 @@ def run_details(metrics_path, metrics):
              for name, count in cell_classes(metrics)]
     if cells:
         details["cells"] = cells
-    details["physical"] = physical_details(metrics)
     return details
 
 def physical_details(metrics):
@@ -1223,22 +1255,23 @@ def physical_details(metrics):
                         ("hold_buffers", "design__instance__count__hold_buffer"),
                         ("r2r_setup", "timing__setup_r2r__ws"),
                         ("r2r_hold", "timing__hold_r2r__ws"),
-                        ("skew", "clock__skew__worst_setup"),
                         ("ir_worst", "ir__drop__worst")):
         if get(metric) is not None:
             out[key] = get(metric)
-    drv = {key: get(f"design__max_{key}_violation__count") for key in ("slew", "cap", "fanout")}
-    drv = {key: value for key, value in drv.items() if value is not None}
-    if drv:
-        out["drv"] = drv
+    # Worst slack over every corner (the bare key, see METRICS_GLOBS) and how
+    # many paths miss, for the timing verdict.
+    for key in ("setup", "hold"):
+        if get(f"timing__{key}__ws") is not None:
+            out[key] = (get(f"timing__{key}__ws"), get(f"timing__{key}_vio__count"))
     return out
 
 def cmd_site(args, config):
     """
-    Writes build/site/index.html: the numbers `report` prints, the layout
-    render, the schematic and the cocotb verdicts, on one page. Each part is
-    included when the file behind it exists, so it works after `make cocotb`
-    alone as well as after the full flow.
+    Writes build/site/index.html: the cocotb verdicts, the timing verdict and
+    the constraints behind it, area and instances, power and signoff, with the
+    layout render beside the title. Each part is included when the file behind
+    it exists, so it works after `make cocotb` alone as well as after the full
+    flow.
 
     It reports; it does not judge. A failed test is shown as failed and the
     command still succeeds -- the command that ran the test is the gate.
@@ -1253,19 +1286,18 @@ def cmd_site(args, config):
         path = max(found, key=os.path.getmtime)
         metrics = read_metrics(path)
         rows = report_rows(metrics, path)
-        details = run_details(path, metrics)
-        # The clock the constraints ask for, which no metric carries.
-        try:
-            period = float(config_get(config, "CLOCK_PERIOD"))
-        except (TypeError, ValueError):
-            period = None
-        if period and period > 0:
-            details.setdefault("physical", {})["clock"] = period
+        details = run_details(path, metrics, config)
+        # The clock the run used. Without a run directory to read it from, the
+        # one the config asks for.
+        constraints = details["physical"].setdefault("constraints", {})
+        period = number(config_get(config, "CLOCK_PERIOD"))
+        if "clock_period" not in constraints and period and period > 0:
+            constraints["clock_period"] = (period, True)
         # Each has a section of their own on the page. Power only when that
         # section exists: its row is the bare metric, which names no corner
         # and would disagree with the table next to it.
         own = ({"layout", "signoff"} | ({"power"} if "power" in details else set())
-               | ({"cell classes"} if "cells" in details else set()))
+               | ({"instance classes"} if "cells" in details else set()))
         numbers = [(label, value) for label, value in rows if label not in own]
         render = dict(rows).get("layout")
         if render:
@@ -1292,66 +1324,17 @@ def cmd_site(args, config):
             sys.exit(1)
         cocotb_runs.append((title, seed, cases))
 
-    if os.path.exists(os.path.join(BLOCKS_DIR, "top.svg")):
-        os.makedirs(os.path.join(SITE_DIR, "blocks"))
-        for svg in glob.glob(os.path.join(BLOCKS_DIR, "*.svg")):
-            shutil.copy(svg, os.path.join(SITE_DIR, "blocks"))
-        details["blocks"] = "blocks/top.svg"
-
-    # Opt-in: which signals are worth a picture is the designer's call, not
-    # something to guess from a VCD that may hold hundreds.
-    wanted = config_get(config, "WAVE_SIGNALS")
-    if wanted:
-        vcds = sorted(glob.glob("build/*.vcd"), key=os.path.getmtime)
-        if not vcds:
-            log_warn("WAVE_SIGNALS is set but build/ holds no VCD; run sim or cocotb first.")
-        else:
-            # The newest VCD that declares every signal: with two testbenches
-            # the newest file may be the other one's, which is no error.
-            svg = source = first_error = declared = None
-            for vcd in reversed(vcds):
-                with open(vcd) as f:
-                    text = f.read()
-                try:
-                    svg, source = diagrams.waveform_svg(text, wanted), vcd
-                    break
-                except KeyError as e:
-                    if first_error is None:
-                        first_error = f"{vcd} does not declare {e.args[0]}"
-                        declared = sorted(diagrams.read_vcd(text)[1])
-            if svg is None:
-                # A typo is the usual cause, and the fix is a name the VCD has:
-                # list them, so nobody has to grep a VCD to find one.
-                shown = ", ".join(declared[:20]) + (
-                    f", and {len(declared) - 20} more" if len(declared) > 20 else "")
-                log_error(
-                    f"No VCD in build/ declares every WAVE_SIGNALS name; {first_error}. "
-                    "Names are dotted from the top that was simulated: tb_blinky.uut.count "
-                    "for a Verilog testbench, blinky.count for a cocotb run. "
-                    f"It declares: {shown}."
-                )
-                sys.exit(1)
-            with open(os.path.join(SITE_DIR, "wave.svg"), "w") as f:
-                f.write(svg)
-            details["wave"] = ("wave.svg", source)
-
-    schematic = None
-    if os.path.exists(SCHEMATIC_PREFIX + ".svg"):
-        schematic = "schematic.svg"
-        shutil.copy(SCHEMATIC_PREFIX + ".svg", os.path.join(SITE_DIR, schematic))
-
-    if not (numbers or layout or cocotb_runs or schematic or details):
+    if not (numbers or layout or cocotb_runs or details):
         log_error(
-            "Nothing to put on the page: no metrics.json under runs/, no cocotb "
-            f"results, no {SCHEMATIC_PREFIX}.svg. Run make cocotb, make schematic "
-            "or make gds first."
+            "Nothing to put on the page: no metrics.json under runs/ and no "
+            "cocotb results. Run make cocotb or make gds first."
         )
         sys.exit(1)
 
     design = config_get(config, "DESIGN_NAME", "design")
     index = os.path.join(SITE_DIR, "index.html")
     with open(index, "w") as f:
-        f.write(site_page.render(design, numbers, layout, cocotb_runs, schematic, os.environ,
+        f.write(site_page.render(design, numbers, layout, cocotb_runs, os.environ,
                                  description=config_get(config, "DESCRIPTION", None),
                                  **details))
     log_info(f"Wrote {index}")
@@ -1465,7 +1448,7 @@ def build_parser():
     report_parser.set_defaults(func=cmd_report)
 
     site_parser = subparsers.add_parser(
-        "site", help="Write build/site/index.html: report, layout, schematic, cocotb results"
+        "site", help="Write build/site/index.html: cocotb results, timing, area, power, signoff"
     )
     site_parser.set_defaults(func=cmd_site)
 
