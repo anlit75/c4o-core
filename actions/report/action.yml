@@ -45,6 +45,7 @@ runs:
       run: bash "$GITHUB_ACTION_PATH/signoff-summary.sh"
 
     - name: Build the results page
+      if: false
       shell: bash
       env:
         EXTRA_SECTIONS: ${{ inputs.sections }}
