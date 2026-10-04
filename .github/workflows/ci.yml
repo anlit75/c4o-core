@@ -700,8 +700,9 @@ jobs:
             echo "::error::setup's pdk-version output is '$PDK_VERSION', expected 40 hex digits."
             exit 1
           fi
-          if [ "$CACHE_HIT" != true ] && [ "$CACHE_HIT" != false ]; then
-            echo "::error::setup's cache-hit output is '$CACHE_HIT', expected true or false."
+          # actions/cache leaves cache-hit empty when no key matched at all.
+          if [ "$CACHE_HIT" != true ] && [ "$CACHE_HIT" != false ] && [ -n "$CACHE_HIT" ]; then
+            echo "::error::setup's cache-hit output is '$CACHE_HIT', expected true, false or empty."
             exit 1
           fi
 
