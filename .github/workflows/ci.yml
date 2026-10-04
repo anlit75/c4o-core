@@ -709,7 +709,7 @@ jobs:
           out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test \
                   report tests/fixtures/metrics-signoff-dirty.json)
           echo "$out"
-          echo "$out" | grep -qF "2 Magic DRC" || { echo "missing: 2 Magic DRC"; exit 1; }
+          echo "$out" | grep -qF "2 DRC (Magic)" || { echo "missing: 2 DRC (Magic)"; exit 1; }
           echo "$out" | grep -qF "1 LVS" || { echo "missing: 1 LVS"; exit 1; }
           # A zero must not be listed alongside them, and nothing here is clean.
           ! echo "$out" | grep -qF "0 antenna"
