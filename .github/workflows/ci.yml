@@ -768,8 +768,8 @@ jobs:
           name: actions-end-to-end
           retention-days: 1
 
-      # upload-artifact only warns when a path matches nothing, and a name it
-      # was not given falls back to a default, so the run is asked instead.
+      # upload-artifact only warns when a path matches nothing, so an upload
+      # pointed at the wrong file stays green. The run is asked instead.
       - name: The run holds the three artifacts upload names
         env:
           GH_TOKEN: ${{ github.token }}
