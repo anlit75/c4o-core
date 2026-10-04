@@ -69,6 +69,11 @@ jobs:
       - name: The action scripts refuse what they should
         run: bash tests/test_actions.sh
 
+      # rules.mk is included by Makefiles in other repositories, out of this
+      # image. Here a Makefile like theirs is run against the image just built.
+      - name: The Makefile rules work from the image, and fail cleanly without it
+        run: bash tests/test_rules.sh
+
       # Explicit Files Tests
       - name: Run Lint check (CLI)
         run: |
