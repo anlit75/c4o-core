@@ -34,7 +34,7 @@ runs:
     - name: Upload build/ and runs/
       uses: actions/upload-artifact@v6
       with:
-        name: ${{ inputs.name }}
+        name: ${{ inputs.nam }}
         path: |
           build/
           runs/
