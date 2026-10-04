@@ -1,0 +1,49 @@
+name: c4o-core checks
+description: >
+  The checks that run in seconds: lint, the Verilog testbenches, the Python
+  (cocotb) testbenches when config.yaml asks for them, synthesis, and the
+  schematic. The cocotb output is kept in build/cocotb-rtl.log.
+runs:
+  using: composite
+  steps:
+    - name: Lint
+      shell: bash
+      run: make lint
+
+    - name: Simulation
+      shell: bash
+      run: make sim
+
+    # Skipped when config.yaml does not ask for Python testbenches: the key's
+    # presence is the opt-in. If it is there and matches no files, `make
+    # cocotb` fails, which is correct.
+    - name: cocotb tests
+      shell: bash
+      run: |
+        if ! grep -q '^"//COCOTB_TESTS":' config.yaml; then
+          echo "config.yaml has no //COCOTB_TESTS -- no Python testbenches to run."
+          exit 0
+        fi
+        mkdir -p build
+        set -o pipefail
+        make cocotb 2>&1 | tee build/cocotb-rtl.log
+
+    # always() so a failing test is shown too: that is when the table is worth
+    # opening. Gated on the file, so a run that crashed before writing it has
+    # nothing to show.
+    - name: cocotb results on the summary page
+      if: always() && hashFiles('build/cocotb-results.xml') != ''
+      uses: test-summary/action@v2
+      with:
+        paths: build/cocotb-results.xml
+
+    - name: Logic synthesis
+      shell: bash
+      run: make synth
+
+    - name: Schematic
+      shell: bash
+      run: |
+        make schematic
+        ls -lh build/schematic.svg
+        grep -qF "<svg" build/schematic.svg || { echo "::error::build/schematic.svg is not an SVG."; exit 1; }

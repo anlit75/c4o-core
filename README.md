@@ -55,6 +55,8 @@ The engine supports the following commands via its Python entrypoint:
 
 What each one does beyond this line, and why, is in [docs/commands.md](docs/commands.md).
 
+The CI of a repository made from the ChipForAll template is here too, as actions that its workflow calls: [docs/actions.md](docs/actions.md).
+
 ## ⚙️ Configuration
 
 `c4o-core` looks for `config.yaml`, `config.yml`, or `config.json` in your workspace, in that order.

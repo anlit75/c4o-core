@@ -1,0 +1,49 @@
+name: c4o-core upload
+description: >
+  Keeps what the run produced: the schematic and the layout render on their
+  own, and build/ and runs/ together. On a v* tag it also attaches the GDS to
+  the release. Call it with `if: always()`, so a failed run keeps its logs.
+inputs:
+  name:
+    description: Name of the artifact that holds build/ and runs/.
+    required: false
+    default: chipforall-build-artifacts
+  retention-days:
+    description: How long the artifacts are kept.
+    required: false
+    default: '5'
+runs:
+  using: composite
+  steps:
+    - name: Upload the schematic
+      uses: actions/upload-artifact@v6
+      with:
+        name: schematic
+        path: build/schematic.svg
+        if-no-files-found: warn
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload the layout render
+      uses: actions/upload-artifact@v6
+      with:
+        name: layout
+        path: runs/*/final/render/*.png
+        if-no-files-found: warn
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload build/ and runs/
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ inputs.name }}
+        path: |
+          build/
+          runs/
+        retention-days: ${{ inputs.retention-days }}
+
+    # A v* tag publishes the GDS, and only when everything before this passed.
+    - name: Publish release
+      if: startsWith(github.ref, 'refs/tags/v') && job.status == 'success'
+      uses: softprops/action-gh-release@v3
+      with:
+        files: build/*.gds
+        generate_release_notes: true

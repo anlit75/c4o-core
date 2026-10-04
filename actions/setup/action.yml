@@ -1,0 +1,56 @@
+name: c4o-core setup
+description: >
+  Everything the flow needs before it starts: the c4o-core image the caller's
+  Makefile names, the Sky130 PDK that image installs (from the cache when it is
+  there), and the LibreLane image, whose pull is started in the background.
+  Also checks the two things every repository made from the ChipForAll template
+  still carries: that the image pins agree, and that the Dev Container's user
+  exists in its image.
+outputs:
+  image:
+    description: The c4o-core image the caller's Makefile names.
+    value: ${{ steps.image.outputs.image }}
+  pdk-version:
+    description: The PDK version that image installs.
+    value: ${{ steps.pdk.outputs.version }}
+  cache-hit:
+    description: "'true' when the PDK came out of the cache."
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    # The LibreLane image is 1.5GB and its pull is the longest single thing a
+    # pull request waits for. Nothing it needs comes from the steps before
+    # `make gds`, so it starts here and runs under them. The gds action waits.
+    - name: Start pulling the LibreLane image
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/start-librelane-pull.sh"
+
+    - name: The c4o-core image is pinned consistently
+      shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/pins.py"
+
+    - name: Pull the c4o-core image the Makefile names
+      id: image
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/pull-image.sh"
+
+    # Keyed on the PDK version the image installs, read out of the image. A key
+    # that does not name the version is restored and then not used once the
+    # image moves to another PDK, and a hit on it means the new one is never
+    # saved. No restore-keys, for the same reason.
+    - name: Which PDK version does this c4o-core install?
+      id: pdk
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/pdk-version.sh" "${{ steps.image.outputs.image }}"
+
+    - name: Cache Sky130 PDK
+      id: cache
+      uses: actions/cache@v5
+      with:
+        path: pdks
+        key: sky130-pdk-${{ runner.os }}-${{ steps.pdk.outputs.version }}
+
+    - name: The Dev Container user exists in its image
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/devcontainer-user.sh"

@@ -1,0 +1,69 @@
+name: c4o-core report
+description: >
+  After `make gds`: the gate-level simulation (not on pull requests, and only
+  when config.yaml asks for it), the signoff numbers on the run's summary, and
+  the results page. On a push to main it also asks whether GitHub Pages is set
+  to publish from Actions and, if so, uploads the page for a deploy job.
+inputs:
+  sections:
+    description: >
+      Extra <h2> sections the results page must have, one per line, beyond the
+      four the flow always gives (Signoff checks, Worst setup path, Area,
+      Power) and Waveform when config.yaml has //WAVE_SIGNALS.
+    required: false
+    default: ''
+  gatesim-minutes:
+    description: The gate-level simulation is stopped after this many minutes.
+    required: false
+    default: '15'
+outputs:
+  publish-pages:
+    description: "'true' when the results page was uploaded for a Pages deploy."
+    value: ${{ steps.pages.outputs.publish }}
+runs:
+  using: composite
+  steps:
+    # Not on pull requests: a gate-level testbench cannot shrink the design
+    # through a parameter, so this can take minutes. Phrased as "not a pull
+    # request" so that workflow_dispatch runs it too.
+    - name: Gate-level simulation
+      if: github.event_name != 'pull_request'
+      shell: bash
+      env:
+        MINUTES: ${{ inputs.gatesim-minutes }}
+      run: |
+        if ! grep -q '^"//GATE_TESTS":' config.yaml; then
+          echo "config.yaml has no //GATE_TESTS -- no gate-level testbench to run."
+          exit 0
+        fi
+        timeout "${MINUTES}m" make gatesim
+
+    # The [INFO] lines are c4o-core saying which files it read, not results,
+    # so they stay in the log.
+    - name: Signoff numbers on the summary page
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/signoff-summary.sh"
+
+    - name: Build the results page
+      shell: bash
+      env:
+        EXTRA_SECTIONS: ${{ inputs.sections }}
+      run: bash "$GITHUB_ACTION_PATH/results-page.sh"
+
+    # Only main is published, and only when the repository has Pages set to
+    # "GitHub Actions". A copy of the template starts with Pages off, and
+    # turning it on is a setting no workflow token can change -- so off is a
+    # notice, not a red run. An answer that is neither yes nor no fails.
+    - name: Is GitHub Pages set to publish from Actions?
+      id: pages
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: bash "$GITHUB_ACTION_PATH/pages-setting.sh"
+
+    - name: Upload the results page
+      if: steps.pages.outputs.publish == 'true'
+      uses: actions/upload-pages-artifact@v5
+      with:
+        path: build/site

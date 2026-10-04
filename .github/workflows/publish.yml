@@ -81,6 +81,19 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # actions/ is called from other repositories, and they name a ref that
+      # moves: the branch vMAJOR, so that a fix reaches them with no pull
+      # request, the way the X.Y image tag does. A branch and not a tag: the
+      # release-tag ruleset forbids deleting or rewriting anything under
+      # refs/tags/v*, so a tag that has to move would be the one thing here
+      # that could never be corrected.
+      #
+      # After the image is pushed, so the branch never points at a release
+      # whose image is not there. Fast-forward only: a branch that has left
+      # the release line is refused rather than overwritten.
+      - name: Move the major branch to this release
+        run: bash scripts/move-major-branch.sh
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
