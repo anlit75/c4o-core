@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.20.0](https://github.com/anlit75/c4o-core/compare/v2.19.0...v2.20.0) (2026-10-04)
+
+
+### Features
+
+* show drive strength after synthesis and after routing ([#74](https://github.com/anlit75/c4o-core/issues/74)) ([de55666](https://github.com/anlit75/c4o-core/commit/de55666c97fc968c52e006fe7c802fd18ed3ef21))
+
 ## [2.19.0](https://github.com/anlit75/c4o-core/compare/v2.18.0...v2.19.0) (2026-10-04)
 
 
