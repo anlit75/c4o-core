@@ -599,3 +599,169 @@ jobs:
           name: artifacts-docker-build
           path: build/
           retention-days: 5
+
+  # actions/ only ever runs inside somebody else's workflow, so a wiring
+  # mistake in an action.yml -- a wrong path, a renamed output, a step out of
+  # order -- is first seen by a caller, after the release that moved v2 has
+  # reached all of them. Here the five actions run from this checkout, in the
+  # order a caller uses them, and what each leaves behind is asserted.
+  #
+  # The caller is ChipForAll at main, not a copy of it kept here: it is the
+  # real thing, and nothing drifts. The price is that a change over there can
+  # turn this job red, which is a caller breaking.
+  #
+  # setup pulls the c4o-core image by the name the Makefile gives and cannot
+  # use one that only exists locally. So the image of this checkout goes to a
+  # local registry, and the caller's Makefile and devcontainer.json are pointed
+  # at it, along with this checkout's stub.mk.
+  actions-end-to-end:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read  # only to ask whether Pages is on
+    services:
+      registry:
+        image: registry:2
+        ports: ['5000:5000']
+    steps:
+      # The actions read Makefile, config.yaml, pdks/, build/ and runs/ at the
+      # workspace root and have no working-directory input, so the caller goes
+      # there and this checkout goes beside it.
+      - name: Check out ChipForAll as the caller
+        uses: actions/checkout@v5
+        with:
+          repository: anlit75/ChipForAll
+          ref: main
+
+      - name: Check out this commit of c4o-core
+        uses: actions/checkout@v5
+        with:
+          path: c4o-core
+
+      - name: Build this checkout's image and push it to the local registry
+        run: |
+          docker build -t localhost:5000/c4o-core:test c4o-core
+          docker push localhost:5000/c4o-core:test
+
+      # Each edit is asserted, so a sed that matched nothing turns this red
+      # instead of leaving the caller on the published image.
+      - name: Make ChipForAll a caller of this checkout
+        run: |
+          local_image=localhost:5000/c4o-core:test
+          marker="# --- From here down this file is c4o-core's stub.mk"
+
+          sed -i "s|^C4O_IMAGE := .*|C4O_IMAGE := $local_image|" Makefile
+          sed -i -E 's|("image"[[:space:]]*:[[:space:]]*")[^"]*(")|\1'"$local_image"'\2|' .devcontainer/devcontainer.json
+
+          line=$(grep -nF "$marker" Makefile | head -n 1 | cut -d: -f1 || true)
+          if [ -z "$line" ]; then
+            echo "::error::The Makefile has no line starting '$marker'. The stub cannot be replaced."
+            exit 1
+          fi
+          head -n $((line - 1)) Makefile > Makefile.new
+          cat c4o-core/stub.mk >> Makefile.new
+          mv Makefile.new Makefile
+
+          count=$(grep -cxF "C4O_IMAGE := $local_image" Makefile || true)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected one 'C4O_IMAGE := $local_image' line in the Makefile, found $count."
+            exit 1
+          fi
+          line=$(grep -nF "$marker" Makefile | head -n 1 | cut -d: -f1)
+          if ! tail -n +"$line" Makefile | diff -u c4o-core/stub.mk -; then
+            echo "::error::The Makefile from its marker line on is not c4o-core's stub.mk."
+            exit 1
+          fi
+          if ! grep -qF "\"image\": \"$local_image\"" .devcontainer/devcontainer.json; then
+            echo "::error::.devcontainer/devcontainer.json does not name $local_image."
+            exit 1
+          fi
+          grep -n '^C4O_IMAGE :=' Makefile
+          grep -n '"image"' .devcontainer/devcontainer.json
+
+      - name: Setup
+        id: setup
+        uses: ./c4o-core/actions/setup
+
+      - name: Setup reported the image, the PDK version and the cache
+        env:
+          IMAGE: ${{ steps.setup.outputs.image }}
+          PDK_VERSION: ${{ steps.setup.outputs.pdk-version }}
+          CACHE_HIT: ${{ steps.setup.outputs.cache-hit }}
+        run: |
+          echo "image=$IMAGE pdk-version=$PDK_VERSION cache-hit=$CACHE_HIT"
+          if [ "$IMAGE" != localhost:5000/c4o-core:test ]; then
+            echo "::error::setup's image output is '$IMAGE', expected localhost:5000/c4o-core:test."
+            exit 1
+          fi
+          if ! grep -qE '^[0-9a-f]{40}$' <<<"$PDK_VERSION"; then
+            echo "::error::setup's pdk-version output is '$PDK_VERSION', expected 40 hex digits."
+            exit 1
+          fi
+          if [ "$CACHE_HIT" != true ] && [ "$CACHE_HIT" != false ]; then
+            echo "::error::setup's cache-hit output is '$CACHE_HIT', expected true or false."
+            exit 1
+          fi
+
+      - name: Checks
+        uses: ./c4o-core/actions/checks
+
+      # Read as XML: a test that failed is a <failure>, and the runner exits 0
+      # either way.
+      - name: The cocotb results hold passing tests
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          path = "build/cocotb-results.xml"
+          try:
+              root = ET.parse(path).getroot()
+          except (OSError, ET.ParseError) as e:
+              print(f"::error::{path} cannot be read: {e}")
+              sys.exit(1)
+          cases = list(root.iter("testcase"))
+          bad = list(root.iter("failure")) + list(root.iter("error"))
+          print(f"{len(cases)} testcase(s), {len(bad)} failure(s) or error(s)")
+          if not cases:
+              print(f"::error::{path} has no testcase.")
+              sys.exit(1)
+          if bad:
+              print(f"::error::{path} has failures or errors.")
+              sys.exit(1)
+          PY
+
+      - name: Physical design
+        uses: ./c4o-core/actions/gds
+
+      - name: Report
+        id: report
+        uses: ./c4o-core/actions/report
+
+      # Written by c4o-core's own `make site`, so the commit is this checkout's:
+      # the workflow runs in c4o-core, and GITHUB_SHA is its commit.
+      - name: The results page links the commit it was built from
+        env:
+          PUBLISH_PAGES: ${{ steps.report.outputs.publish-pages }}
+        run: |
+          echo "publish-pages='$PUBLISH_PAGES'"
+          page=build/site/index.html
+          if [ ! -s "$page" ]; then
+            echo "::error::$page is missing or empty."
+            exit 1
+          fi
+          if ! grep -qF "/commit/$GITHUB_SHA" "$page"; then
+            echo "::error::$page does not link /commit/$GITHUB_SHA."
+            exit 1
+          fi
+
+      # Its schematic and layout artifact names are fixed; the other job here
+      # uploads artifacts-docker-build, so nothing collides.
+      - name: Upload
+        if: always()
+        uses: ./c4o-core/actions/upload
+        with:
+          name: actions-end-to-end
+          retention-days: 1
