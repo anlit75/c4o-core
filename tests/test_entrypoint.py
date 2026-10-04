@@ -1792,6 +1792,172 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    # --- drive strength: the _N of the cell name, after synthesis and after routing ---
+
+    # A real LibreLane 3.0.14 run of ChipForAll's blinky (WIDTH 16), whole where
+    # it is small: final/metrics.json, final/nl/blinky.nl.v, synthesis's
+    # stat.json, and the STA step's config.json cut to the keys the page reads.
+    # Its 274 instances are 65 from synthesis, 21 the flow added (18 X1 hold and
+    # delay cells, 3 X16 clock buffers), 27 taps and 161 decap and fill; its
+    # metrics count 113 standard cells, which is the 86 and the taps.
+    REAL_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "run-3.0.14-blinky16")
+    REAL_METRICS = os.path.join("runs", "blinky_run", "final", "metrics.json")
+
+    def _real_run(self, *remove):
+        shutil.copytree(self.REAL_FIXTURE, "runs")
+        for path in remove:
+            os.remove(os.path.join("runs", "blinky_run", path))
+
+    def test_drive_strength_is_the_number_ending_the_cell_name(self):
+        cells = {
+            "sky130_fd_sc_hd__dfrtp_2": 16,
+            "sky130_fd_sc_hd__clkbuf_16": 3,
+            "sky130_fd_sc_hd__dlygate4sd3_1": 14,
+            "sky130_fd_sc_hd__clkdlybuf4s25_1": 4,
+            "sky130_fd_sc_hd__inv_2": 17,
+        }
+        self.assertEqual(entrypoint.drive_strengths(cells), {1: 18, 2: 33, 16: 3})
+
+    def test_drive_strength_leaves_out_cells_with_no_logic_function(self):
+        cells = {
+            "sky130_fd_sc_hd__tapvpwrvgnd_1": 27,
+            "sky130_fd_sc_hd__decap_3": 43,
+            "sky130_ef_sc_hd__decap_12": 19,
+            "sky130_fd_sc_hd__fill_1": 37,
+            "sky130_fd_sc_hd__fill_diode_2": 2,
+            "sky130_fd_sc_hd__diode_2": 4,
+            "sky130_fd_sc_hd__and2_2": 3,
+            "my_macro_8": 1,  # a macro is not a standard cell
+            "$_AND_": 5,      # nor is a Yosys-internal type
+        }
+        self.assertEqual(entrypoint.drive_strengths(cells), {2: 3})
+
+    def test_drive_strength_counts_the_routed_netlist_of_a_real_run(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run()
+            cells = entrypoint.routed_cells(self.REAL_METRICS)
+            # Every instance, physical ones too: 113 standard cells + 161 fill.
+            self.assertEqual(sum(cells.values()), 274)
+            self.assertEqual(cells["sky130_fd_sc_hd__tapvpwrvgnd_1"], 27)
+            self.assertEqual(entrypoint.drive_table(self.REAL_METRICS),
+                             [(1, 0, 18), (2, 65, 65), (16, 0, 3)])
+        finally:
+            os.chdir(cwd)
+
+    def test_report_gives_the_drive_strength_before_and_after_routing(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run()
+            out = self._report(self.REAL_METRICS)
+            # One column with the other rows: "instance classes" sets it.
+            self.assertIn("\n  drive strength     X1 0->18, X2 65->65, X16 0->3  (synthesis->routing)\n", out)
+            self.assertIn("\n  instance classes   32 logic,", out)
+        finally:
+            os.chdir(cwd)
+
+    def test_report_drive_strength_names_the_stage_it_has_and_never_prints_zeroes_for_the_other(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run("final/nl/blinky.nl.v")
+            out = self._report(self.REAL_METRICS)
+            self.assertIn("\n  drive strength     X2 65  (after synthesis)\n", out)
+            self.assertNotIn("->", out)
+            shutil.rmtree("runs")
+            self._real_run("06-yosys-synthesis/reports/stat.json")
+            out = self._report(self.REAL_METRICS)
+            self.assertIn("\n  drive strength     X1 18, X2 65, X16 3  (after routing)\n", out)
+            self.assertNotIn("->", out)
+            shutil.rmtree("runs")
+            self._real_run("final/nl/blinky.nl.v", "06-yosys-synthesis/reports/stat.json")
+            self.assertNotIn("drive strength", self._report(self.REAL_METRICS))
+        finally:
+            os.chdir(cwd)
+
+    def test_site_tabulates_the_drive_strength_of_a_real_run(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run()
+            page = self._site()
+            area = page[page.index('<section id="area">'):]
+            area = area[:area.index("</section>")]
+            self.assertIn("<h3>Drive strength</h3>", area)
+            self.assertIn('<th>drive strength</th><th class="num">after synthesis</th>'
+                          '<th class="num">after routing</th>', area)
+            rows = re.findall(r'<tr><td>(X\d+)</td><td class="num">(\d+)</td><td class="num">(\d+)</td></tr>', area)
+            self.assertEqual(rows, [("X1", "0", "18"), ("X2", "65", "65"), ("X16", "0", "3")])
+            self.assertIn('<tr class="total"><td>Total</td><td class="num">65</td><td class="num">86</td></tr>', area)
+            self.assertIn("Place and route added 18 at X1 and added 3 at X16.", area)
+            # The 113 routed instances less the 27 well taps are the 86.
+            self.assertIn("65 after synthesis, 113 after routing", area)
+            self.assertIn("27 well taps", area)
+            # A table of its own, not also a card of the summary.
+            self.assertNotIn('<div class="label">drive strength</div>', page)
+            table = area[area.index('<table class="drive">'):]
+            for physical in ("tap", "decap", "fill", "diode"):
+                self.assertNotIn(physical, table.split("</table>")[0])
+        finally:
+            os.chdir(cwd)
+
+    def test_site_drive_strength_has_a_column_only_for_a_stage_it_read(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run("final/nl/blinky.nl.v")
+            area = self._site()
+            self.assertIn('<th>drive strength</th><th class="num">after synthesis</th></tr>', area)
+            self.assertNotIn('<th class="num">after routing</th>', area)
+            self.assertNotIn("Place and route added", area)
+            shutil.rmtree("runs")
+            self._real_run("06-yosys-synthesis/reports/stat.json")
+            area = self._site()
+            self.assertIn('<th>drive strength</th><th class="num">after routing</th></tr>', area)
+            self.assertNotIn('<th class="num">after synthesis</th>', area)
+            shutil.rmtree("runs")
+            self._real_run("final/nl/blinky.nl.v", "06-yosys-synthesis/reports/stat.json")
+            self.assertNotIn("Drive strength", self._site())
+        finally:
+            os.chdir(cwd)
+
+    def test_site_drive_strength_reading_says_what_routing_added_and_removed(self):
+        # Hand-made rows: a real run only ever added.
+        text = entrypoint.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
+        self.assertIn("Place and route added 2 at X1 and removed 2 at X2.", text)
+        text = entrypoint.site_page.drive_table([(2, 3, 3)])
+        self.assertIn("Place and route did not change the mix.", text)
+
+    def test_site_names_the_library_and_says_a_sky130_one_is_single_vt(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run()
+            area = self._site()
+            self.assertIn("<p>Standard cell library <code>sky130_fd_sc_hd</code>, "
+                          "single threshold voltage.</p>", area)
+            # No device names: the SkyWater doc and the cell netlists disagree.
+            self.assertNotIn("fet_01v8", area)
+            # Another PDK's library is named and nothing is claimed about it.
+            path = "runs/blinky_run/55-openroad-stapostpnr/config.json"
+            with open(path) as f:
+                config = json.load(f)
+            config["STD_CELL_LIBRARY"] = "gf180mcu_fd_sc_mcu7t5v0"
+            with open(path, "w") as f:
+                json.dump(config, f)
+            area = self._site()
+            self.assertIn("<p>Standard cell library <code>gf180mcu_fd_sc_mcu7t5v0</code>.</p>", area)
+            self.assertNotIn("threshold", area)
+            # A run that states no library gets no line.
+            del config["STD_CELL_LIBRARY"]
+            with open(path, "w") as f:
+                json.dump(config, f)
+            self.assertNotIn("Standard cell library", self._site())
+        finally:
+            os.chdir(cwd)
+
     def test_site_states_what_the_power_number_assumes(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)

@@ -232,13 +232,14 @@ $ c4o-core report
 
   blinky
 
-  die                69.485 x 80.205 um  (5573.04 um^2)
-  utilization        57.1%
-  instances          110 after synthesis, 198 after routing
-  instance classes   57 logic, 46 well taps, 35 timing-repair buffers, 27 inverters, 26 sequential, 7 clock buffers
-  setup slack        +4.70 ns  (0 violations)
+  die                56.375 x 67.095 um  (3782.48 um^2)
+  utilization        56.6%
+  instances          65 after synthesis, 113 after routing
+  instance classes   32 logic, 27 well taps, 18 timing-repair buffers, 17 inverters, 16 sequential, 3 clock buffers
+  drive strength     X1 0->18, X2 65->65, X16 0->3  (synthesis->routing)
+  setup slack        +5.52 ns  (0 violations)
   hold slack         +0.11 ns  (0 violations)
-  power              0.248 mW  (nom_tt_025C_1v80)
+  power              0.143 mW  (nom_tt_025C_1v80)
   signoff            clean  (DRC, LVS, antenna, XOR)
   lint warnings      0
   layout             runs/blinky_run/final/render/blinky.png
@@ -299,6 +300,7 @@ Three details worth knowing:
     every instance under a class (`design__instance__count__class:*`). The row
     lists them largest first, fill left out. They add up to the routed count.
     In one real run, 88 of 198 were buffers and taps that the flow added.
+*   **Drive strength is the number that ends a cell's name.** `dfrtp_2` is X2. The row counts the cells at each strength after synthesis, then after routing. Synthesis's count comes from `reports/stat.json`. The routed count comes from the netlist in `final/nl/`, which lists every instance. Taps, decap, fill and antenna diodes have no logic function and are left out. A stage with no source is left out, not shown as zero.
 
 It is informational and never fails: closing timing is iterative, LibreLane does
 not treat a violation as fatal either, and the checks that *are* fatal have
@@ -318,7 +320,7 @@ The sections run in this order:
 |---|---|---|
 | Tests | the cocotb results | When an RTL and a gate-level run exist, they share one table with a column each. |
 | Timing | `metrics.json`, and `config.json` of the newest `*-openroad-stapostpnr` step | Says whether timing is met. Gives the worst setup and hold slack over all corners, the violation count and the reg-to-reg slack. Then lists the constraints the run used: clock period, clock uncertainty, clock transition, timing derate and I/O delay. Each says whether `config.yaml` set it or the flow defaulted it. A constraint the run does not state is left out. |
-| Area and instances | `metrics.json` and synthesis's `reports/stat.json` | Cards for die, core utilization and instances. One bar of the area after routing, split into synthesis's flip-flops and logic and the difference that place and route added. One bar of the instance count by class, split into what synthesis produced, what the flow added and anything unclassified. The headline is the count after synthesis. The count after routing comes second. |
+| Area and instances | `metrics.json`, synthesis's `reports/stat.json` and `final/nl/*.nl.v` | Cards for die, core utilization and instances. One bar of the area after routing, split into synthesis's flip-flops and logic and the difference that place and route added. One bar of the instance count by class, split into what synthesis produced, what the flow added and anything unclassified. The headline is the count after synthesis. The count after routing comes second. A table of instances by drive strength follows, after synthesis and after routing, with a line saying what place and route added. The section names the standard cell library from the run's `config.json`. For a `sky130_fd_sc_*` library it adds that the library has a single threshold voltage. |
 | Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential, combinational and clock split. States the corner, the clock frequency from `CLOCK_PERIOD` and the activity, which is OpenSTA's default and not a simulation's. |
 | Signoff checks | `metrics.json` | DRC is one row, the sum of Magic and KLayout, and a failure names the tool: `3 (KLayout)`. LVS, antenna and XOR have rows of their own. Antenna says that OpenROAD checks it in this flow, not the DRC decks. |
 

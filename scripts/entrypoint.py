@@ -998,24 +998,93 @@ def default_power(metrics_path):
         rows = site_page.power_groups(f.read())
     return (corner, rows) if any(r[0] == "Total" for r in rows) else None
 
-def synthesis_instances(metrics_path):
+def synthesis_design(metrics_path):
     """
-    The cell count Yosys.Synthesis reported (stat.json design.num_cells), or
-    None. Read from the run's own step directory, for the reason find_render
-    gives, and from the steps of the run final/ describes.
+    The `design` object of the stat.json Yosys.Synthesis wrote, or {}. Read
+    from the run's own step directory, for the reason find_render gives, and
+    from the steps of the run final/ describes.
+    """
+    final_dir = os.path.dirname(os.path.abspath(metrics_path))
+    if os.path.basename(final_dir) != "final":
+        return {}
+    stat = newest_step(os.path.dirname(final_dir), "*-yosys-synthesis/reports/stat.json")
+    if not stat:
+        return {}
+    try:
+        with open(stat) as f:
+            design = json.load(f).get("design", {})
+    except (OSError, ValueError):
+        return {}
+    return design if isinstance(design, dict) else {}
+
+def synthesis_instances(metrics_path):
+    """The cell count Yosys.Synthesis reported (design.num_cells), or None."""
+    count = synthesis_design(metrics_path).get("num_cells")
+    return count if isinstance(count, int) else None
+
+# A standard cell as the netlists and stat.json name it: sky130_fd_sc_hd__dfrtp_2
+# is library sky130_fd_sc_hd, function dfrtp, drive strength 2. The `_sc_` and
+# the double underscore are the sky130 naming; a macro or a Yosys-internal
+# type does not match and is not counted.
+STD_CELL = re.compile(r"\w+?_sc_\w+?__(?P<function>\w+)_(?P<drive>\d+)$")
+
+# Cells with no logic function, which have no drive strength to choose: well
+# taps, decap, fill and antenna diodes. LibreLane files the first three under
+# tap_cell and fill_cell (decap is fill's). A diode's _2 is its size, not a
+# driver's strength, and the flow places it, not the design.
+PHYSICAL_ONLY = ("tap", "decap", "fill", "diode")
+
+def drive_strengths(cells):
+    """{drive strength: count} of the logic cells in a {cell name: count} map."""
+    out = {}
+    for name, count in cells.items():
+        m = STD_CELL.match(name)
+        if m and not m["function"].startswith(PHYSICAL_ONLY):
+            out[int(m["drive"])] = out.get(int(m["drive"]), 0) + count
+    return out
+
+def routed_cells(metrics_path):
+    """
+    {cell name: instances} of the routed design, or None. From the netlist
+    LibreLane copies to final/nl/, the one list of instances that is plain
+    text and needs no tool to open: one line per instance, `<cell> <name> (`.
+    Measured on 3.0.14 it holds every instance -- the 274 of a run whose
+    metrics count 113 standard cells, 161 fill and decap, and 27 taps -- and
+    so does final/pnl/. 53-odb-cellfrequencytables's cell.rpt has the same
+    counts, but as a terminal table that the next LibreLane may redraw.
     """
     final_dir = os.path.dirname(os.path.abspath(metrics_path))
     if os.path.basename(final_dir) != "final":
         return None
-    stat = newest_step(os.path.dirname(final_dir), "*-yosys-synthesis/reports/stat.json")
-    if not stat:
+    found = sorted(glob.glob(os.path.join(final_dir, "nl", "*.nl.v")))
+    if not found:
         return None
+    counts = {}
     try:
-        with open(stat) as f:
-            count = json.load(f).get("design", {}).get("num_cells")
-    except (OSError, ValueError):
+        with open(found[0]) as f:
+            for line in f:
+                m = re.match(r"\s*(\w+_sc_\w+__\w+)\s+\S+\s*\(", line)
+                if m:
+                    counts[m[1]] = counts.get(m[1], 0) + 1
+    except OSError:
         return None
-    return count if isinstance(count, int) else None
+    return counts
+
+def drive_table(metrics_path):
+    """
+    [(drive strength, after synthesis, after routing)] by strength, smallest
+    first. A stage whose source is missing is None in every row, never a zero;
+    [] when neither stage is known.
+    """
+    synthesized = synthesis_design(metrics_path).get("num_cells_by_type")
+    synthesized = drive_strengths(synthesized) if isinstance(synthesized, dict) else None
+    routed = routed_cells(metrics_path)
+    routed = drive_strengths(routed) if routed is not None else None
+    if synthesized is None and routed is None:
+        return []
+    count = lambda stage, n: None if stage is None else stage.get(n, 0)
+    sizes = sorted(set(synthesized or ()) | set(routed or ()))
+    return [(n, count(synthesized, n), count(routed, n)) for n in sizes]
 
 # LibreLane's names for the classes a real 3.0.14 run reported, in words. A
 # class not listed here is printed under its own name, underscores spaced.
@@ -1081,6 +1150,18 @@ def report_rows(metrics, path):
         rows.append(("instance classes", ", ".join(
             f"{count} {CELL_CLASSES.get(name, name.replace('_', ' '))}"
             for name, count in classes)))
+
+    # What drive strength the cells have, before and after the flow. Taps, decap
+    # and fill have none and are left out. Only the stages that are known.
+    drive = drive_table(path)
+    if drive:
+        if all(s is not None and r is not None for _, s, r in drive):
+            text = ", ".join(f"X{n} {s}->{r}" for n, s, r in drive)
+            stage = "synthesis->routing"
+        else:
+            text = ", ".join(f"X{n} {s if s is not None else r}" for n, s, r in drive)
+            stage = "after synthesis" if drive[0][1] is not None else "after routing"
+        rows.append(("drive strength", f"{text}  ({stage})"))
 
     for label, slack_key, violation_key in (
         ("setup slack", "timing__setup__ws", "timing__setup_vio__count"),
@@ -1196,11 +1277,6 @@ def run_details(metrics_path, metrics, config):
     physical = details["physical"] = physical_details(metrics)
     if os.path.basename(final_dir) != "final":
         return details
-    run_dir = os.path.dirname(final_dir)
-
-    def read(path):
-        with open(path) as f:
-            return f.read()
 
     run_config = sta_config(metrics_path)
     constraints = {}
@@ -1221,8 +1297,13 @@ def run_details(metrics_path, metrics, config):
     if power:
         details["power"] = power
 
-    stat = newest_step(run_dir, "*-yosys-synthesis/reports/stat.json")
-    design = json.loads(read(stat)).get("design", {}) if stat else {}
+    design = synthesis_design(metrics_path)
+    drive = drive_table(metrics_path)
+    if drive:
+        details["drive"] = drive
+    library = run_config.get("STD_CELL_LIBRARY")
+    if isinstance(library, str) and library:
+        physical["library"] = library
     # Two stages, not three peers: what synthesis produced (flip-flops and
     # logic), and the standard-cell total after routing, which contains them.
     area = {}
@@ -1297,7 +1378,8 @@ def cmd_site(args, config):
         # section exists: its row is the bare metric, which names no corner
         # and would disagree with the table next to it.
         own = ({"layout", "signoff"} | ({"power"} if "power" in details else set())
-               | ({"instance classes"} if "cells" in details else set()))
+               | ({"instance classes"} if "cells" in details else set())
+               | {"drive strength"})
         numbers = [(label, value) for label, value in rows if label not in own]
         render = dict(rows).get("layout")
         if render:
