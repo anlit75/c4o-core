@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.16.0](https://github.com/anlit75/c4o-core/compare/v2.15.3...v2.16.0) (2026-10-04)
+
+
+### Features
+
+* composite actions that run the flow in a repository made from the template ([#66](https://github.com/anlit75/c4o-core/issues/66)) ([9a96214](https://github.com/anlit75/c4o-core/commit/9a96214c6deb81d0e64a6d5eb8c7aa0f350a4b7f))
+
+
+### CI
+
+* run on pushes to main, and skip the image build for release pull requests ([#64](https://github.com/anlit75/c4o-core/issues/64)) ([93c58f9](https://github.com/anlit75/c4o-core/commit/93c58f958f094cbd14ba932a83980575660a36ff))
+
 ## [2.15.3](https://github.com/anlit75/c4o-core/compare/v2.15.2...v2.15.3) (2026-10-03)
 
 
