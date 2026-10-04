@@ -2182,6 +2182,8 @@ Endpoint: PRDATA[4] (output port clocked by CLK)
             # A typo is the usual cause: the message lists the names there are.
             self.assertIn("It declares: ", error.call_args[0][0])
             self.assertIn("tb_blinky.uut.count", error.call_args[0][0])
+            # Both forms of name: from a Verilog testbench and from a cocotb run.
+            self.assertIn("blinky.count", error.call_args[0][0])
         finally:
             os.chdir(cwd)
 
@@ -2226,6 +2228,265 @@ Endpoint: PRDATA[4] (output port clocked by CLK)
             self.assertIn('<div class="zoom-view"><a href="schematic.svg"><img src="schematic.svg"', page)
             self.assertIn('data-zoom="reset"', page)
             self.assertEqual(page.count("<script>"), 1)
+        finally:
+            os.chdir(cwd)
+
+    # --- no testbench: each kind runs when its key is set ---
+
+    def _no_testbench_config(self, **keys):
+        """RTL and the Python tests, without TEST_FILES unless a key says."""
+        os.makedirs(os.path.join(self.test_dir, "pytests"), exist_ok=True)
+        open(os.path.join(self.test_dir, "pytests/test_top.py"), "w").close()
+        config = {"VERILOG_FILES": ["src/**/*.v"], "DESIGN_NAME": "top"}
+        config.update(keys)
+        return config
+
+    def _sim_args(self, if_configured):
+        args = MagicMock()
+        args.files = None
+        args.if_configured = if_configured
+        return args
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_sim_if_configured_skips_when_only_cocotb_is_configured(self, mock_ensure, mock_run):
+        config = self._no_testbench_config(**{"//COCOTB_TESTS": ["dir::pytests/*.py"]})
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with patch("entrypoint.log_info") as info:
+                entrypoint.cmd_sim(self._sim_args(True), config)
+            mock_run.assert_not_called()
+            self.assertIn("TEST_FILES is not set", info.call_args[0][0])
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_sim_if_configured_fails_when_nothing_is_configured(self, mock_ensure, mock_run):
+        config = self._no_testbench_config()
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_sim(self._sim_args(True), config)
+            self.assertEqual(cm.exception.code, 1)
+            self.assertIn("TEST_FILES", error.call_args[0][0])
+            self.assertIn("COCOTB_TESTS", error.call_args[0][0])
+            mock_run.assert_not_called()
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_sim_if_configured_runs_when_the_testbench_is_configured(self, mock_ensure, mock_run):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            entrypoint.cmd_sim(self._sim_args(True), self.config)
+            self.assertEqual(mock_run.call_args_list[0][0][0][0], "iverilog")
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_sim_asked_for_by_name_still_fails_without_a_testbench(self, mock_ensure, mock_run):
+        # Even with the Python tests configured: `make sim` named sim.
+        config = self._no_testbench_config(**{"//COCOTB_TESTS": ["dir::pytests/*.py"]})
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_sim(self._sim_args(False), config)
+            self.assertEqual(cm.exception.code, 1)
+            self.assertIn("sim has no testbench", error.call_args[0][0])
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.check_cocotb_results')
+    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_if_configured_skips_when_only_a_testbench_is_configured(
+        self, mock_ensure, mock_run, mock_cfg, mock_check
+    ):
+        config = self._no_testbench_config(**{"TEST_FILES": ["test/*.v"]})
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = self._sim_args(True)
+            args.netlist = None
+            with patch("entrypoint.log_info") as info:
+                entrypoint.cmd_cocotb(args, config)
+            mock_run.assert_not_called()
+            mock_check.assert_not_called()
+            self.assertIn("COCOTB_TESTS is not set", info.call_args[0][0])
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_if_configured_fails_when_nothing_is_configured(self, mock_ensure, mock_run):
+        config = self._no_testbench_config()
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = self._sim_args(True)
+            args.netlist = None
+            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_cocotb(args, config)
+            self.assertEqual(cm.exception.code, 1)
+            self.assertIn("TEST_FILES", error.call_args[0][0])
+            self.assertIn("COCOTB_TESTS", error.call_args[0][0])
+            mock_run.assert_not_called()
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_cocotb_asked_for_by_name_still_fails_without_tests(self, mock_ensure, mock_run):
+        config = self._no_testbench_config(**{"TEST_FILES": ["test/*.v"]})
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = self._sim_args(False)
+            args.netlist = None
+            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_cocotb(args, config)
+            self.assertEqual(cm.exception.code, 1)
+            self.assertIn("No cocotb tests", error.call_args[0][0])
+        finally:
+            os.chdir(cwd)
+
+    def test_if_configured_is_off_unless_given(self):
+        parser = entrypoint.build_parser()
+        for command in ("sim", "cocotb"):
+            self.assertFalse(parser.parse_args([command]).if_configured)
+            self.assertTrue(parser.parse_args([command, "--if-configured"]).if_configured)
+
+    # --- gatesim: the Verilog testbench, else the cocotb tests ---
+
+    @patch('entrypoint.check_cocotb_results')
+    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_gatesim_runs_the_cocotb_tests_when_there_is_no_gate_testbench(
+        self, mock_ensure, mock_run, mock_cfg, mock_check
+    ):
+        config = self._gl_cocotb_config()
+        del config["//GATE_TESTS"]
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+            args.netlist = None
+
+            entrypoint.cmd_gatesim(args, config)
+
+            compile_cmd = mock_run.call_args_list[0][0][0]
+            self.assertTrue(any("top.nl.v" in a for a in compile_cmd))
+            self.assertFalse(any("src/" in a for a in compile_cmd))
+            self.assertIn("build/cocotb-gl.vvp", compile_cmd)
+            self.assertEqual(compile_cmd[compile_cmd.index("-s") + 1], "top")
+            self.assertEqual(
+                mock_check.call_args[0][0], os.path.join("build", "cocotb-gl-results.xml")
+            )
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.cmd_cocotb')
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_gatesim_prefers_the_gate_testbench_to_the_cocotb_tests(
+        self, mock_ensure, mock_run, mock_cocotb
+    ):
+        config = self._gl_cocotb_config()  # holds both keys
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.netlist = None
+
+            entrypoint.cmd_gatesim(args, config)
+
+            mock_cocotb.assert_not_called()
+            compile_cmd = mock_run.call_args_list[0][0][0]
+            self.assertTrue(any("tb_top_gl.v" in a for a in compile_cmd))
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.ensure_build_dir')
+    def test_gatesim_error_names_both_keys(self, mock_ensure, mock_run):
+        config = self._gl_workspace()
+        del config["//GATE_TESTS"]
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.netlist = None
+            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
+                entrypoint.cmd_gatesim(args, config)
+            self.assertEqual(cm.exception.code, 1)
+            self.assertIn("GATE_TESTS", error.call_args[0][0])
+            self.assertIn("COCOTB_TESTS", error.call_args[0][0])
+            mock_run.assert_not_called()
+        finally:
+            os.chdir(cwd)
+
+    # --- the waveform of a cocotb run ---
+
+    def _cocotb_compile_cmd(self, config, netlist=None):
+        os.makedirs("build", exist_ok=True)
+        args = MagicMock()
+        args.files = None
+        args.netlist = netlist
+        with patch('entrypoint.check_cocotb_results'), \
+             patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__)), \
+             patch('entrypoint.ensure_build_dir'), \
+             patch('entrypoint.run_command') as run:
+            entrypoint.cmd_cocotb(args, config)
+        return run.call_args_list[0][0][0]
+
+    def test_cocotb_dumps_a_vcd_from_the_design_when_wave_signals_is_set(self):
+        config = self._no_testbench_config(**{
+            "//COCOTB_TESTS": ["dir::pytests/*.py"], "//WAVE_SIGNALS": ["top.count"]})
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            compile_cmd = self._cocotb_compile_cmd(config)
+            # Two roots: the design, and the module that dumps it.
+            roots = [compile_cmd[i + 1] for i, a in enumerate(compile_cmd) if a == "-s"]
+            self.assertEqual(roots, ["top", "c4o_dump"])
+            self.assertIn("build/c4o_dump.v", compile_cmd)
+            with open("build/c4o_dump.v") as f:
+                dump = f.read()
+            self.assertIn('$dumpfile("build/top.vcd")', dump)
+            self.assertIn("$dumpvars(0, top)", dump)
+        finally:
+            os.chdir(cwd)
+
+    def test_cocotb_dumps_nothing_without_wave_signals(self):
+        config = self._no_testbench_config(**{"//COCOTB_TESTS": ["dir::pytests/*.py"]})
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            compile_cmd = self._cocotb_compile_cmd(config)
+            self.assertNotIn("c4o_dump", compile_cmd)
+            self.assertFalse(any("c4o_dump" in a for a in compile_cmd))
+            self.assertFalse(os.path.exists("build/c4o_dump.v"))
+        finally:
+            os.chdir(cwd)
+
+    def test_cocotb_on_the_netlist_does_not_dump(self):
+        config = self._gl_cocotb_config()
+        config["//WAVE_SIGNALS"] = ["top.count"]
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            compile_cmd = self._cocotb_compile_cmd(config, netlist="")
+            self.assertFalse(any("c4o_dump" in a for a in compile_cmd))
         finally:
             os.chdir(cwd)
 

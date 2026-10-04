@@ -1,8 +1,10 @@
 name: c4o-core report
 description: >
-  After `make gds`: the gate-level simulation (not on pull requests, and only
-  when config.yaml asks for it), the signoff numbers on the run's summary, and
-  the results page. On a push to main it also asks whether GitHub Pages is set
+  After `make gds`: the gate-level simulation, the signoff numbers on the run's
+  summary, and the results page. The simulation is the Verilog testbench of
+  //GATE_TESTS (not on pull requests), else the cocotb tests of //COCOTB_TESTS
+  (on every event, with a check that the gates ran the tests the RTL ran).
+  Neither key means no gate-level simulation. On a push to main it also asks whether GitHub Pages is set
   to publish from Actions and, if so, uploads the page for a deploy job.
 inputs:
   sections:
@@ -26,7 +28,7 @@ runs:
     # Not on pull requests: a gate-level testbench cannot shrink the design
     # through a parameter, so this can take minutes. Phrased as "not a pull
     # request" so that workflow_dispatch runs it too.
-    - name: Gate-level simulation
+    - name: Gate-level simulation (Verilog testbench)
       if: github.event_name != 'pull_request'
       shell: bash
       env:
@@ -37,6 +39,31 @@ runs:
           exit 0
         fi
         timeout "${MINUTES}m" make gatesim
+
+    # The same Python tests as the RTL run, on the gates. No `if:` on the event:
+    # the tests are the ones that already run on a pull request, and the point
+    # of running them again is to catch a change that breaks only the gates.
+    # `make gatesim` runs these same tests when //GATE_TESTS is absent, so this
+    # step runs exactly when the one above does not.
+    - name: Gate-level simulation (cocotb tests)
+      shell: bash
+      env:
+        MINUTES: ${{ inputs.gatesim-minutes }}
+      run: |
+        if grep -q '^"//GATE_TESTS":' config.yaml; then
+          echo "config.yaml has //GATE_TESTS -- the Verilog testbench is the gate-level run."
+          exit 0
+        fi
+        if ! grep -q '^"//COCOTB_TESTS":' config.yaml; then
+          echo "config.yaml has neither //GATE_TESTS nor //COCOTB_TESTS -- no gate-level simulation to run."
+          exit 0
+        fi
+        mkdir -p build
+        set -o pipefail
+        # Not `make gatesim`: before 2.18 that target wants //GATE_TESTS. C4O_COCOTB
+        # is public in every 2.x, so this works with any 2.x image.
+        timeout "${MINUTES}m" make --eval '__c4o_cocotb_gates: ; $(C4O_COCOTB) cocotb --netlist' __c4o_cocotb_gates 2>&1 | tee build/cocotb-gl.log
+        bash "$GITHUB_ACTION_PATH/cocotb-gates.sh"
 
     # The [INFO] lines are c4o-core saying which files it read, not results,
     # so they stay in the log.

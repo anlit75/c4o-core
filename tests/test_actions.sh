@@ -83,6 +83,67 @@ expect 1 "results page: //WAVE_SIGNALS set and no Waveform section" results ''
 page '<h2>Waveform</h2>' abc123
 expect 0 "results page: //WAVE_SIGNALS set and Waveform there" results ''
 
+# --- report/cocotb-gates.sh --------------------------------------------------
+# The two logs the cocotb gate step compares. Each case writes what cocotb
+# prints, and states the exit code and the reason the script must give.
+refuses() {  # refuses <label> <text the output must have> <command...>
+  local label=$1 text=$2 out got
+  shift 2
+  out=$("$@" 2>&1)
+  got=$?
+  if [ "$got" -ne 1 ]; then
+    echo "FAIL  $label: exit $got, expected 1"
+    failures=$((failures + 1))
+  elif ! grep -qF -- "$text" <<<"$out"; then
+    echo "FAIL  $label: no '$text' in the output"
+    echo "$out" | sed 's/^/        /'
+    failures=$((failures + 1))
+  else
+    echo "ok    $label"
+  fi
+}
+reset
+summary_line() { echo "** TESTS=$1 PASS=$2 FAIL=$3 SKIP=$4 ** 123.45 ns"; }
+gates() { (cd "$work" && bash "$actions/report/cocotb-gates.sh"); }
+mkdir -p "$work/build"
+summary_line 4 4 0 0 > "$work/build/cocotb-rtl.log"
+summary_line 4 4 0 0 > "$work/build/cocotb-gl.log"
+expect 0 "cocotb gates: the same summary on both" gates
+
+summary_line 4 3 1 0 > "$work/build/cocotb-gl.log"
+refuses "cocotb gates: a failure on the gates" "did not pass everything" gates
+
+summary_line 3 3 0 0 > "$work/build/cocotb-gl.log"
+refuses "cocotb gates: fewer tests on the gates" "did not run the same tests" gates
+
+summary_line 4 3 0 1 > "$work/build/cocotb-gl.log"
+refuses "cocotb gates: a skipped test on the gates" "did not pass everything" gates
+
+echo "no summary here" > "$work/build/cocotb-gl.log"
+refuses "cocotb gates: no summary line on the gates" "printed no summary" gates
+
+rm "$work/build/cocotb-gl.log"
+refuses "cocotb gates: no gate log at all" "printed no summary" gates
+
+summary_line 4 4 0 0 > "$work/build/cocotb-gl.log"
+rm "$work/build/cocotb-rtl.log"
+refuses "cocotb gates: no RTL log is an error, not a skip" "cocotb-rtl.log is missing" gates
+
+# --- checks/tests-configured.sh ----------------------------------------------
+reset
+configured() { (cd "$work" && bash "$actions/checks/tests-configured.sh"); }
+printf 'DESIGN_NAME: x\n"//TEST_FILES":\n  - dir::a.v\n' > "$work/config.yaml"
+expect 0 "tests configured: a Verilog testbench" configured
+printf 'DESIGN_NAME: x\n"//COCOTB_TESTS":\n  - dir::a.py\n' > "$work/config.yaml"
+expect 0 "tests configured: Python tests" configured
+printf '"//TEST_FILES":\n  - dir::a.v\n"//COCOTB_TESTS":\n  - dir::a.py\n' > "$work/config.yaml"
+expect 0 "tests configured: both" configured
+printf 'DESIGN_NAME: x\n' > "$work/config.yaml"
+refuses "tests configured: neither names both keys" '"//TEST_FILES"' configured
+refuses "tests configured: ... and the other key" '"//COCOTB_TESTS"' configured
+printf 'DESIGN_NAME: x\n"//TEST_FILES_OLD":\n  - dir::a.v\n"//GATE_TESTS":\n  - dir::g.v\n' > "$work/config.yaml"
+refuses "tests configured: a near name or a gate testbench does not count" "neither" configured
+
 # --- scripts/move-major-branch.sh --------------------------------------------
 # Against a bare repository standing in for origin. Two commits, a then b.
 script="$actions/../scripts/move-major-branch.sh"

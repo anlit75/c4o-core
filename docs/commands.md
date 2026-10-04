@@ -58,6 +58,8 @@ async def reset_clears_the_count(dut):
 
 `DESIGN_NAME` is the module cocotb drives, so no testbench wrapper is needed.
 
+`sim` and `cocotb` both accept `--if-configured`. The command then skips, with a message, when its own key is not set. `make all` uses it. It fails when neither `"//TEST_FILES"` nor `"//COCOTB_TESTS"` is set. Without the flag, a missing key is always an error.
+
 Two things worth knowing before you write one:
 
 *   **A failing cocotb test does not fail the simulator.** `vvp` exits 0 whether
@@ -99,6 +101,10 @@ netlist, so nothing is shared with the RTL run.
 The two runs keep separate verdicts, `build/cocotb-results.xml` and
 `build/cocotb-gl-results.xml`, so running both leaves both readable.
 
+### The waveform of a cocotb run
+
+When `"//WAVE_SIGNALS"` is set, the RTL run writes `build/<DESIGN_NAME>.vcd`. The signal names start at the design: `counter.count`. Without the key nothing is dumped. The `--netlist` run never dumps.
+
 ## Simulating the gates (gatesim)
 
 `sim` shows the RTL behaves. `gatesim` shows the gates synthesis actually
@@ -111,6 +117,8 @@ STD_CELL_LIBRARY: sky130_fd_sc_hd
 "//GATE_TESTS":
   - dir::test/*_gl.v
 ```
+
+Without `"//GATE_TESTS"`, `gatesim` runs the `"//COCOTB_TESTS"` on the netlist. That is the run of `cocotb --netlist`, with the same verdict file. With neither key it fails and names both.
 
 It finds the newest netlist under `runs/` or `build/runs/`, and derives the cell
 models from `PDK` and `STD_CELL_LIBRARY` — no third key to disagree with those

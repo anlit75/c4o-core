@@ -103,6 +103,10 @@ endif
 
 .PHONY: all help lint sim cocotb gatesim synth schematic gds pdk report site clean distclean shell
 
+# A bare `make all` asks for no test kind by name: it runs each kind whose key
+# is in config.yaml and fails when neither is. The target-specific variable
+# reaches sim and cocotb as prerequisites of all, and only then.
+all: C4O_IF_CONFIGURED := --if-configured
 all: lint sim cocotb synth
 
 # Two colons, so a repository can add lines for its own targets with a
@@ -110,6 +114,7 @@ all: lint sim cocotb synth
 help::
 	@echo "Available targets:"
 	@echo "  make all     - Everything that runs in seconds: lint, sim, cocotb, synth"
+	@echo "                 (sim and cocotb run when config.yaml has their tests)"
 	@echo "  make lint    - Run Verilator lint check"
 	@echo "  make sim     - Run Icarus Verilog simulation"
 	@echo "  make cocotb  - Run the Python (cocotb) testbenches"
@@ -132,18 +137,22 @@ lint:
 	$(C4O_CMD) lint
 
 sim:
-	$(C4O_CMD) sim
+	$(C4O_CMD) sim $(C4O_IF_CONFIGURED)
 
 # The same RTL, driven from Python instead of Verilog. Not a replacement for
 # `make sim`: it is a second way to write a testbench.
 cocotb:
-	$(C4O_COCOTB) cocotb
+	$(C4O_COCOTB) cocotb $(C4O_IF_CONFIGURED)
 
 # Simulates runs/<tag>/final/nl/, which `make gds` leaves behind, against the
 # PDK's own cell models. `make sim` says the RTL behaves; this says the gates
 # synthesis produced still behave, which is a different claim.
+#
+# The testbench is the Verilog one of GATE_TESTS. Without that key it is the
+# cocotb tests of COCOTB_TESTS, as `cocotb --netlist` runs them. C4O_COCOTB so
+# that `make gatesim SEED=n` replays a random cocotb test like `make cocotb`.
 gatesim:
-	$(C4O_CMD) gatesim
+	$(C4O_COCOTB) gatesim
 
 synth:
 	$(C4O_CMD) synth

@@ -222,6 +222,21 @@ def root_args(config, test_files, key):
         sys.exit(1)
     return []
 
+def skip_unconfigured(config, command, key, other_key):
+    """
+    What `--if-configured` does when its key is absent: skip and say so, unless
+    the other kind of test is absent too. A repository with no test at all must
+    not pass `make all` in silence. Asked for and missing is an error, and only
+    `make all` asks for neither by name.
+    """
+    if not config_get(config, other_key):
+        log_error(
+            f"No tests to run: set {key} (Verilog testbenches) or {other_key} "
+            "(Python tests) in the config."
+        )
+        sys.exit(1)
+    log_info(f"{command} skipped: {key} is not set.")
+
 def cmd_sim(args, config):
     # Sim needs RTL + TEST
 
@@ -232,6 +247,9 @@ def cmd_sim(args, config):
     else:
         rtl_files = get_files(args, config, key="VERILOG_FILES")
         test_files = get_files(args, config, key="TEST_FILES")
+        if not test_files and getattr(args, "if_configured", False) is True:
+            skip_unconfigured(config, "sim", "TEST_FILES", "COCOTB_TESTS")
+            return
         if not test_files:
             log_error(
                 "sim has no testbench: set TEST_FILES (or \"//TEST_FILES\") in the "
@@ -327,17 +345,25 @@ def cmd_gatesim(args, config):
     The testbench is yours, like TEST_FILES and COCOTB_TESTS. It cannot be the
     RTL one: synthesis resolves parameters, so a testbench that shrinks the
     design by overriding one has nothing left to override.
-    """
-    netlist = find_netlist(getattr(args, "netlist", None))
-    log_info(f"Netlist: {netlist}")
 
+    Without GATE_TESTS the cocotb tests run on the netlist instead.
+    """
     tests = get_files(args, config, key="GATE_TESTS")
     if not tests:
+        # No Verilog gate testbench: the cocotb tests, if there are any, are
+        # the gate-level tests. That is what `cocotb --netlist` runs.
+        if config_get(config, "COCOTB_TESTS"):
+            args.netlist = getattr(args, "netlist", None) or ""
+            cmd_cocotb(args, config)
+            return
         log_error(
-            "No gate-level testbench: set GATE_TESTS (or \"//GATE_TESTS\") in "
-            "the config."
+            "No gate-level tests: set GATE_TESTS (or \"//GATE_TESTS\") for a Verilog "
+            "testbench, or COCOTB_TESTS (or \"//COCOTB_TESTS\") for Python tests."
         )
         sys.exit(1)
+
+    netlist = find_netlist(getattr(args, "netlist", None))
+    log_info(f"Netlist: {netlist}")
 
     ensure_build_dir()
     vvp_file = "build/gatesim.vvp"
@@ -369,6 +395,23 @@ def cocotb_config(*args):
         log_error(f"Could not run cocotb-config: {e}")
         sys.exit(1)
 
+def write_dump_module(toplevel):
+    """
+    A second root that dumps the design to build/<toplevel>.vcd. cocotb's own
+    runner does the same for Icarus (cocotb.runner, _create_iverilog_dump_file)
+    because the DUT is the root here and there is no testbench to hold $dumpvars.
+    The signal names in the file start at the design: <toplevel>.<signal>.
+    """
+    path = os.path.join("build", "c4o_dump.v")
+    with open(path, "w") as f:
+        f.write("module c4o_dump();\n")
+        f.write("initial begin\n")
+        f.write(f'    $dumpfile("build/{toplevel}.vcd");\n')
+        f.write(f"    $dumpvars(0, {toplevel});\n")
+        f.write("end\n")
+        f.write("endmodule\n")
+    return path
+
 def cmd_cocotb(args, config):
     """
     Runs cocotb tests: Python coroutines driving the design, rather than a
@@ -383,6 +426,9 @@ def cmd_cocotb(args, config):
     here it is the same Python, run twice.
     """
     test_files = get_files(args, config, key="COCOTB_TESTS")
+    if not test_files and getattr(args, "if_configured", False) is True:
+        skip_unconfigured(config, "cocotb", "COCOTB_TESTS", "TEST_FILES")
+        return
     if not test_files:
         log_error(
             "No cocotb tests: set COCOTB_TESTS (or \"//COCOTB_TESTS\") to the "
@@ -421,6 +467,10 @@ def cmd_cocotb(args, config):
         compile_cmd += [f"-I{inc}" for inc in get_include_dirs(config)]
         sources = get_files(args, config, key="VERILOG_FILES")
         compile_cmd += sources
+        # The waveform is opt-in, like the picture it is for. Only the RTL run
+        # dumps: the netlist's names are not the ones WAVE_SIGNALS lists.
+        if config_get(config, "WAVE_SIGNALS"):
+            compile_cmd += ["-s", "c4o_dump", write_dump_module(toplevel)]
         # Without a `timescale Icarus runs at 1 s precision, and the first
         # Clock(..., units="ns") dies with "Unable to accurately represent
         # 10(ns)" -- which names neither the cause nor the file. `make sim`
@@ -1254,7 +1304,7 @@ def cmd_site(args, config):
     if wanted:
         vcds = sorted(glob.glob("build/*.vcd"), key=os.path.getmtime)
         if not vcds:
-            log_warn("WAVE_SIGNALS is set but build/ holds no VCD; run sim first.")
+            log_warn("WAVE_SIGNALS is set but build/ holds no VCD; run sim or cocotb first.")
         else:
             # The newest VCD that declares every signal: with two testbenches
             # the newest file may be the other one's, which is no error.
@@ -1276,7 +1326,8 @@ def cmd_site(args, config):
                     f", and {len(declared) - 20} more" if len(declared) > 20 else "")
                 log_error(
                     f"No VCD in build/ declares every WAVE_SIGNALS name; {first_error}. "
-                    "Names are dotted from the testbench top, e.g. tb_blinky.uut.count. "
+                    "Names are dotted from the top that was simulated: tb_blinky.uut.count "
+                    "for a Verilog testbench, blinky.count for a cocotb run. "
                     f"It declares: {shown}."
                 )
                 sys.exit(1)
@@ -1340,6 +1391,10 @@ def build_parser():
     # Sim command
     sim_parser = subparsers.add_parser("sim", help="Run Icarus Verilog simulation")
     sim_parser.add_argument("--files", nargs="*", help="Verilog files to simulate")
+    sim_parser.add_argument(
+        "--if-configured", action="store_true",
+        help="Skip, with a message, when TEST_FILES is not set (used by make all)",
+    )
     sim_parser.set_defaults(func=cmd_sim)
 
     # Cocotb command
@@ -1357,11 +1412,17 @@ def build_parser():
         help="Drive the synthesised netlist instead of the RTL "
              "(default: the newest under runs/ or build/runs/)",
     )
+    cocotb_parser.add_argument(
+        "--if-configured", action="store_true",
+        help="Skip, with a message, when COCOTB_TESTS is not set (used by make all)",
+    )
     cocotb_parser.set_defaults(func=cmd_cocotb)
 
     # Gate-level sim command
     gatesim_parser = subparsers.add_parser(
-        "gatesim", help="Simulate the synthesised netlist against the PDK cell models"
+        "gatesim",
+        help="Simulate the synthesised netlist against the PDK cell models "
+             "(GATE_TESTS, else the COCOTB_TESTS)",
     )
     gatesim_parser.add_argument(
         "netlist",
