@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.17.0](https://github.com/anlit75/c4o-core/compare/v2.16.0...v2.17.0) (2026-10-04)
+
+
+### Features
+
+* the Makefile rules of a template copy ship in the image ([#67](https://github.com/anlit75/c4o-core/issues/67)) ([e7d71ad](https://github.com/anlit75/c4o-core/commit/e7d71ad4a8207a01ba7b6c7eb0940d5884d7ac1a))
+
 ## [2.16.0](https://github.com/anlit75/c4o-core/compare/v2.15.3...v2.16.0) (2026-10-04)
 
 
