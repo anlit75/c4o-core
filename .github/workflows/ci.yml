@@ -895,6 +895,15 @@ jobs:
               exit 1
             fi
           done
+          # The constraints are read from the real STA step's config.json. A key
+          # name that does not match leaves its row out, so each one is named.
+          for c in "clock period" "clock uncertainty" "clock transition" "timing derate" "input and output delay"; do
+            if ! grep -qF "<td>$c</td>" "$page"; then
+              echo "::error::The page has no '$c' row: the run's config.json did not give it."
+              exit 1
+            fi
+          done
+          grep -o '<tr><td>clock [a-z]*</td><td>[^<]*</td><td>[^<]*' "$page" | sed 's/<[^>]*>/ /g'
           # Not asserted: whether the real run wrote ir__drop__worst. The
           # line is printed so the log says what a real run gives.
           grep -o 'Static IR drop[^<]*' "$page" || echo "the page has no IR drop line: the run reported no ir__drop__worst"
