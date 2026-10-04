@@ -14,10 +14,6 @@ runs:
         image=$(grep -E '^LIBRELANE_IMAGE :=' Makefile | sed 's/.*:= *//')
         docker pull "$image" || { cat "$RUNNER_TEMP/librelane-pull.log" 2>/dev/null; exit 1; }
 
-    - name: Physical design (GDSII)
-      shell: bash
-      run: make gds
-
     # Matched rather than named: `make gds` names its output after DESIGN_NAME.
     - name: The flow left a GDS
       shell: bash
@@ -36,6 +32,10 @@ runs:
     # The render is what `report`'s layout row points at and what the upload
     # action sends. Both degrade to silence when it is missing, so assert it
     # here, where `make gds` has just succeeded.
+    - name: Physical design (GDSII)
+      shell: bash
+      run: make gds
+
     - name: The flow drew a layout render
       shell: bash
       run: |
