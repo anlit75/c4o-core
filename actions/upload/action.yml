@@ -19,7 +19,7 @@ runs:
       uses: actions/upload-artifact@v6
       with:
         name: schematic
-        path: build/schematic.svgz
+        path: build/schematic.svg
         if-no-files-found: warn
         retention-days: ${{ inputs.retention-days }}
 
