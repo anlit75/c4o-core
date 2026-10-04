@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.19.0](https://github.com/anlit75/c4o-core/compare/v2.18.0...v2.19.0) (2026-10-04)
+
+
+### Features
+
+* show a reviewer's results page and opt-in cocotb waves ([#72](https://github.com/anlit75/c4o-core/issues/72)) ([440355d](https://github.com/anlit75/c4o-core/commit/440355da85a770f05caeba09229f02ac31655307))
+
 ## [2.18.0](https://github.com/anlit75/c4o-core/compare/v2.17.0...v2.18.0) (2026-10-04)
 
 
