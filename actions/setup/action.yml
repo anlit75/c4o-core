@@ -1,0 +1,38 @@
+name: c4o-core setup (prototype)
+description: >
+  Prototype. Pulls the c4o-core image the caller's Makefile names, restores the
+  Sky130 PDK that image installs from the cache, and starts pulling the
+  LibreLane image in the background.
+outputs:
+  image:
+    description: The c4o-core image the caller's Makefile names.
+    value: ${{ steps.image.outputs.image }}
+  pdk-version:
+    description: The PDK version that image installs.
+    value: ${{ steps.pdk.outputs.version }}
+  cache-hit:
+    description: Whether the PDK cache was restored.
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Start pulling the LibreLane image
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/start-librelane-pull.sh"'
+
+    - name: Pull the c4o-core image the Makefile names
+      id: image
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/pull-image.sh"'
+
+    - name: Which PDK version does this c4o-core install?
+      id: pdk
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/pdk-version.sh" "${{ steps.image.outputs.image }}"'
+
+    - name: Cache Sky130 PDK
+      id: cache
+      uses: actions/cache@v5
+      with:
+        path: pdks
+        key: sky130-pdk-${{ runner.os }}-${{ steps.pdk.outputs.version }}
