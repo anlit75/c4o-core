@@ -353,13 +353,25 @@ jobs:
       # gatesim refused for having no netlist rather than no cell models.
       # Hence runs/ rather than build/runs/ -- gatesim searches both, and this
       # one the runner can actually create.
+      # A gate test key is set, so the refusal can only be about the netlist:
+      # with no key at all, gatesim stops earlier and names the keys instead.
       - name: gatesim refuses when there is no netlist
         run: |
+          rm -rf runs
+          mkdir -p gate && printf 'module tb_gl; endmodule\n' > gate/tb_gl.v
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::tests/smoke/counter.v
+          "//GATE_TESTS":
+            - dir::gate/*.v
+          EOF
           if out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gatesim 2>&1); then
             echo "expected gatesim to refuse, but it succeeded"; exit 1
           fi
           echo "$out"
           echo "$out" | grep -qF "No netlist found" || { echo "refused for the wrong reason"; exit 1; }
+          rm -rf gate
 
       - name: gatesim refuses when the cell models are absent
         run: |
