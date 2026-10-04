@@ -621,6 +621,7 @@ jobs:
     permissions:
       contents: read
       pages: read  # only to ask whether Pages is on
+      actions: read  # to list this run's artifacts
     services:
       registry:
         image: registry:2
@@ -766,3 +767,18 @@ jobs:
         with:
           name: actions-end-to-end
           retention-days: 1
+
+      # upload-artifact only warns when a path matches nothing, and a name it
+      # was not given falls back to a default, so the run is asked instead.
+      - name: The run holds the three artifacts upload names
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[].name')
+          echo "$names"
+          for want in schematic layout actions-end-to-end; do
+            if ! grep -qxF "$want" <<<"$names"; then
+              echo "::error::This run has no artifact named $want."
+              exit 1
+            fi
+          done
