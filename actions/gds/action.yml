@@ -1,0 +1,48 @@
+name: c4o-core gds
+description: >
+  The physical flow: waits for the LibreLane image, runs `make gds`, and checks
+  that it left a GDS in build/ and a layout render under runs/.
+runs:
+  using: composite
+  steps:
+    # A second pull of the same image waits for the one the setup action
+    # started, and does the pull itself if that one failed -- so a failed
+    # background pull is an error here, not a silent retry inside `make gds`.
+    - name: The LibreLane image is here
+      shell: bash
+      run: |
+        image=$(grep -E '^LIBRELANE_IMAGE :=' Makefile | sed 's/.*:= *//')
+        docker pull "$image" || { cat "$RUNNER_TEMP/librelane-pull.log" 2>/dev/null; exit 1; }
+
+    - name: Physical design (GDSII)
+      shell: bash
+      run: make gds
+
+    # Matched rather than named: `make gds` names its output after DESIGN_NAME.
+    - name: The flow left a GDS
+      shell: bash
+      run: |
+        shopt -s nullglob
+        gds=(build/*.gds)
+        if [ ${#gds[@]} -eq 0 ]; then
+          echo "::error::make gds produced no .gds in build/"
+          exit 1
+        fi
+        for f in "${gds[@]}"; do
+          [ -s "$f" ] || { echo "::error::$f is empty"; exit 1; }
+        done
+        ls -lh "${gds[@]}"
+
+    # The render is what `report`'s layout row points at and what the upload
+    # action sends. Both degrade to silence when it is missing, so assert it
+    # here, where `make gds` has just succeeded.
+    - name: The flow drew a layout render
+      shell: bash
+      run: |
+        shopt -s nullglob
+        png=(runs/*/final/render/*.png)
+        if [ ${#png[@]} -eq 0 ]; then
+          echo "::error::the flow drew no layout render under runs/*/final/render/"
+          exit 1
+        fi
+        ls -lh "${png[@]}"
