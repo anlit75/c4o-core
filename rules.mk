@@ -72,14 +72,19 @@ SITE_ENV := -e GITHUB_SERVER_URL -e GITHUB_REPOSITORY -e GITHUB_SHA -e GITHUB_RU
 # Inside the image -- the Dev Container -- the tools are called directly. On a
 # host each command is a container of C4O_IMAGE.
 #
-# C4O_COCOTB is C4O_CMD with a seed threaded through. cocotb seeds Python's
-# random module from it and logs the value it used, so
+# C4O_COCOTB is C4O_CMD with a seed and the waves switch threaded through.
+# cocotb seeds Python's random module from the seed and logs the value it used,
+# so
 #
 #   make cocotb SEED=1789965785
 #
 # replays a failed run exactly. SEED here, RANDOM_SEED inside: that is cocotb
 # 1.9's name for it, and cocotb 2 renames it again. Translating at this line
 # keeps `make cocotb SEED=...` the same command across that change.
+#
+#   make cocotb WAVES=1
+#
+# writes build/<DESIGN_NAME>.vcd. WAVES reaches the container as it is.
 #
 # c4o_tool runs one of the image's other programs the same two ways:
 #
@@ -88,14 +93,14 @@ ENTRYPOINT_SCRIPT := /opt/c4o-core/scripts/entrypoint.py
 ifneq ($(wildcard $(ENTRYPOINT_SCRIPT)),)
 C4O_IN_CONTAINER := 1
 C4O_CMD := python3 $(ENTRYPOINT_SCRIPT)
-C4O_COCOTB = $(if $(SEED),env RANDOM_SEED=$(SEED)) $(C4O_CMD)
+C4O_COCOTB = $(if $(or $(SEED),$(WAVES)),env $(strip $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)))) $(C4O_CMD)
 C4O_SITE := $(C4O_CMD)
 C4O_PDK := env PDK_ROOT=$(PDK_ROOT) $(C4O_CMD)
 c4o_tool = $(1)
 else
 C4O_IN_CONTAINER :=
 C4O_CMD := $(DOCKER_RUN) $(C4O_IMAGE)
-C4O_COCOTB = $(DOCKER_RUN) $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(C4O_IMAGE)
+C4O_COCOTB = $(DOCKER_RUN) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES))) $(C4O_IMAGE)
 C4O_SITE := $(DOCKER_RUN) $(SITE_ENV) $(C4O_IMAGE)
 C4O_PDK := $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(C4O_IMAGE)
 c4o_tool = $(DOCKER_RUN) --entrypoint $(1) $(C4O_IMAGE)
@@ -119,13 +124,14 @@ help::
 	@echo "  make sim     - Run Icarus Verilog simulation"
 	@echo "  make cocotb  - Run the Python (cocotb) testbenches"
 	@echo "                 (repeat a random failure: make cocotb SEED=<n>)"
+	@echo "                 (write build/<DESIGN_NAME>.vcd: make cocotb WAVES=1)"
 	@echo "  make gatesim - Re-simulate the synthesised netlist (after make gds)"
 	@echo "  make synth   - Run Yosys synthesis"
 	@echo "  make schematic - Draw the circuit as build/schematic.svg"
 	@echo "  make pdk     - Install/Enable Sky130 PDK via Ciel, LibreLane's PDK manager"
 	@echo "  make gds     - Run LibreLane GDSII flow"
 	@echo "  make report  - Show area, timing and power from the last GDS run"
-	@echo "  make site    - Put report, layout, schematic and tests on one page (build/site/)"
+	@echo "  make site    - Put tests, timing, area, power and signoff on one page (build/site/)"
 	@echo "  make shell   - Enter c4o-core interactive shell"
 	@echo "  make clean     - Remove build/ (keeps runs/, which report and gatesim read)"
 	@echo "  make distclean - Remove build/, runs/ and the copied rules in .c4o/"
@@ -225,8 +231,8 @@ gds:
 report:
 	$(C4O_CMD) report
 
-# build/site/index.html: what `report` prints, the layout render, the schematic
-# and the cocotb verdicts, on one page. Shows whatever has been run so far.
+# build/site/index.html: the cocotb verdicts, timing, area, power, signoff and the
+# layout render, on one page. Shows whatever has been run so far.
 site:
 	$(C4O_SITE) site
 

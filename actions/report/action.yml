@@ -10,8 +10,7 @@ inputs:
   sections:
     description: >
       Extra <h2> sections the results page must have, one per line, beyond the
-      four the flow always gives (Signoff checks, Worst setup path, Area,
-      Power) and Waveform when config.yaml has //WAVE_SIGNALS.
+      two the flow always gives (Power, Signoff checks).
     required: false
     default: ''
   gatesim-minutes:

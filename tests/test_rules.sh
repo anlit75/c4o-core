@@ -76,6 +76,15 @@ else
   fail "host: a resume must pass --from and no --overwrite" "$out"
 fi
 check "host: SEED reaches the container" 0 "-e RANDOM_SEED=7" in_repo "$host" make -n cocotb SEED=7
+check "host: WAVES reaches the container" 0 "-e WAVES=1 $image cocotb" in_repo "$host" make -n cocotb WAVES=1
+check "host: SEED and WAVES reach the container together" 0 "-e RANDOM_SEED=7 -e WAVES=1 $image cocotb" \
+  in_repo "$host" make -n cocotb SEED=7 WAVES=1
+out=$(in_repo "$host" make -n cocotb 2>&1)
+if grep -qF -- "WAVES" <<<"$out"; then
+  fail "host: a plain make cocotb must not pass WAVES" "$out"
+else
+  ok "host: a plain make cocotb passes no WAVES"
+fi
 check "host: SEED reaches the cocotb tests that gatesim runs" 0 "-e RANDOM_SEED=7 $image gatesim" \
   in_repo "$host" make -n gatesim SEED=7
 # all asks for no test kind by name, so it skips the one that is not configured.
@@ -118,6 +127,9 @@ new_repo "$inside" "$image"
 chmod -R a+rwX "$inside"
 dmake() { docker run --rm -v "$inside:/w" -w /w --entrypoint make "$image" "$@"; }
 check "inside: commands call the entrypoint directly" 0 "python3 /opt/c4o-core/scripts/entrypoint.py lint" dmake -n lint
+check "inside: WAVES reaches the entrypoint" 0 "env WAVES=1 python3 /opt/c4o-core/scripts/entrypoint.py cocotb" dmake -n cocotb WAVES=1
+check "inside: SEED and WAVES reach the entrypoint" 0 "env RANDOM_SEED=7 WAVES=1 python3 /opt/c4o-core/scripts/entrypoint.py cocotb" \
+  dmake -n cocotb SEED=7 WAVES=1
 [ ! -e "$inside/.c4o" ] && ok "inside: nothing is copied to .c4o/" || fail "inside: .c4o/ was written inside the image"
 cat >> "$inside/Makefile" <<'EOF'
 

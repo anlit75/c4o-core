@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import io
 import json
 import contextlib
@@ -621,7 +622,8 @@ class TestEntrypoint(unittest.TestCase):
         self.assertIn("100 x 100 um", out)
         self.assertIn("10000 um^2", out)
         self.assertIn("29.2%", out)
-        self.assertIn("243", out)
+        self.assertRegex(out, r"\n  instances +243 after routing\n")
+        self.assertNotIn("standard cells", out)
         self.assertIn("+4.69 ns", out)
         self.assertIn("+0.11 ns", out)
         self.assertIn("0.292 mW", out)
@@ -636,8 +638,19 @@ class TestEntrypoint(unittest.TestCase):
         # design__instance__count is 787 because 544 of them are fill cells.
         self.assertNotIn("787", out)
 
-    def test_report_breaks_the_cells_down_by_class_without_fill(self):
-        # The real 3.0.14 run: its class counts add up to its 198 cells.
+    def test_report_gives_instances_after_synthesis_and_after_routing(self):
+        # stat.json says 110 after synthesis; the metrics say 198 after routing.
+        # The labels share one column, so the longest, "instance classes",
+        # sets where every value starts.
+        out = self._report(os.path.join(self.RUN_FIXTURE, "blinky_run", "final", "metrics.json"))
+
+        self.assertIn("\n  instances          110 after synthesis, 198 after routing\n", out)
+        self.assertIn("\n  instance classes   57 logic,", out)
+        self.assertNotIn("standard cells", out)
+        self.assertNotIn("cell classes", out)
+
+    def test_report_breaks_the_instances_down_by_class_without_fill(self):
+        # The real 3.0.14 run: its class counts add up to its 198 instances.
         out = self._report(os.path.join(self.RUN_FIXTURE, "blinky_run", "final", "metrics.json"))
 
         self.assertIn("57 logic, 46 well taps, 35 timing-repair buffers, 27 inverters, "
@@ -713,17 +726,18 @@ class TestEntrypoint(unittest.TestCase):
 
             self.assertIn("signoff", out)
             self.assertIn("clean", out)
-            # 'clean' is only as strong as the list of what was checked.
-            for label in ("Magic DRC", "KLayout DRC", "LVS", "antenna", "XOR"):
-                self.assertIn(label, out)
+            # 'clean' is only as strong as the list of what was checked. The
+            # two DRC tools are one entry.
+            self.assertIn("clean  (DRC, LVS, antenna, XOR)", out)
+            self.assertNotIn("Magic", out)
         finally:
             os.chdir(cwd)
 
     def test_report_names_what_failed_rather_than_listing_zeroes(self):
         out = self._report(self.DIRTY_FIXTURE)
 
-        self.assertIn("2 Magic DRC", out)
-        self.assertIn("1 LVS", out)
+        self.assertIn("signoff", out)
+        self.assertIn("2 DRC (Magic), 1 LVS", out)
         # The whole point: a column of zeroes with one non-zero buried in it is
         # what this replaces.
         self.assertNotIn("clean", out)
@@ -1396,6 +1410,9 @@ class TestEntrypoint(unittest.TestCase):
                 f.write("<svg/>")
 
             page = self._site()
+            # The schematic is `make schematic`'s file, not part of the page.
+            self.assertFalse(os.path.exists("build/site/schematic.svg"))
+            self.assertNotIn("schematic", page.lower())
 
             # The same numbers `report` prints for this fixture.
             self.assertIn("+4.69 ns", page)
@@ -1404,7 +1421,6 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn('src="layout.png"', page)
             self.assertNotIn("runs/blinky_run", page)
             self.assertTrue(os.path.exists("build/site/layout.png"))
-            self.assertTrue(os.path.exists("build/site/schematic.svg"))
             # A failure is reported as one, with the seed that reruns it.
             self.assertIn("1/2 passed", page)
             self.assertIn('class="FAIL">FAIL', page)
@@ -1494,9 +1510,9 @@ class TestEntrypoint(unittest.TestCase):
     # --- site: what the run's own reports say, beyond `report` ---
 
     # A real ChipForAll blinky run under LibreLane 3.0.14, trimmed: the metrics
-    # the page reads, synthesis's stat.json, the STA step's DEFAULT_CORNER, the
-    # default corner's power.rpt, and the worst corner's max.rpt cut after its
-    # first path.
+    # the page reads, synthesis's stat.json, the STA step's config.json with
+    # the constraints, and the default corner's power.rpt. ir__drop__worst is
+    # not from the run: it is a synthetic value, as no real one was at hand.
     RUN_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "run")
 
     def _run_site(self, edit_metrics=None):
@@ -1516,36 +1532,23 @@ class TestEntrypoint(unittest.TestCase):
         try:
             page = self._run_site()
 
-            for check in ("Magic DRC", "KLayout DRC", "LVS", "antenna", "XOR"):
+            # One DRC row for both tools, then LVS, antenna and XOR.
+            self.assertEqual(page.count('class="PASS">PASS'), 4)
+            self.assertRegex(page, r"<td>DRC <span[^>]*>Magic and KLayout</span></td>"
+                                   r'<td class="num">0</td><td class="PASS">PASS</td>')
+            for check in ("Magic DRC", "KLayout DRC", "<td>Magic</td>", "<td>KLayout</td>"):
+                self.assertNotIn(check, page)
+            for check in ("LVS", "XOR"):
                 self.assertIn(f"<td>{check}</td>", page)
-            self.assertEqual(page.count('class="PASS">PASS'), 5)
-            # The worst corner by the metrics, and its path as OpenSTA wrote it.
-            self.assertIn("<code>max_ss_100C_1v60</code>", page)
-            self.assertIn("Startpoint: _182_", page)
-            self.assertIn("4.697966   slack (MET)", page)
-            # What the report says, in a sentence: the clock is the edge at
-            # 10.0; count[1] is the net _182_ drives; _172_'s D net is
-            # auto-named, so the instance stays.
-            # Arrival counts from the clock edge, so the clock tree's 0.61 ns
-            # to _182_/CLK is not logic; setup 0.148 + uncertainty 0.25 are
-            # what the capture side holds back.
-            self.assertIn("From <code>count[1]</code> (flip-flop) to <code>_172_</code> (flip-flop). "
-                          "Clock 10.0 ns (100 MHz): the clock reaches the start point at 0.61 ns, "
-                          "logic and wires take 4.88 ns, and the data arrives 4.70 ns before its "
-                          "10.19 ns deadline.", page)
-            self.assertIn('<span class="launch" style="width:5.75%"></span>'
-                          '<span class="used" style="width:46.11%"></span>'
-                          '<span class="spare" style="width:44.37%"></span>'
-                          '<span class="reserved" style="width:3.76%"></span>', page)
-            self.assertIn("setup time and clock uncertainty 0.40 ns", page)
-            self.assertIn("(maximum wire RC, slow transistors, 100 &deg;C, 1.60 V)", page)
+            # Antenna stays its own row and says why it is not inside DRC.
+            self.assertIn("antenna <span", page)
+            self.assertIn("checked by OpenROAD in this flow, not inside DRC", page)
             # Utilization is of the core, not the die beside it.
             self.assertIn('<div class="label">core utilization</div><div class="value">57.1%</div>'
                           '<div class="detail">of a 58.4 \u00d7 57.1 \u00b5m core</div>', page)
             self.assertIn("46 of them well taps", page)
             self.assertIn("35 timing-repair buffers, 26 of them for hold", page)
-            self.assertIn("timing repair also resizes cells", page)
-            self.assertIn("<details><summary>Full OpenSTA report</summary>", page)
+            self.assertIn("timing repair also resizes instances", page)
             # stat.json: 1366.3104 total, 683.1552 of it sequential -- this
             # design splits exactly in half. Routing's 1906.8 contains both, so
             # the third part is the difference, not a third peer.
@@ -1553,12 +1556,18 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("logic 683.2 &micro;m&sup2;", page)
             self.assertIn("added by place and route 540.5 &micro;m&sup2;", page)
             self.assertIn("grew it 40% to 1,906.8 &micro;m&sup2;", page)
-            # Cells by origin: 57 logic + 26 sequential + 27 inverters from
+            # Instances: stat.json's 110 after synthesis come first, then the
+            # 198 after routing. 57 logic + 26 sequential + 27 inverters from
             # synthesis; 46 taps + 35 timing-repair + 7 clock buffers added.
-            self.assertIn("<h3>Cells: 198</h3>", page)
+            self.assertIn("<h3>Instances: 110 after synthesis, 198 after routing</h3>", page)
+            self.assertIn('<div class="label">instances</div><div class="value">110</div>'
+                          '<div class="detail">after synthesis; 198 after routing, '
+                          '46 of them well taps</div>', page)
             self.assertIn("from synthesis 110 ", page)
             self.assertIn("added by the flow 88 ", page)
-            self.assertNotIn("cell classes", page)
+            self.assertNotIn("instance classes", page)
+            self.assertNotIn("standard cells</div>", page)
+            self.assertNotIn("<h3>Cells", page)
             # The share bar has a column of its own, never under a number. It
             # is the share of the whole, on a track that is the whole -- scaled
             # to the largest group, 54.4% drew as a full bar. The Total row is
@@ -1575,6 +1584,225 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn(">54.4%<", page)
             self.assertNotIn("<div class=\"label\">power</div>", page)
             self.assertNotIn("<div class=\"label\">signoff</div>", page)
+        finally:
+            os.chdir(cwd)
+
+    def _sections(self, page):
+        return re.findall(r'<section id="([^"]+)"', page)
+
+    def test_site_orders_the_sections_for_a_reviewer(self):
+        # Layout and verdicts first (tests, timing with its constraints), then
+        # area and instances, power, and signoff last.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            page = self._run_site()
+            self.assertEqual(self._sections(page), ["tests-0", "timing", "area", "power", "signoff"])
+            self.assertLess(page.index("<header"), page.index('<section id="tests-0"'))
+        finally:
+            os.chdir(cwd)
+
+    def test_site_leaves_out_what_a_reviewer_does_not_read(self):
+        # No worst path, no electrical-rule rows, no schematic, block diagram
+        # or waveform, even with all of their files and keys present.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build/blocks")
+            for name in ("build/schematic.svg", "build/blocks/top.svg", "build/blinky.vcd"):
+                with open(name, "w") as f:
+                    f.write("<svg/>")
+            def with_rules(metrics):
+                for rule in ("slew", "cap", "fanout"):
+                    metrics[f"design__max_{rule}_violation__count"] = 4
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            with open("runs/blinky_run/final/metrics.json") as f:
+                metrics = json.load(f)
+            with_rules(metrics)
+            with open("runs/blinky_run/final/metrics.json", "w") as f:
+                json.dump(metrics, f)
+            page = self._site({"DESIGN_NAME": "blinky", "//WAVE_SIGNALS": ["blinky.count"]})
+            for gone in ("Worst setup path", "Full OpenSTA report", "Electrical rules", "max fanout",
+                         "max transition", "max capacitance", "Block diagram", "Waveform",
+                         "WAVE_SIGNALS", "Schematic", "schematic.svg", "wave.svg", "blocks/"):
+                self.assertNotIn(gone, page)
+            self.assertFalse(os.path.exists("build/site/blocks"))
+            self.assertFalse(os.path.exists("build/site/schematic.svg"))
+            self.assertFalse(os.path.exists("build/site/wave.svg"))
+        finally:
+            os.chdir(cwd)
+
+    def test_site_says_whether_timing_is_met_and_which_constraints_it_used(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            def r2r(metrics):
+                metrics["timing__setup_r2r__ws"] = 5.1
+            page = self._run_site(r2r)
+            timing = page[page.index('<section id="timing">'):page.index('<section id="area">')]
+            self.assertIn("Timing is met", timing)
+            self.assertIn('<td>setup</td><td class="num PASS">+4.70 ns</td><td class="num">0</td>'
+                          '<td class="num">+5.10 ns</td>', timing)
+            self.assertIn('<td>hold</td><td class="num PASS">+0.11 ns</td><td class="num">0</td>'
+                          '<td class="num">&mdash;</td>', timing)
+            # The run's own values, each with where it came from. CLOCK_PERIOD
+            # is in the test's config, the other four are the flow's defaults.
+            for row in ("<td>clock period</td><td>10 ns (100 MHz)</td><td>flow default</td>",
+                        "<td>clock uncertainty</td><td>0.25 ns</td><td>flow default</td>",
+                        "<td>clock transition</td><td>0.15 ns</td><td>flow default</td>",
+                        "<td>timing derate</td><td>5%</td><td>flow default</td>",
+                        "<td>input and output delay</td><td>20% of the clock period (2 ns)</td>"
+                        "<td>flow default</td>"):
+                self.assertIn(row, timing)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_says_when_a_constraint_comes_from_the_config(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            page = self._site({"DESIGN_NAME": "blinky", "CLOCK_PERIOD": 10,
+                               "CLOCK_UNCERTAINTY_CONSTRAINT": 0.25})
+            self.assertIn("<td>clock period</td><td>10 ns (100 MHz)</td><td>set in config.yaml</td>", page)
+            self.assertIn("<td>clock uncertainty</td><td>0.25 ns</td><td>set in config.yaml</td>", page)
+            self.assertIn("<td>clock transition</td><td>0.15 ns</td><td>flow default</td>", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_leaves_out_a_constraint_the_run_does_not_state(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            path = "runs/blinky_run/55-openroad-stapostpnr/config.json"
+            with open(path) as f:
+                run_config = json.load(f)
+            for key in ("CLOCK_TRANSITION_CONSTRAINT", "TIME_DERATING_CONSTRAINT"):
+                del run_config[key]
+            with open(path, "w") as f:
+                json.dump(run_config, f)
+            page = self._site()
+            self.assertIn("<td>clock uncertainty</td>", page)
+            self.assertIn("<td>input and output delay</td>", page)
+            self.assertNotIn("clock transition", page)
+            self.assertNotIn("timing derate", page)
+            # No run config at all: no constraints table, and the verdict stays.
+            os.remove(path)
+            page = self._site()
+            self.assertNotIn("Constraints the run used", page)
+            self.assertIn("Timing is met", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_shows_ir_drop_in_mv_and_as_a_share_of_the_supply(self):
+        # 0.0123 V on the 1.80 V of nom_tt_025C_1v80. The fixture's key is
+        # synthetic: no real run's ir__drop__worst was available.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site()
+            self.assertIn("<p>Static IR drop, worst: 12 mV, 0.68% of 1.80 V.</p>", page)
+            self.assertIn("ir__drop__worst", page)
+            signoff = page[page.index('<section id="signoff">'):]
+            self.assertIn("IR drop", signoff)
+            self.assertNotIn("IR drop", page[:page.index('<section id="signoff">')])
+        finally:
+            os.chdir(cwd)
+
+    def test_site_gives_a_tiny_ir_drop_two_significant_digits(self):
+        def tiny(metrics):
+            metrics["ir__drop__worst"] = 0.0000523
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site(tiny)
+            self.assertIn("Static IR drop, worst: 0.052 mV, 0.0029% of 1.80 V.", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_says_nothing_about_ir_drop_when_the_run_has_no_key(self):
+        def without(metrics):
+            del metrics["ir__drop__worst"]
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site(without)
+            self.assertNotIn("IR drop", page)
+            self.assertNotIn("ir__drop", page)
+            self.assertIn("<h2>Signoff checks</h2>", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_gives_the_ir_drop_in_mv_when_the_supply_is_unknown(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            path = "runs/blinky_run/55-openroad-stapostpnr/config.json"
+            with open(path) as f:
+                run_config = json.load(f)
+            run_config["DEFAULT_CORNER"] = "typical"
+            with open(path, "w") as f:
+                json.dump(run_config, f)
+            page = self._site()
+            self.assertIn("<p>Static IR drop, worst: 12 mV.</p>", page)
+            self.assertNotRegex(page, r"\d% of \d")
+        finally:
+            os.chdir(cwd)
+
+    def test_site_names_the_tool_that_failed_drc(self):
+        def klayout(metrics):
+            metrics["klayout__drc_error__count"] = 3
+        def both(metrics):
+            metrics["magic__drc_error__count"] = 2
+            metrics["klayout__drc_error__count"] = 3
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site(klayout)
+            self.assertRegex(page, r'<td>DRC <span[^>]*>Magic and KLayout</span></td>'
+                                   r'<td class="num">3 \(KLayout\)</td><td class="FAIL">FAIL</td>')
+            self.assertIn("Signoff: 3 errors", page)
+            shutil.rmtree("runs")
+            page = self._run_site(both)
+            self.assertIn('<td class="num">5 (Magic 2, KLayout 3)</td><td class="FAIL">FAIL</td>', page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_names_the_instances_after_synthesis_and_after_routing(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site()
+            area = page[page.index('<section id="area">'):page.index('<section id="power">')]
+            self.assertIn("<h2>Area and instances</h2>", area)
+            self.assertIn("110 after synthesis, 198 after routing", area)
+            self.assertNotIn("cell", area)
+            # Without synthesis's stat.json the page only has the routed count.
+            shutil.rmtree("runs")
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            os.remove("runs/blinky_run/06-yosys-synthesis/reports/stat.json")
+            page = self._site()
+            self.assertIn("<h3>Instances: 198 after routing</h3>", page)
+            self.assertNotIn("after synthesis", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_site_states_what_the_power_number_assumes(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site()
+            power = page[page.index('<section id="power">'):page.index('<section id="signoff">')]
+            self.assertIn("<code>nom_tt_025C_1v80</code>", power)
+            self.assertIn("1.80 V", power)
+            self.assertIn("Clock 100 MHz, from a period of 10 ns.", power)
+            self.assertIn("OpenSTA's default, 0.1 toggles per clock on data nets", power)
+            self.assertIn("not taken from simulation", power)
         finally:
             os.chdir(cwd)
 
@@ -1627,19 +1855,6 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    def test_site_shows_the_worst_corners_path_or_none(self):
-        # Make a corner with no max.rpt in the fixture the worst. Showing the
-        # max_ss path anyway would present a path that is not the worst one.
-        def worsen(metrics):
-            metrics["timing__setup__ws__corner:nom_tt_025C_1v80"] = -1.0
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            page = self._run_site(worsen)
-            self.assertNotIn("Worst setup path", page)
-        finally:
-            os.chdir(cwd)
-
     def test_site_says_when_it_was_built(self):
         # A published page stays up until the next one replaces it, and a red
         # main does not replace it, so the date is how a reader tells its age.
@@ -1689,8 +1904,10 @@ class TestEntrypoint(unittest.TestCase):
             # report's "69.5 x 80.2 um" and "5573.04 um^2", as a reader writes them.
             self.assertIn('<div class="value">69.5 \u00d7 80.2 \u00b5m</div>', page)
             self.assertIn('<div class="detail">5,573.0 \u00b5m\u00b2</div>', page)
-            # Positive slack is the good news; it says so in colour.
-            self.assertIn('<div class="kpi good"><div class="label">setup slack</div>', page)
+            # Positive slack is the good news; it says so in colour, in the
+            # timing section, where the slack numbers live now.
+            self.assertIn('<td class="num PASS">+4.70 ns</td>', page)
+            self.assertNotIn('<div class="label">setup slack</div>', page)
             # A tick beside PASS, written so Python's string escapes cannot eat it.
             self.assertIn('td.PASS::before { content: "\u2713"', page)
             # Macro and Pad are zero in a design with neither: rows of 0.0 are noise.
@@ -1707,18 +1924,25 @@ class TestEntrypoint(unittest.TestCase):
         os.chdir(self.test_dir)
         try:
             page = self._run_site(violated)
-            self.assertIn('<div class="kpi"><div class="label">setup slack</div>', page)
-            self.assertIn('<div class="value">12,345</div>', page)
+            self.assertIn('<td class="num FAIL">-0.50 ns</td>', page)
+            self.assertNotIn('<td class="num PASS">-0.50', page)
+            self.assertIn("Timing is not met.", page)
+            self.assertNotIn("Timing is met", page)
+            self.assertIn('<div class="value">110</div>', page)
+            self.assertIn("12,345 after routing", page)
         finally:
             os.chdir(cwd)
 
-    def test_site_takes_the_clock_from_the_config(self):
+    def test_site_takes_the_clock_from_the_run_not_the_config(self):
+        # The run's own CLOCK_PERIOD is the one the result depends on. A
+        # config edited after the run must not change what the page says.
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
             shutil.copytree(self.RUN_FIXTURE, "runs")
-            page = self._site({"DESIGN_NAME": "blinky", "CLOCK_PERIOD": 10.0})
-            self.assertIn('<div class="label">clock</div><div class="value">10.0 ns</div>', page)
+            page = self._site({"DESIGN_NAME": "blinky", "CLOCK_PERIOD": 4.0})
+            self.assertIn("<td>clock period</td><td>10 ns (100 MHz)</td>", page)
+            self.assertNotIn("250 MHz", page)
         finally:
             os.chdir(cwd)
 
@@ -1737,7 +1961,7 @@ class TestEntrypoint(unittest.TestCase):
             header = page[page.index("<header"):page.index("</header>")]
             self.assertIn('<header class="has-art">', page)
             self.assertIn('<figure class="hero-art" id="layout">', header)
-            self.assertIn("69.5 \u00d7 80.2 \u00b5m &middot; 152 cells + 46 taps &middot; sky130A", header)
+            self.assertIn("69.5 \u00d7 80.2 \u00b5m &middot; 110 instances &middot; sky130A", header)
             self.assertIn('<p class="byline">by <a href="https://github.com/someone">someone</a></p>', header)
             # The layout is the hero now, not a section of its own further down.
             self.assertNotIn('<section id="layout"', page)
@@ -1816,7 +2040,7 @@ class TestEntrypoint(unittest.TestCase):
 
     def test_site_reads_as_a_portfolio(self):
         # Layout first, the design described, buttons for what a visitor does
-        # with a chip, a link preview, and the schematic folded away.
+        # with a chip, and a link preview.
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
@@ -1832,15 +2056,15 @@ class TestEntrypoint(unittest.TestCase):
             with patch.dict(os.environ, env):
                 page = self._site({"DESIGN_NAME": "blinky", "PDK": "sky130A",
                                    "//DESCRIPTION": "A clock divider that blinks an LED."})
-            self.assertLess(page.index('id="layout"'), page.index('id="summary"'))
-            self.assertLess(page.index('id="summary"'), page.index('id="signoff"'))
+            self.assertLess(page.index('id="layout"'), page.index('id="timing"'))
+            self.assertLess(page.index('id="timing"'), page.index('id="signoff"'))
             self.assertIn('<p class="lede">A clock divider that blinks an LED.</p>', page)
             self.assertIn('content="A clock divider that blinks an LED."', page)
             self.assertIn('<meta property="og:image" content="https://some.github.io/repo/layout.png">', page)
             self.assertIn('<a class="btn" href="https://github.com/Some/repo">View source</a>', page)
-            # No block diagram here, so the schematic keeps a section, folded.
-            self.assertIn("<h2>Schematic</h2>", page)
-            self.assertIn("<details><summary>Show the schematic</summary>", page)
+            # The schematic is a file of `make schematic`, not part of the page.
+            self.assertNotIn("Schematic", page)
+            self.assertNotIn("<details", page)
         finally:
             os.chdir(cwd)
 
@@ -1882,113 +2106,6 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    UART_PATH = """Startpoint: _2086_ (rising edge-triggered flip-flop clocked by CLK)
-Endpoint: PRDATA[4] (output port clocked by CLK)
-                                  0.000000    0.000000   clock CLK (rise edge)
-                      0.1   0.2   0.6 ^ _2086_/CLK (sky130_fd_sc_hd__dfrtp_1)
-     3    0.01   0.2   0.5   1.1 ^ _2086_/Q (sky130_fd_sc_hd__dfrtp_1)
-                                                         uart_rx_fifo_i.pointer_out[0] (net)
-                                              9.275290   data arrival time
-                                 11.000000   11.000000   clock CLK (rise edge)
-                                 -0.250000   10.750000   clock uncertainty
-                                 -0.550000   10.200000   output external delay
-                                             10.200000   data required time
-                                              {slack}   slack ({verdict})
-"""
-
-    def test_timing_story_names_the_path_and_the_clock(self):
-        s = entrypoint.site_page.timing_story(self.UART_PATH.format(slack="0.924710", verdict="MET"))
-        self.assertEqual(s["start"], "uart_rx_fifo_i.pointer_out[0]")
-        self.assertEqual((s["end"], s["end_kind"]), ("PRDATA[4]", "output"))
-        self.assertEqual(s["period"], 11.0)
-        self.assertEqual((s["arrival"], s["required"]), (9.27529, 10.2))
-
-    def test_timing_story_gives_up_rather_than_guess(self):
-        # No required time: the page shows the report as printed instead.
-        path = self.UART_PATH.replace("data required time", "something else")
-        self.assertIsNone(entrypoint.site_page.timing_story(path.format(slack="0.9", verdict="MET")))
-
-    def test_timing_story_leaves_a_half_cycle_path_to_the_report(self):
-        # Launched on a falling edge at 5.5: the 5.5 ns to the capture edge is
-        # not the clock period, and the page must not call it one.
-        path = self.UART_PATH.replace("0.000000    0.000000   clock CLK (rise edge)",
-                                      "5.500000    5.500000   clock CLK (fall edge)")
-        self.assertIsNone(entrypoint.site_page.timing_story(path.format(slack="0.9", verdict="MET")))
-
-    def test_site_draws_a_violated_path_late_not_spare(self):
-        path = self.UART_PATH.replace("9.275290", "10.500000").format(slack="-0.300000",
-                                                                      verdict="VIOLATED")
-        page = entrypoint.site_page.render("uart", [], None, [], None, {},
-                                           timing=("max_ss_100C_1v60", path))
-        self.assertIn("0.30 ns after its 10.20 ns deadline", page)
-        self.assertIn('<span class="late"', page)
-        # The bar has a key: which colour is the overrun.
-        self.assertIn("late by 0.30 ns", page)
-        self.assertNotIn('<span class="spare"', page)
-
-    UART_PHYSICAL = {"clock": 11.0, "core": (225.4, 223.04), "taps": 714, "hold_buffers": 315,
-                     "r2r_setup": 2.109539, "r2r_hold": 0.108761, "skew": 0.2862,
-                     "drv": {"slew": 297, "cap": 0, "fanout": 7}, "ir_worst": 0.000524}
-
-    def test_site_reads_the_uart_path_as_a_physical_designer_would(self):
-        # The real apb_uart_sv run: the clock reaches _2086_/CLK at 1.30 ns,
-        # so of the 9.28 ns arrival only 7.97 is logic; it ends at a port.
-        path = self.UART_PATH.replace(
-            "0.1   0.2   0.6 ^ _2086_/CLK", "0.1   0.2   1.300449 ^ _2086_/CLK"
-        ).format(slack="0.924710", verdict="MET")
-        page = entrypoint.site_page.render(
-            "uart", [("die", "236.605 x 247.325 um  (58518.3 um^2)"),
-                     ("setup slack", "+0.92 ns  (0 violations)")], None, [], None, {},
-            timing=("max_ss_100C_1v60", path), physical=self.UART_PHYSICAL)
-        self.assertIn("the clock reaches the start point at 1.30 ns, logic and wires take "
-                      "7.97 ns, and the data arrives 0.92 ns before its 10.20 ns deadline", page)
-        self.assertIn("output delay and clock uncertainty 0.80 ns", page)
-        # The worst path is an I/O path; between flops there is more room.
-        self.assertIn("This is an I/O path, so the output delay the constraints assume", page)
-        self.assertIn("between flip-flops the worst setup slack is +2.11 ns", page)
-        self.assertIn("0 violations; reg-to-reg +2.11 ns", page)
-        self.assertIn('<div class="label">clock</div><div class="value">11.0 ns</div>'
-                      '<div class="detail">91 MHz</div>', page)
-        self.assertIn("Worst clock skew on a setup path: 0.29 ns.", page)
-
-    def test_site_names_the_input_delay_on_a_path_from_a_port(self):
-        path = self.UART_PATH.replace(
-            "Startpoint: _2086_ (rising edge-triggered flip-flop clocked by CLK)",
-            "Startpoint: PADDR[2] (input port clocked by CLK)").replace(
-            "0.1   0.2   0.6 ^ _2086_/CLK (sky130_fd_sc_hd__dfrtp_1)",
-            "0.000000    0.550000 ^ PADDR[2] (in)").format(slack="0.9", verdict="MET")
-        s = entrypoint.site_page.timing_story(path)
-        self.assertEqual((s["start_kind"], s["leaves"]), ("input", 0.55))
-        page = entrypoint.site_page.render("uart", [], None, [], None, {},
-                                           timing=("max_ss_100C_1v60", path))
-        self.assertIn("the input delay puts the data at the input at 0.55 ns", page)
-
-    def test_site_shows_the_electrical_rules_beside_signoff(self):
-        page = entrypoint.site_page.render("uart", [], None, [], None, {},
-                                           signoff=[("LVS", 0)], physical=self.UART_PHYSICAL)
-        self.assertIn('<tr><td>max transition (slew)</td><td class="num">297</td></tr>', page)
-        self.assertIn('<tr><td>max fanout</td><td class="num">7</td></tr>', page)
-        self.assertIn("Static IR drop, worst: 0.52 mV.", page)
-        self.assertIn("Not analysed by this flow: electromigration", page)
-        # The flow does not stop on these, and neither does the chip.
-        self.assertIn('<span class="chip PASS">Signoff clean</span>', page)
-
-    def test_site_links_the_schematic_under_the_blocks_instead_of_a_section(self):
-        page = entrypoint.site_page.render("uart", [], None, [], "schematic.svg", {},
-                                           blocks="blocks/top.svg")
-        self.assertIn('<a href="schematic.svg">open the schematic</a>', page)
-        self.assertNotIn('<section id="schematic"', page)
-
-    def test_first_path_stops_at_the_first_slack(self):
-        text = ("Startpoint: a\nEndpoint: b\n  1.0   slack (VIOLATED)\n"
-                "Startpoint: c\n  2.0   slack (MET)\n")
-        path = entrypoint.site_page.first_path(text)
-        self.assertTrue(path.startswith("Startpoint: a"))
-        self.assertTrue(path.endswith("slack (VIOLATED)"))
-        self.assertNotIn("Startpoint: c", path)
-
-    # --- report: power names its corner ---
-
     def test_report_power_is_the_default_corners_and_says_so(self):
         # The bare power__total in this real run is max_ff's 0.290 mW; the
         # default corner, nom_tt, is 0.248.
@@ -2013,128 +2130,6 @@ Endpoint: PRDATA[4] (output port clocked by CLK)
         with open(os.path.join(self.FIXTURES, name)) as f:
             return json.load(f)
 
-    def test_block_diagram_draws_submodules_by_their_source_names(self):
-        # yosys 0.33's JSON of the UART's top, trimmed to that module. Three
-        # of its five instances are parameterised and typed $paramod$<hash>\...
-        dot = entrypoint.diagrams.block_diagram_dot(self._netlist("apb_uart_top.json"), "apb_uart_sv")
-        for name, module in (("uart_rx_i", "uart_rx"), ("uart_tx_i", "uart_tx"),
-                             ("uart_rx_fifo_i", "io_generic_fifo"),
-                             ("uart_tx_fifo_i", "io_generic_fifo"),
-                             ("uart_interrupt_i", "uart_interrupt")):
-            self.assertIn(f'"block:{name}" [label="{name}\n{module}"', dot)
-        self.assertNotIn("$paramod", dot)
-        # A direct block-to-block net, and one through the top's own logic.
-        self.assertIn('"block:uart_tx_fifo_i" -> "block:uart_tx_i" [label="tx_data, tx_valid"]', dot)
-        self.assertIn('"logic" -> "port:PRDATA"', dot)
-        # Clock and reset reach all five: a caption, not ten edges.
-        self.assertIn('label="CLK, RSTN reach every block"', dot)
-        self.assertNotIn('"port:CLK" ->', dot)
-        self.assertIn('"port:rx_i" -> "block:uart_rx_i"', dot)
-
-    def test_block_diagram_is_none_for_a_top_without_submodules(self):
-        netlist = self._netlist("counter_wrap.json")
-        self.assertIsNone(entrypoint.diagrams.block_diagram_dot(netlist, "counter"))
-        self.assertIsNotNone(entrypoint.diagrams.block_diagram_dot(netlist, "counter_wrap"))
-
-    @patch('entrypoint.run_command')
-    def test_draw_blocks_does_nothing_for_a_top_without_submodules(self, mock_run):
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            os.makedirs("build")
-            netlist = self._netlist("counter_wrap.json")
-            netlist["modules"]["counter"]["attributes"]["top"] = "1"
-            del netlist["modules"]["counter_wrap"]["attributes"]["top"]
-            with open("build/n.json", "w") as f:
-                json.dump(netlist, f)
-            with contextlib.redirect_stdout(io.StringIO()):
-                entrypoint.draw_blocks("build/n.json", ["read_verilog x.v"])
-            mock_run.assert_not_called()
-            self.assertFalse(os.path.exists("build/blocks"))
-        finally:
-            os.chdir(cwd)
-
-    # tests/smoke/deep.v, three levels: top_deep -> mid -> two leafs.
-    @patch('entrypoint.run_command')
-    def test_draw_blocks_draws_every_level_and_links_them(self, mock_run):
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            os.makedirs("build")
-            shutil.copy(os.path.join(self.FIXTURES, "deep.json"), "build/n.json")
-            with contextlib.redirect_stdout(io.StringIO()):
-                entrypoint.draw_blocks("build/n.json", ["read_verilog d.v", "proc", "opt"])
-
-            dots = [c[0][0] for c in mock_run.call_args_list if c[0][0][0] == "dot"]
-            self.assertEqual(sorted(c[-1] for c in dots),
-                             ["build/blocks/mid.svg", "build/blocks/top.svg"])
-            with open("build/blocks/top.dot") as f:
-                top = f.read()
-            with open("build/blocks/mid.dot") as f:
-                mid = f.read()
-            self.assertIn('URL="mid.svg"', top)
-            self.assertNotIn('"parent"', top)
-            # Down to the leaf, and back up to where it was opened from.
-            self.assertIn('URL="leaf.svg"', mid)
-            self.assertIn('"parent" [label="up to top_deep", shape=note, URL="top.svg"]', mid)
-            # The leaf has no submodules: its schematic, in one yosys run that
-            # reuses the preparation the caller passed.
-            yosys = [c[0][0] for c in mock_run.call_args_list if c[0][0][0] == "yosys"]
-            self.assertEqual(len(yosys), 1)
-            script = yosys[0][2]
-            self.assertTrue(script.startswith("read_verilog d.v; proc; opt; "))
-            self.assertIn("show -format svg -viewer none -prefix build/blocks/leaf leaf", script)
-        finally:
-            os.chdir(cwd)
-
-    def test_diagram_plan_names_files_after_modules_and_keeps_them_apart(self):
-        # The UART's two io_generic_fifo instances are two parameterisations,
-        # so two modules, so two files.
-        plan = entrypoint.diagrams.diagram_plan(self._netlist("apb_uart_top.json"), "apb_uart_sv")
-        self.assertEqual(plan["apb_uart_sv"], "top")
-        self.assertEqual(sorted(plan.values()), ["io_generic_fifo", "io_generic_fifo_2", "top",
-                                                 "uart_interrupt", "uart_rx", "uart_tx"])
-
-    # --- the waveform ---
-
-    BLINKY_VCD = os.path.join(os.path.dirname(__file__), "fixtures", "blinky.vcd")
-
-    def test_read_vcd_names_signals_by_their_scope(self):
-        # Icarus's VCD of ChipForAll's tb_blinky, 1ps timescale.
-        with open(self.BLINKY_VCD) as f:
-            ps, signals = entrypoint.diagrams.read_vcd(f.read())
-        self.assertEqual(ps, 1)
-        width, changes = signals["tb_blinky.uut.count"]
-        self.assertEqual(width, 4)
-        self.assertEqual(changes[:3], [(0, "x"), (5000, "0"), (25000, "1")])
-        self.assertEqual(signals["tb_blinky.led"][1][1], (5000, "0"))
-
-    def test_read_vcd_returns_to_the_outer_scope_after_upscope(self):
-        vcd = ("$scope module t $end $scope module u $end $var wire 1 ! a $end "
-               "$upscope $end $var wire 1 \" b $end $upscope $end $enddefinitions $end\n")
-        _, signals = entrypoint.diagrams.read_vcd(vcd)
-        self.assertEqual(sorted(signals), ["t.b", "t.u.a"])
-
-    def test_waveform_refuses_a_signal_the_vcd_does_not_declare(self):
-        with open(self.BLINKY_VCD) as f:
-            text = f.read()
-        with self.assertRaises(KeyError) as cm:
-            entrypoint.diagrams.waveform_svg(text, ["tb_blinky.nope", "tb_blinky.led", "tb_blinky.nah"])
-        # Every one of them, so a config with three typos takes one fix, not three.
-        self.assertIn("tb_blinky.nope", str(cm.exception))
-        self.assertIn("tb_blinky.nah", str(cm.exception))
-
-    def test_waveform_draws_one_segment_per_actual_change(self):
-        # Writing the value a signal already holds is still recorded in a
-        # VCD; drawn, it would be a boundary where nothing changed.
-        vcd = ("$timescale 1ns $end $scope module t $end $var reg 4 ! v $end "
-               "$upscope $end $enddefinitions $end\n#0\nb11 !\n#10\nb11 !\n#20\nb101 !\n#30\nb101 !\n")
-        svg = entrypoint.diagrams.waveform_svg(vcd, ["t.v"])
-        self.assertEqual(svg.count("<rect x="), 2)
-        self.assertIn(">3<", svg)
-        self.assertIn(">5<", svg)
-        self.assertIn(">30 ns<", svg)
-
     def _wave_site(self, signals, vcd=True):
         os.makedirs("build")
         if vcd:
@@ -2142,96 +2137,6 @@ Endpoint: PRDATA[4] (output port clocked by CLK)
         with open("build/cocotb-results.xml", "w") as f:
             f.write(self.COCOTB_XML)
         return self._site({"DESIGN_NAME": "blinky", "//WAVE_SIGNALS": signals})
-
-    def test_site_draws_the_signals_wave_signals_names(self):
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            page = self._wave_site(["tb_blinky.clk", "tb_blinky.uut.count"])
-            self.assertIn('<img src="wave.svg"', page)
-            # The file itself, one click away, for a slide or a report.
-            self.assertIn('<a class="zoom-dl" href="wave.svg" download>Download SVG</a>', page)
-            self.assertIn("build/wave.vcd", page)
-            with open("build/site/wave.svg") as f:
-                self.assertIn(">count<", f.read())
-        finally:
-            os.chdir(cwd)
-
-    def test_site_draws_from_the_vcd_that_has_the_signals_not_just_the_newest(self):
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            os.makedirs("build")
-            shutil.copy(self.BLINKY_VCD, "build/wave.vcd")
-            with open("build/other_tb.vcd", "w") as f:
-                f.write("$scope module other $end $var wire 1 ! x $end $upscope $end "
-                        "$enddefinitions $end\n#0\n1!\n")
-            os.utime("build/wave.vcd", (1, 1))  # the other one is newer
-            page = self._site({"DESIGN_NAME": "blinky", "//WAVE_SIGNALS": ["tb_blinky.led"]})
-            self.assertIn("<code>build/wave.vcd</code>", page)
-        finally:
-            os.chdir(cwd)
-
-    def test_site_fails_on_a_wave_signal_that_is_not_there(self):
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                self._wave_site(["tb_blinky.cnt"])
-            self.assertEqual(cm.exception.code, 1)
-            # A typo is the usual cause: the message lists the names there are.
-            self.assertIn("It declares: ", error.call_args[0][0])
-            self.assertIn("tb_blinky.uut.count", error.call_args[0][0])
-            # Both forms of name: from a Verilog testbench and from a cocotb run.
-            self.assertIn("blinky.count", error.call_args[0][0])
-        finally:
-            os.chdir(cwd)
-
-    def test_site_without_a_vcd_leaves_the_waveform_out(self):
-        # After `make cocotb` alone there is no VCD yet; that is not an error.
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            page = self._wave_site(["tb_blinky.clk"], vcd=False)
-            self.assertNotIn("wave.svg", page)
-        finally:
-            os.chdir(cwd)
-
-    def test_site_shows_the_block_diagram_schematic_drew(self):
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            os.makedirs("build/blocks")
-            for name in ("top.svg", "uart_rx.svg", "top.dot"):
-                with open(f"build/blocks/{name}", "w") as f:
-                    f.write("<svg/>")
-            page = self._site()
-            self.assertIn('<img src="blocks/top.svg"', page)
-            # Every diagram a block links to, so the links work once published;
-            # not the .dot sources.
-            self.assertEqual(sorted(os.listdir("build/site/blocks")), ["top.svg", "uart_rx.svg"])
-        finally:
-            os.chdir(cwd)
-
-    def test_site_diagrams_zoom_and_the_script_comes_only_with_them(self):
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            os.makedirs("build")
-            with open("build/cocotb-results.xml", "w") as f:
-                f.write(self.COCOTB_XML)
-            self.assertNotIn("<script>", self._site())
-
-            with open("build/schematic.svg", "w") as f:
-                f.write("<svg/>")
-            page = self._site()
-            self.assertIn('<div class="zoom-view"><a href="schematic.svg"><img src="schematic.svg"', page)
-            self.assertIn('data-zoom="reset"', page)
-            self.assertEqual(page.count("<script>"), 1)
-        finally:
-            os.chdir(cwd)
-
-    # --- no testbench: each kind runs when its key is set ---
 
     def _no_testbench_config(self, **keys):
         """RTL and the Python tests, without TEST_FILES unless a key says."""
@@ -2449,44 +2354,75 @@ Endpoint: PRDATA[4] (output port clocked by CLK)
             entrypoint.cmd_cocotb(args, config)
         return run.call_args_list[0][0][0]
 
-    def test_cocotb_dumps_a_vcd_from_the_design_when_wave_signals_is_set(self):
-        config = self._no_testbench_config(**{
-            "//COCOTB_TESTS": ["dir::pytests/*.py"], "//WAVE_SIGNALS": ["top.count"]})
+    def _rtl_cocotb_config(self):
+        os.makedirs(os.path.join(self.test_dir, "pytests"), exist_ok=True)
+        open(os.path.join(self.test_dir, "pytests/test_top.py"), "w").close()
+        return {"VERILOG_FILES": ["src/**/*.v"], "//COCOTB_TESTS": ["dir::pytests/*.py"],
+                "DESIGN_NAME": "top"}
+
+    def _compile_in(self, config, environ, netlist=None):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            compile_cmd = self._cocotb_compile_cmd(config)
-            # Two roots: the design, and the module that dumps it.
-            roots = [compile_cmd[i + 1] for i, a in enumerate(compile_cmd) if a == "-s"]
-            self.assertEqual(roots, ["top", "c4o_dump"])
-            self.assertIn("build/c4o_dump.v", compile_cmd)
-            with open("build/c4o_dump.v") as f:
-                dump = f.read()
-            self.assertIn('$dumpfile("build/top.vcd")', dump)
-            self.assertIn("$dumpvars(0, top)", dump)
+            with patch.dict(os.environ, environ):
+                return self._cocotb_compile_cmd(config, netlist=netlist)
         finally:
             os.chdir(cwd)
 
-    def test_cocotb_dumps_nothing_without_wave_signals(self):
-        config = self._no_testbench_config(**{"//COCOTB_TESTS": ["dir::pytests/*.py"]})
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            compile_cmd = self._cocotb_compile_cmd(config)
-            self.assertNotIn("c4o_dump", compile_cmd)
-            self.assertFalse(any("c4o_dump" in a for a in compile_cmd))
-            self.assertFalse(os.path.exists("build/c4o_dump.v"))
-        finally:
-            os.chdir(cwd)
+    def test_cocotb_dumps_nothing_unless_asked(self):
+        env = {k: v for k, v in os.environ.items() if k != "WAVES"}
+        with patch.dict(os.environ, env, clear=True):
+            compile_cmd = self._compile_in(self._rtl_cocotb_config(), {})
+        self.assertFalse(any("c4o_dump" in a for a in compile_cmd))
+        self.assertFalse(os.path.exists(os.path.join(self.test_dir, "build", "c4o_dump.v")))
+
+    def test_cocotb_dumps_a_vcd_from_the_design_when_waves_is_1(self):
+        compile_cmd = self._compile_in(self._rtl_cocotb_config(), {"WAVES": "1"})
+        self.assertIn("c4o_dump", compile_cmd)
+        dump = os.path.join(self.test_dir, "build", "c4o_dump.v")
+        with open(dump) as f:
+            text = f.read()
+        self.assertIn('$dumpfile("build/top.vcd");', text)
+        self.assertIn("$dumpvars(0, top);", text)
+        self.assertEqual(compile_cmd[compile_cmd.index("c4o_dump") + 1], dump.replace(self.test_dir + os.sep, ""))
+
+    def test_cocotb_dumps_nothing_for_any_other_waves_value(self):
+        for value in ("0", "", "yes", "true"):
+            with self.subTest(WAVES=value):
+                compile_cmd = self._compile_in(self._rtl_cocotb_config(), {"WAVES": value})
+                self.assertFalse(any("c4o_dump" in a for a in compile_cmd))
+
+    def test_cocotb_ignores_the_obsolete_wave_signals_key(self):
+        # Copies made before WAVES keep "//WAVE_SIGNALS" in config.yaml. It
+        # neither dumps nor breaks the run, and WAVES=1 still dumps.
+        config = self._rtl_cocotb_config()
+        config["//WAVE_SIGNALS"] = ["top.count"]
+        config["WAVE_SIGNALS"] = ["top.count"]
+        env = {k: v for k, v in os.environ.items() if k != "WAVES"}
+        with patch.dict(os.environ, env, clear=True):
+            compile_cmd = self._compile_in(config, {})
+        self.assertFalse(any("c4o_dump" in a for a in compile_cmd))
+        self.assertIn("c4o_dump", self._compile_in(config, {"WAVES": "1"}))
 
     def test_cocotb_on_the_netlist_does_not_dump(self):
         config = self._gl_cocotb_config()
         config["//WAVE_SIGNALS"] = ["top.count"]
+        compile_cmd = self._compile_in(config, {"WAVES": "1"}, netlist="")
+        self.assertFalse(any("c4o_dump" in a for a in compile_cmd))
+
+    def test_site_ignores_the_obsolete_wave_signals_key(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            compile_cmd = self._cocotb_compile_cmd(config, netlist="")
-            self.assertFalse(any("c4o_dump" in a for a in compile_cmd))
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            with open("build/top.vcd", "w") as f:
+                f.write("$enddefinitions $end\n")
+            page = self._site({"DESIGN_NAME": "top", "//WAVE_SIGNALS": ["top.nothing_like_this"]})
+            self.assertIn("1/2 passed", page)
+            self.assertNotIn("Waveform", page)
+            self.assertFalse(os.path.exists("build/site/wave.svg"))
         finally:
             os.chdir(cwd)
 

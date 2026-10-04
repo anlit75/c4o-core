@@ -52,40 +52,6 @@ expect 1 "pins: a Makefile with no C4O_IMAGE" pins
 rm "$work/Makefile"
 expect 1 "pins: no Makefile" pins
 
-# --- report/results-page.sh --------------------------------------------------
-# `make site` is stubbed: what is tested is what the script demands of the page.
-reset
-mkdir -p "$work/bin" "$work/build/site"
-printf '#!/bin/sh\nexit 0\n' > "$work/bin/make"
-chmod +x "$work/bin/make"
-page() {  # page <extra html> <commit>
-  printf '<h2>Signoff checks</h2><h2>Worst setup path</h2><h2>Area</h2><h2>Power</h2>%s<a href="/commit/%s">' "$1" "$2" \
-    > "$work/build/site/index.html"
-}
-results() {  # results <extra sections>
-  (cd "$work" && PATH="$work/bin:$PATH" GITHUB_SHA=abc123 EXTRA_SECTIONS="$1" \
-    bash "$actions/report/results-page.sh")
-}
-
-echo 'DESIGN_NAME: x' > "$work/config.yaml"
-page '' abc123
-expect 0 "results page: the four flow sections" results ''
-expect 1 "results page: an extra section asked for and missing" results 'Block diagram'
-page '<h2>Block diagram</h2>' abc123
-expect 0 "results page: the extra section is there" results 'Block diagram'
-page '' zzz999
-expect 1 "results page: links another commit" results ''
-printf '<h2>Area</h2><h2>Power</h2><a href="/commit/abc123">' > "$work/build/site/index.html"
-expect 1 "results page: a flow section missing" results ''
-printf '"//WAVE_SIGNALS":\n  - tb.clk\n' >> "$work/config.yaml"
-page '' abc123
-expect 1 "results page: //WAVE_SIGNALS set and no Waveform section" results ''
-page '<h2>Waveform</h2>' abc123
-expect 0 "results page: //WAVE_SIGNALS set and Waveform there" results ''
-
-# --- report/cocotb-gates.sh --------------------------------------------------
-# The two logs the cocotb gate step compares. Each case writes what cocotb
-# prints, and states the exit code and the reason the script must give.
 refuses() {  # refuses <label> <text the output must have> <command...>
   local label=$1 text=$2 out got
   shift 2
@@ -102,6 +68,52 @@ refuses() {  # refuses <label> <text the output must have> <command...>
     echo "ok    $label"
   fi
 }
+
+# --- report/results-page.sh --------------------------------------------------
+# `make site` is stubbed: what is tested is what the script demands of the page.
+reset
+mkdir -p "$work/bin" "$work/build/site"
+printf '#!/bin/sh\nexit 0\n' > "$work/bin/make"
+chmod +x "$work/bin/make"
+page() {  # page <extra html> <commit>
+  printf '<h2>Power</h2><h2>Signoff checks</h2>%s<a href="/commit/%s">' "$1" "$2" \
+    > "$work/build/site/index.html"
+}
+results() {  # results <extra sections>
+  (cd "$work" && PATH="$work/bin:$PATH" GITHUB_SHA=abc123 EXTRA_SECTIONS="$1" \
+    bash "$actions/report/results-page.sh")
+}
+
+echo 'DESIGN_NAME: x' > "$work/config.yaml"
+page '' abc123
+expect 0 "results page: the two flow sections" results ''
+expect 1 "results page: an extra section asked for and missing" results 'Tests'
+page '<h2>Tests</h2>' abc123
+expect 0 "results page: the extra section is there" results 'Tests'
+page '' zzz999
+expect 1 "results page: links another commit" results ''
+# Power and Signoff checks are the headings every 2.x image gives its page.
+for gone in Power "Signoff checks"; do
+  printf '<h2>Power</h2><h2>Signoff checks</h2><a href="/commit/abc123">' \
+    | sed "s#<h2>$gone</h2>##" > "$work/build/site/index.html"
+  refuses "results page: the $gone section missing" "The results page has no '$gone' section." results ''
+done
+# A page of this image's own sections, and a page of the 2.18 image's: both
+# pass, since the script demands nothing a 2.x image may not have.
+printf '<h2>Timing</h2><h2>Area and instances</h2><h2>Power</h2><h2>Signoff checks</h2><a href="/commit/abc123">' \
+  > "$work/build/site/index.html"
+expect 0 "results page: the sections of a newer image" results ''
+printf '<h2>Signoff checks</h2><h2>Worst setup path</h2><h2>Area</h2><h2>Power</h2><h2>Waveform</h2><a href="/commit/abc123">' \
+  > "$work/build/site/index.html"
+expect 0 "results page: the sections of the 2.18 image" results ''
+# The obsolete key is not read.
+printf '"//WAVE_SIGNALS":\n  - tb.clk\n' >> "$work/config.yaml"
+page '' abc123
+expect 0 "results page: //WAVE_SIGNALS in the config asks for no Waveform section" results ''
+
+# --- report/cocotb-gates.sh --------------------------------------------------
+# The two logs the cocotb gate step compares. Each case writes what cocotb
+# prints, and states the exit code and the reason the script must give.
 reset
 summary_line() { echo "** TESTS=$1 PASS=$2 FAIL=$3 SKIP=$4 ** 123.45 ns"; }
 gates() { (cd "$work" && bash "$actions/report/cocotb-gates.sh"); }

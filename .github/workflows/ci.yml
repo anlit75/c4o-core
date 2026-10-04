@@ -97,8 +97,9 @@ jobs:
           head -c 200 build/schematic.svg
           grep -qF "<svg" build/schematic.svg || { echo "not an SVG"; exit 1; }
           grep -qF "counter" build/schematic.svg || { echo "the design's name is not in the drawing"; exit 1; }
-          # One module is one box: no block diagram, rather than a picture of it.
-          [ ! -e build/blocks ] || { echo "drew block diagrams for a design with no submodule"; exit 1; }
+          # The picture is all it writes: no block diagrams, no netlist JSON.
+          [ ! -e build/blocks ] || { echo "schematic wrote build/blocks"; exit 1; }
+          [ ! -e build/schematic.json ] || { echo "schematic wrote build/schematic.json"; exit 1; }
 
       # The same command on a design with a submodule, which is every real one.
       # `show` draws what is selected and yosys refuses svg for more than one
@@ -130,16 +131,8 @@ jobs:
           # The drawing has to be of the top the config named, not of whatever
           # module yosys happened to have selected.
           grep -qF "counter_wrap" build/schematic.svg || { echo "the top module is not in the drawing"; exit 1; }
-          # And the block diagrams, drawn by the image's own dot from the JSON
-          # yosys wrote in the same run: the instance and its module by name,
-          # a link on the block, and the file it links to -- counter's own
-          # schematic, drawn by a second yosys run.
-          top=build/blocks/top.svg
-          grep -qF "<svg" $top || { echo "no block diagram, or not an SVG"; exit 1; }
-          grep -qF "inner" $top || { echo "the block diagram lost the instance name"; exit 1; }
-          grep -qF ">counter<" $top || { echo "the block diagram lost the module name"; exit 1; }
-          grep -qF 'href="counter.svg"' $top || { echo "the block does not link to its module"; exit 1; }
-          grep -qF "<svg" build/blocks/counter.svg || { echo "the leaf's schematic was not drawn"; exit 1; }
+          # Still the picture alone for a design with submodules.
+          [ ! -e build/blocks ] || { echo "schematic wrote build/blocks"; exit 1; }
           rm -f config.yaml
 
       - name: Run Simulation check (CLI)
@@ -427,6 +420,34 @@ jobs:
           grep -qE "cocotb, RTL: ([0-9]+)/\1 passed" "$page" || { echo "the page does not report every test passing"; exit 1; }
           grep -qE "Seed <code>[0-9]+</code>" "$page" || { echo "the page lost the seed that reruns a failure"; exit 1; }
           grep -qE 'class="num">[1-9][0-9.]*<' "$page" || { echo "every simulated time is zero -- sim_time_ns was not read"; exit 1; }
+          # Only the sections that have something behind them, and none of the
+          # ones the page dropped.
+          ids=$(grep -o '<section id="[a-z0-9-]*"' "$page" | sed 's/.*id="//; s/"//' | tr '\n' ' ')
+          [ "$ids" = "tests-0 " ] || { echo "sections after cocotb alone: '$ids'"; exit 1; }
+          for gone in Waveform "Block diagram" Schematic "Worst setup path" WAVE_SIGNALS; do
+            ! grep -qF "$gone" "$page" || { echo "the page still has '$gone'"; exit 1; }
+          done
+
+      # The debug VCD is opt-in: WAVES=1 in the environment, which make
+      # passes into the container. Both runs go through the image's own
+      # cocotb and icarus. The key a copy made before WAVES still carries is
+      # in the config on purpose: it must neither dump nor break the run.
+      # The simulation step above wrote build/counter.vcd too, so the file is
+      # removed from inside the image first, as the schematic step does.
+      - name: cocotb writes a VCD only when WAVES=1
+        run: |
+          printf '"//WAVE_SIGNALS":\n  - counter.count\n' >> config.yaml
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace "$@"; }
+          run --entrypoint rm c4o-core:test -f build/counter.vcd
+          run c4o-core:test cocotb
+          [ ! -e build/counter.vcd ] || { echo "cocotb wrote a VCD without WAVES=1"; exit 1; }
+          run -e WAVES=1 c4o-core:test cocotb
+          [ -s build/counter.vcd ] || { echo "WAVES=1 wrote no build/counter.vcd"; exit 1; }
+          grep -qF '$scope module counter' build/counter.vcd || { echo "the VCD does not hold the design"; exit 1; }
+          grep -qE '^#[1-9]' build/counter.vcd || { echo "the VCD holds no signal change"; exit 1; }
+          run --entrypoint rm c4o-core:test -f build/counter.vcd
+          run -e WAVES=0 c4o-core:test cocotb
+          [ ! -e build/counter.vcd ] || { echo "WAVES=0 wrote a VCD"; exit 1; }
 
       - name: A failing cocotb test fails the command
         run: |
@@ -864,6 +885,19 @@ jobs:
             echo "::error::$page does not link /commit/$GITHUB_SHA."
             exit 1
           fi
+          # Verdicts, area and instances, power, then signoff last. The tests
+          # section ahead of them is one or two, so it is left out of the list.
+          ids=$(grep -o '<section id="[a-z0-9-]*"' "$page" | sed 's/.*id="//; s/"//' | grep -v '^tests' | tr '\n' ' ')
+          [ "$ids" = "timing area power signoff " ] || { echo "::error::sections are '$ids'"; exit 1; }
+          for gone in Waveform "Block diagram" Schematic "Worst setup path" "max fanout"; do
+            if grep -qF "$gone" "$page"; then
+              echo "::error::The page still has '$gone'."
+              exit 1
+            fi
+          done
+          # Not asserted: whether the real run wrote ir__drop__worst. The
+          # line is printed so the log says what a real run gives.
+          grep -o 'Static IR drop[^<]*' "$page" || echo "the page has no IR drop line: the run reported no ir__drop__worst"
 
       # Its schematic and layout artifact names are fixed; the other job here
       # uploads artifacts-docker-build, so nothing collides.
