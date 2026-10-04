@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.18.0](https://github.com/anlit75/c4o-core/compare/v2.17.0...v2.18.0) (2026-10-04)
+
+
+### Features
+
+* gatesim runs the cocotb tests and sim is optional ([#71](https://github.com/anlit75/c4o-core/issues/71)) ([b4f6c04](https://github.com/anlit75/c4o-core/commit/b4f6c0411a5a541eee6ad0e7b9310231b0b55a95))
+
+
+### CI
+
+* run the composite actions end to end against ChipForAll ([#69](https://github.com/anlit75/c4o-core/issues/69)) ([eddddd1](https://github.com/anlit75/c4o-core/commit/eddddd101835539b4229b5f9ca7b9b7124c18a61))
+
 ## [2.17.0](https://github.com/anlit75/c4o-core/compare/v2.16.0...v2.17.0) (2026-10-04)
 
 
