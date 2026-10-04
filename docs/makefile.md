@@ -46,7 +46,7 @@ These names stay the same in all 2.x releases.
 | `DESIGN_NAME` | Read from `config.yaml`. |
 | `PDK_ROOT` | Where the PDK is on the host. Default: `pdks/` in the repository. |
 | `LIBRELANE_ARGS` | More flags for LibreLane. With `--from`, `-F` or `--only`, `make gds` keeps the previous run. |
-| `SEED` | The seed for `make cocotb`. |
+| `SEED` | The seed for `make cocotb` and for `make gatesim` with Python tests. |
 
 `C4O_CMD`, `C4O_COCOTB` and `c4o_tool` call the program directly inside the image, and start a container on a host. You write the target one time and it works in the two places.
 
@@ -65,5 +65,19 @@ A bare `make` runs `all`, also when one of your targets is above the include.
 ## The targets
 
 `all`, `help`, `lint`, `sim`, `cocotb`, `gatesim`, `synth`, `schematic`, `pdk`, `gds`, `report`, `site`, `shell`, `clean`, `distclean`. `make help` gives one line for each. [commands.md](commands.md) tells you what the c4o-core command behind each one does.
+
+### Which tests run
+
+`config.yaml` has two keys for tests. `"//TEST_FILES"` names Verilog testbenches. `"//COCOTB_TESTS"` names Python tests.
+
+| Target | With its key | Without its key |
+|---|---|---|
+| `make sim` | Runs the testbenches. | Fails. |
+| `make cocotb` | Runs the Python tests. | Fails. |
+| `make all` | Runs `lint`, `sim`, `cocotb` and `synth` in this order. | `sim` and `cocotb` each print a skip message and the rest runs. |
+
+`make all` fails when neither key is set. A repository with no test does not pass.
+
+`make gatesim` runs the Verilog testbench of `"//GATE_TESTS"`. Without that key, it runs the Python tests of `"//COCOTB_TESTS"` on the netlist. With neither key it fails. `make gatesim SEED=<n>` sets the seed in the same way as `make cocotb SEED=<n>`.
 
 `make gds` starts LibreLane as a second container, from the place where `make` runs. Thus that place needs a Docker daemon: your host, or the Dev Container, which has its own.

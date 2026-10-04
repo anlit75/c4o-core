@@ -41,7 +41,7 @@ The Python entrypoint of the engine has these commands:
 | `lint` | Runs the Verilator lint checks on `VERILOG_FILES`. |
 | `sim` | Compiles `VERILOG_FILES` and `TEST_FILES` with Icarus Verilog and runs the simulation. |
 | `cocotb` | Runs cocotb tests on `VERILOG_FILES` and `COCOTB_TESTS`. The tests are Python coroutines that drive the RTL. `--netlist` runs the same tests on the synthesised gates. |
-| `gatesim` | Simulates the **synthesised netlist** with the PDK cell models, on `GATE_TESTS`. |
+| `gatesim` | Simulates the **synthesised netlist** with the PDK cell models, on `GATE_TESTS`. Without `GATE_TESTS`, it runs the `COCOTB_TESTS` on the netlist. |
 | `synth` | Runs logic synthesis with Yosys on `VERILOG_FILES` only. Writes `build/synthesis.json`. The script is fixed: see [docs/commands.md](docs/commands.md#synth-and-systemverilog-in-every-command). |
 | `schematic` | Draws the circuit as `build/schematic.svg`. It shows the RTL as written, not the synthesised netlist. |
 | `pdk` | Installs and enables the Sky130 PDK with Ciel, into `$PDK_ROOT`. Without `$PDK_ROOT`, it uses `./pdks`. |
@@ -89,7 +89,7 @@ Write one source file on each line. The `//` keys belong to this engine, so `dir
 | `FP_CORE_UTIL` / `DIE_AREA` | `check` needs `FP_CORE_UTIL` with `relative` sizing and `DIE_AREA` with `absolute` sizing. |
 | `LINTER_DISABLE_WARNINGS` | A list of Verilator warning codes that `lint` does not report. It is a LibreLane key with the same meaning there. |
 | `"//DESCRIPTION"` | One line that tells what the design is. It appears below the title of the `site` page and in its link preview. |
-| `"//WAVE_SIGNALS"` | The signals that `site` draws from the VCD of `sim`. Write each name from the testbench top down, with dots (`tb_blinky.uut.count`). `site` fails on a name that the VCD does not declare. |
+| `"//WAVE_SIGNALS"` | The signals that `site` draws from the VCD of `sim` or `cocotb`. Write each name from the top that was simulated, with dots: `tb_blinky.uut.count` for a Verilog testbench, `blinky.count` for `cocotb`. `cocotb` writes a VCD only when this key is set. `site` fails on a name that the VCD does not declare. |
 
 ### A pattern that matches nothing is an error
 

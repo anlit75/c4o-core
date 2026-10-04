@@ -483,6 +483,100 @@ jobs:
           run c4o-core:test cocotb
           test -s gl/build/cocotb-results.xml
 
+      # `gatesim` with no //GATE_TESTS and with //COCOTB_TESTS is the same run as
+      # `cocotb --netlist`. Same toy library and netlist as the step above, which
+      # left them in gl/. The verdict file is removed first, so what is read
+      # below is what this command wrote. Asserted by content: the same tests as
+      # the RTL run, all passing, and not the Verilog gate path.
+      - name: gatesim with only COCOTB_TESTS runs the cocotb tests on the gates
+        run: |
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/gl "$@"; }
+          run --entrypoint rm c4o-core:test -f build/cocotb-gl-results.xml
+          out=$(run c4o-core:test gatesim)
+          echo "$out"
+          echo "$out" | grep -qF "counter.nl.v" || { echo "the netlist was not compiled"; exit 1; }
+          echo "$out" | grep -qF "build/cocotb-gl.vvp" || { echo "this was not the cocotb gate run"; exit 1; }
+          echo "$out" | grep -qF "build/gatesim.vvp" && { echo "the Verilog gate path ran"; exit 1; }
+          echo "$out" | grep -qE "TESTS=3 PASS=3 FAIL=0 SKIP=0" || { echo "the gates did not pass the 3 tests"; exit 1; }
+          gl=gl/build/cocotb-gl-results.xml
+          grep -qF 'name="counts_up_by_one"' "$gl" || { echo "the verdict file lacks the tests"; exit 1; }
+          [ "$(grep -c '<testcase' "$gl")" = "$(grep -c '<testcase' gl/build/cocotb-results.xml)" ] \
+            || { echo "the gates ran a different number of tests than the RTL"; exit 1; }
+          ! grep -qE '<(failure|error)' "$gl" || { echo "a test failed on the gates"; exit 1; }
+
+      # With neither key, and with only the Python tests, in a directory of
+      # its own so the config above stays what the next step expects.
+      - name: gatesim with neither test key fails and names both
+        run: |
+          mkdir -p gl2
+          cat > gl2/config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::../tests/smoke/counter.v
+          PDK: toypdk
+          STD_CELL_LIBRARY: toy_lib
+          EOF
+          if out=$(docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/gl2 c4o-core:test gatesim 2>&1); then
+            echo "expected gatesim to refuse, but it succeeded"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -qF "GATE_TESTS" || { echo "the message does not name GATE_TESTS"; exit 1; }
+          echo "$out" | grep -qF "COCOTB_TESTS" || { echo "the message does not name COCOTB_TESTS"; exit 1; }
+
+      # What `make all` runs, one command at a time, because there is no make in
+      # the image. tests/test_rules.sh checks that `make all` passes these flags.
+      - name: all runs the Python tests alone, skips the missing kind, fails on neither
+        run: |
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/gl2 "$@"; }
+          run --entrypoint rm c4o-core:test -rf build
+          cat > gl2/config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::../tests/smoke/counter.v
+          "//COCOTB_TESTS":
+            - dir::../tests/smoke/test_counter_cocotb.py
+          EOF
+          out=$(run c4o-core:test sim --if-configured)
+          echo "$out"
+          echo "$out" | grep -qF "sim skipped: TEST_FILES is not set" || { echo "sim did not say it skipped"; exit 1; }
+          ! test -e gl2/build/sim.vvp || { echo "sim ran"; exit 1; }
+          run c4o-core:test cocotb --if-configured
+          grep -qF 'name="counts_up_by_one"' gl2/build/cocotb-results.xml || { echo "the Python tests did not run"; exit 1; }
+          run c4o-core:test synth
+
+          # Only a Verilog testbench: cocotb is the one skipped.
+          cat > gl2/config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::../tests/smoke/counter.v
+          "//TEST_FILES":
+            - dir::../tests/smoke/tb_counter.v
+          EOF
+          run --entrypoint rm c4o-core:test -rf build
+          out=$(run c4o-core:test cocotb --if-configured)
+          echo "$out"
+          echo "$out" | grep -qF "cocotb skipped: COCOTB_TESTS is not set" || { echo "cocotb did not say it skipped"; exit 1; }
+          ! test -e gl2/build/cocotb-results.xml || { echo "cocotb ran"; exit 1; }
+          run c4o-core:test sim --if-configured
+          test -e gl2/build/sim.vvp || { echo "sim did not run"; exit 1; }
+
+          # Neither: both commands refuse, and say which keys.
+          printf 'DESIGN_NAME: counter\nVERILOG_FILES:\n  - dir::../tests/smoke/counter.v\n' > gl2/config.yaml
+          for cmd in sim cocotb; do
+            if out=$(run c4o-core:test $cmd --if-configured 2>&1); then
+              echo "expected $cmd --if-configured to refuse, but it succeeded"; exit 1
+            fi
+            echo "$out"
+            echo "$out" | grep -qF "TEST_FILES" && echo "$out" | grep -qF "COCOTB_TESTS" \
+              || { echo "the $cmd message does not name both keys"; exit 1; }
+          done
+          # Asked for by name, without being configured, they still fail.
+          for cmd in sim cocotb; do
+            if run c4o-core:test $cmd >/dev/null 2>&1; then
+              echo "expected $cmd to fail without its key, but it passed"; exit 1
+            fi
+          done
+
       - name: cocotb --netlist refuses rather than falling back to the RTL
         run: |
           # Deleted from inside the image: the run above wrote these as root,

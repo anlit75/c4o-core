@@ -29,10 +29,21 @@ The actions are steps in your job. They use your workspace, so a step of your ow
 | Action | What it does |
 |---|---|
 | `setup` | Starts the LibreLane image pull in the background. Checks that the Makefile and `devcontainer.json` name the same c4o-core image. Pulls that image. Restores the Sky130 PDK from the cache. Checks that the Dev Container user exists in the image. |
-| `checks` | `make lint`, `make sim`, `make cocotb` when `config.yaml` has `"//COCOTB_TESTS"`, `make synth`, `make schematic`. Keeps the cocotb output in `build/cocotb-rtl.log`. |
+| `checks` | `make lint`, `make sim` when `config.yaml` has `"//TEST_FILES"`, `make cocotb` when it has `"//COCOTB_TESTS"`, `make synth`, `make schematic`. Fails when `config.yaml` has neither key. Keeps the cocotb output in `build/cocotb-rtl.log`. |
 | `gds` | Waits for the LibreLane image. `make gds`. Fails if there is no GDS in `build/` or no layout render in `runs/`. |
-| `report` | `make gatesim` when `config.yaml` has `"//GATE_TESTS"`, but not on a pull request. Puts the signoff numbers on the run summary. `make site`, and checks the sections of the page. On a push to `main` with Pages set to GitHub Actions, uploads the page for a deploy job. |
+| `report` | The gate-level simulation. With `"//GATE_TESTS"`, it runs `make gatesim`, but not on a pull request. Without it and with `"//COCOTB_TESTS"`, it runs the Python tests on the gates on every event. See below. Puts the signoff numbers on the run summary. `make site`, and checks the sections of the page. On a push to `main` with Pages set to GitHub Actions, uploads the page for a deploy job. |
 | `upload` | Uploads the schematic, the layout render, and `build/` with `runs/`. On a `v*` tag, attaches the GDS to the release. Call it with `if: always()`. |
+
+## The Python tests on the gates
+
+The `report` action runs the Python tests on the netlist, as `make gatesim` does, and keeps the output in `build/cocotb-gl.log`. Then it compares the last `TESTS= PASS= FAIL= SKIP=` line of `build/cocotb-rtl.log` and of `build/cocotb-gl.log`. The step fails in these cases:
+
+- `build/cocotb-rtl.log` does not exist. Call the `checks` action first.
+- The gate log has no summary line.
+- The gate log has a failed or skipped test.
+- The two lines are not the same. The gates did not run the same tests as the RTL.
+
+`gatesim-minutes` limits this run as it limits the Verilog one.
 
 ## What the actions need from your repository
 

@@ -76,6 +76,18 @@ else
   fail "host: a resume must pass --from and no --overwrite" "$out"
 fi
 check "host: SEED reaches the container" 0 "-e RANDOM_SEED=7" in_repo "$host" make -n cocotb SEED=7
+check "host: SEED reaches the cocotb tests that gatesim runs" 0 "-e RANDOM_SEED=7 $image gatesim" \
+  in_repo "$host" make -n gatesim SEED=7
+# all asks for no test kind by name, so it skips the one that is not configured.
+# Named by themselves, sim and cocotb must keep failing without their key.
+check "host: all runs sim only if configured" 0 "$image sim --if-configured" in_repo "$host" make -n all
+check "host: all runs cocotb only if configured" 0 "$image cocotb --if-configured" in_repo "$host" make -n all
+out=$(in_repo "$host" make -n sim cocotb 2>&1)
+if grep -qF "$image sim" <<<"$out" && grep -qF "$image cocotb" <<<"$out" && ! grep -qF -- "--if-configured" <<<"$out"; then
+  ok "host: sim and cocotb named by themselves do not skip"
+else
+  fail "host: make sim and make cocotb must not pass --if-configured" "$out"
+fi
 
 # --- what a repository adds below the include ---------------------------------
 own="$work/own"
