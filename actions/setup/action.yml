@@ -9,7 +9,7 @@ description: >
 outputs:
   image:
     description: The c4o-core image the caller's Makefile names.
-    value: ${{ steps.image.outputs.img }}
+    value: ${{ steps.image.outputs.image }}
   pdk-version:
     description: The PDK version that image installs.
     value: ${{ steps.pdk.outputs.version }}
