@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.22.0](https://github.com/anlit75/c4o-core/compare/v2.21.0...v2.22.0) (2026-10-05)
+
+
+### Features
+
+* run a cocotb test list over many seeds with make regress ([#80](https://github.com/anlit75/c4o-core/issues/80)) ([2572290](https://github.com/anlit75/c4o-core/commit/25722902ecc37b4629ef81c9491cfd4e5807b6d3))
+
 ## [2.21.0](https://github.com/anlit75/c4o-core/compare/v2.20.1...v2.21.0) (2026-10-05)
 
 
