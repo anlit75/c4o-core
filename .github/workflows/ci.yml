@@ -885,10 +885,22 @@ jobs:
             echo "::error::$page does not link /commit/$GITHUB_SHA."
             exit 1
           fi
-          # Verdicts, area and instances, power, then signoff last. The tests
-          # section ahead of them is one or two, so it is left out of the list.
+          # The summary first, then the verdicts, area and instances, power,
+          # and signoff last. The tests sections between the summary and
+          # timing are one or two, so they are left out of the list.
           ids=$(grep -o '<section id="[a-z0-9-]*"' "$page" | sed 's/.*id="//; s/"//' | grep -v '^tests' | tr '\n' ' ')
-          [ "$ids" = "timing area power signoff " ] || { echo "::error::sections are '$ids'"; exit 1; }
+          [ "$ids" = "summary timing area power signoff " ] || { echo "::error::sections are '$ids'"; exit 1; }
+          # The summary holds the numbers a reader asks first. A card whose
+          # data the real run has is named, so the section cannot lose it
+          # unnoticed.
+          # The page is one line, so the section is cut out of it by pattern.
+          summary=$(grep -o '<section id="summary">.*' "$page" | sed 's#</section>.*##')
+          for card in die clock instances "worst setup slack" "worst hold slack" "total power" signoff; do
+            if ! grep -qF "<div class=\"label\">$card</div>" <<<"$summary"; then
+              echo "::error::The summary has no '$card' card."
+              exit 1
+            fi
+          done
           for gone in Waveform "Block diagram" Schematic "Worst setup path" "max fanout"; do
             if grep -qF "$gone" "$page"; then
               echo "::error::The page still has '$gone'."
