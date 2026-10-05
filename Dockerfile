@@ -23,12 +23,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 # libgmp10 is sv2v's only interesting shared dependency, and nothing else here
 # drags it in -- yosys, verilator and iverilog all link without it, checked with
 # apt-cache depends rather than assumed. Unpinned for the reason graphviz is.
+# g++ is what turns Verilator's output into a program. `lint` never needed it,
+# but the `coverage` command builds the design and runs the cocotb tests on
+# Verilator, which has to compile. Unpinned for the reason graphviz is: it is
+# a build tool, and it decides nothing about the design. make and the full
+# perl that Verilator's scripts run on are already here through the packages
+# above.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-venv \
     libpython3.12t64 \
     make \
     git \
+    g++ \
     yosys=0.33-5build2 \
     verilator=5.020-1 \
     iverilog=12.0-2build2 \

@@ -98,6 +98,23 @@ else
   fail "host: make sim and make cocotb must not pass --if-configured" "$out"
 fi
 
+# coverage is a target of its own and is not part of all.
+check "host: make help lists coverage" 0 "make coverage" in_repo "$host" make help
+check "host: coverage runs the coverage command" 0 "$image coverage" in_repo "$host" make -n coverage
+check "host: SEED reaches the coverage run" 0 "-e RANDOM_SEED=7 $image coverage" in_repo "$host" make -n coverage SEED=7
+out=$(in_repo "$host" make -n coverage 2>&1)
+if grep -qF -- "--if-configured" <<<"$out"; then
+  fail "host: make coverage by itself must not skip" "$out"
+else
+  ok "host: make coverage by itself does not skip"
+fi
+out=$(in_repo "$host" make -n all 2>&1)
+if grep -qF "coverage" <<<"$out"; then
+  fail "host: make all must not run coverage" "$out"
+else
+  ok "host: make all does not run coverage"
+fi
+
 # --- what a repository adds below the include ---------------------------------
 own="$work/own"
 new_repo "$own" "$image"
@@ -130,6 +147,7 @@ check "inside: commands call the entrypoint directly" 0 "python3 /opt/c4o-core/s
 check "inside: WAVES reaches the entrypoint" 0 "env WAVES=1 python3 /opt/c4o-core/scripts/entrypoint.py cocotb" dmake -n cocotb WAVES=1
 check "inside: SEED and WAVES reach the entrypoint" 0 "env RANDOM_SEED=7 WAVES=1 python3 /opt/c4o-core/scripts/entrypoint.py cocotb" \
   dmake -n cocotb SEED=7 WAVES=1
+check "inside: coverage calls the entrypoint directly" 0 "python3 /opt/c4o-core/scripts/entrypoint.py coverage" dmake -n coverage
 [ ! -e "$inside/.c4o" ] && ok "inside: nothing is copied to .c4o/" || fail "inside: .c4o/ was written inside the image"
 cat >> "$inside/Makefile" <<'EOF'
 

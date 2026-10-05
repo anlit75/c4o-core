@@ -65,7 +65,7 @@ A bare `make` runs `all`, also when one of your targets is above the include.
 
 ## The targets
 
-`all`, `help`, `lint`, `sim`, `cocotb`, `gatesim`, `synth`, `schematic`, `pdk`, `gds`, `report`, `site`, `shell`, `clean`, `distclean`. `make help` gives one line for each. [commands.md](commands.md) tells you what the c4o-core command behind each one does.
+`all`, `help`, `lint`, `sim`, `cocotb`, `coverage`, `gatesim`, `synth`, `schematic`, `pdk`, `gds`, `report`, `site`, `shell`, `clean`, `distclean`. `make help` gives one line for each. [commands.md](commands.md) tells you what the c4o-core command behind each one does.
 
 ### Which tests run
 
@@ -78,6 +78,8 @@ A bare `make` runs `all`, also when one of your targets is above the include.
 | `make all` | Runs `lint`, `sim`, `cocotb` and `synth` in this order. | `sim` and `cocotb` each print a skip message and the rest runs. |
 
 `make all` fails when neither key is set. A repository with no test does not pass.
+
+`make coverage` runs the Python tests of `"//COCOTB_TESTS"` again on Verilator and writes `build/coverage/`. `make all` does not run it. It does not decide whether the tests pass. `make cocotb` decides that. `make coverage SEED=<n>` sets the seed. See [commands.md](commands.md#code-coverage-coverage).
 
 `make gatesim` runs the Verilog testbench of `"//GATE_TESTS"`. Without that key, it runs the Python tests of `"//COCOTB_TESTS"` on the netlist. With neither key it fails. `make gatesim SEED=<n>` sets the seed in the same way as `make cocotb SEED=<n>`.
 

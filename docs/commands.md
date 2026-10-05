@@ -105,6 +105,38 @@ The two runs keep separate verdicts, `build/cocotb-results.xml` and
 
 `make cocotb WAVES=1` writes `build/<DESIGN_NAME>.vcd` from the RTL run. The signal names start at the design: `counter.count`. Without `WAVES=1` nothing is dumped. The `--netlist` run never dumps. `site` does not read the file.
 
+## Code coverage (coverage)
+
+`coverage` shows how much of the RTL the Python tests run. It runs the `"//COCOTB_TESTS"` again on Verilator, with coverage counters in the model. Icarus has no code coverage.
+
+It reads the same config as `cocotb`. It also applies `LINTER_DISABLE_WARNINGS`, because Verilator stops at a warning when it builds the design. It accepts `--if-configured`, as `cocotb` does. `make all` does not run it.
+
+| Kind | What it counts |
+|---|---|
+| Block | Each block of code that ran. |
+| Branch | Each side of an `if` or a `case`. |
+| Toggle | Each signal bit that changed value. |
+| User | Each `cover property`. It appears only when the design has one. |
+
+Expression coverage and FSM coverage are not measured. The Verilator in the image does not have them.
+
+The verdict stays with `cocotb`, which runs on Icarus. Verilator is 2-state, so a signal that reads `x` on Icarus before reset reads 0 here. A test can pass on one and fail on the other. A test that fails on Verilator does not fail `coverage`, because the run still wrote its numbers. A design that Verilator cannot build fails it.
+
+A line counts as not reached when a line point or a branch point on it was not hit. A signal that never toggled does not add a line. The Toggle row and the module table show it.
+
+`make coverage SEED=<n>` sets the seed, as `make cocotb SEED=<n>` does. The `report` action passes the seed of the RTL run, and the page says which seed the coverage run used.
+
+Verilator overwrites `coverage.dat` on each run. The command renames it and merges the files with `verilator_coverage --write`. The numbers count the points of each kind in that file. They do not come from the lcov export, which mixes the three kinds.
+
+| In `build/coverage/` | What it holds |
+|---|---|
+| `coverage.dat` | The merged counts. |
+| `summary.json` | The numbers for each kind and each module, the files they cover, the seed, and the lines no test reached. |
+| `results.xml` | The cocotb results of the Verilator run. `build/cocotb-results.xml` is not changed. |
+| `build.log` | The Verilator build output. |
+
+The numbers are for the files in `VERILOG_FILES`.
+
 ## Simulating the gates (gatesim)
 
 `sim` shows the RTL behaves. `gatesim` shows the gates synthesis actually
@@ -319,10 +351,13 @@ The sections run in this order:
 | Section | Read from | What to keep in mind |
 |---|---|---|
 | Tests | the cocotb results | When an RTL and a gate-level run exist, they share one table with a column each. |
+| Coverage | `build/coverage/summary.json` | A row for each kind with the points hit and the total. Then the numbers for each module in a collapsed list, the seed and the files covered. The lines no test reached are in `summary.json` only. The Summary gets a code coverage card with one stat for each kind. The card has no total across the kinds. Pass and fail stay with the Tests section. Without `make coverage`, the page has no Coverage section and no card. |
 | Timing | `metrics.json`, and `config.json` of the newest `*-openroad-stapostpnr` step | Says whether timing is met. Gives the worst setup and hold slack over all corners, the violation count and the reg-to-reg slack. Then lists the constraints the run used: clock period, clock uncertainty, clock transition, timing derate and I/O delay. Each says whether `config.yaml` set it or the flow defaulted it. A constraint the run does not state is left out. |
 | Area and instances | `metrics.json`, synthesis's `reports/stat.json` and `final/nl/*.nl.v` | Cards for die, core utilization and instances. One bar of the area after routing, split into synthesis's flip-flops and logic and the difference that place and route added. One bar of the instance count by class, split into what synthesis produced, what the flow added and anything unclassified. The headline is the count after synthesis. The count after routing comes second. A table of instances by drive strength follows, after synthesis and after routing, with a line saying what place and route added. The section names the standard cell library from the run's `config.json`. For a `sky130_fd_sc_*` library it adds that the library has a single threshold voltage. |
 | Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential, combinational and clock split. States the corner, the clock frequency from `CLOCK_PERIOD` and the activity, which is OpenSTA's default and not a simulation's. |
 | Signoff checks | `metrics.json` | DRC is one row, the sum of Magic and KLayout, and a failure names the tool: `3 (KLayout)`. LVS, antenna and XOR have rows of their own. Antenna says that OpenROAD checks it in this flow, not the DRC decks. |
+
+The Summary holds three cards to a row. The first row is die, core utilization and instances. The second is the clock and one timing card, with the worst setup slack and the worst hold slack side by side. Each slack is green when it is not negative and red when it is. The third row is code coverage, total power and signoff. A card whose data is missing is left out.
 
 Static IR drop (`ir__drop__worst`) sits under the signoff table when the run reports it, as mV and as a share of the supply. A run without the key gets no IR line. The page takes the supply from the voltage in `DEFAULT_CORNER`, as in `nom_tt_025C_1v80`, because the run's config holds no supply. Without a readable corner it shows mV alone. LibreLane sets no IR limit, so the page claims none.
 

@@ -4,13 +4,17 @@ description: >
   summary, and the results page. The simulation is the Verilog testbench of
   //GATE_TESTS (not on pull requests), else the cocotb tests of //COCOTB_TESTS
   (on every event, with a check that the gates ran the tests the RTL ran).
-  Neither key means no gate-level simulation. On a push to main it also asks whether GitHub Pages is set
-  to publish from Actions and, if so, uploads the page for a deploy job.
+  Neither key means no gate-level simulation. Then, when the caller
+  lists Coverage in `sections` and the image has the target, it measures code
+  coverage with `make coverage`. On a push to main, or a
+  manual run on main, it also asks whether GitHub Pages is set to publish from
+  Actions and, if so, uploads the page for a deploy job.
 inputs:
   sections:
     description: >
       Extra <h2> sections the results page must have, one per line, beyond the
       two the flow always gives (Power, Signoff checks).
+      Listing Coverage also runs `make coverage`.
     required: false
     default: ''
   gatesim-minutes:
@@ -64,6 +68,17 @@ runs:
         timeout "${MINUTES}m" make --eval '__c4o_cocotb_gates: ; $(C4O_COCOTB) cocotb --netlist' __c4o_cocotb_gates 2>&1 | tee build/cocotb-gl.log
         bash "$GITHUB_ACTION_PATH/cocotb-gates.sh"
 
+    # The cocotb tests again on Verilator, for the coverage numbers. Only when
+    # the caller lists Coverage in `sections`, so that a release changes no
+    # caller's CI. Every event: it takes seconds. An image older than 2.21 has
+    # no such target, and a caller on @v2 can still be on one, so that is a
+    # notice and not a red run. A build that fails is red: it was asked for.
+    - name: Code coverage
+      shell: bash
+      env:
+        EXTRA_SECTIONS: ${{ inputs.sections }}
+      run: bash "$GITHUB_ACTION_PATH/coverage.sh"
+
     # The [INFO] lines are c4o-core saying which files it read, not results,
     # so they stay in the log.
     - name: Signoff numbers on the summary page
@@ -76,13 +91,16 @@ runs:
         EXTRA_SECTIONS: ${{ inputs.sections }}
       run: bash "$GITHUB_ACTION_PATH/results-page.sh"
 
-    # Only main is published, and only when the repository has Pages set to
-    # "GitHub Actions". A copy of the template starts with Pages off, and
-    # turning it on is a setting no workflow token can change -- so off is a
-    # notice, not a red run. An answer that is neither yes nor no fails.
+    # Only main is published. A push does it, and so does a manual run: a new
+    # c4o-core release changes the page, and a manual run on main refreshes it
+    # without a commit. A manual run on another branch does not publish. Only
+    # when the repository has Pages set to "GitHub Actions". A copy of the
+    # template starts with Pages off, and turning it on is a setting no
+    # workflow token can change -- so off is a notice, not a red run. An answer
+    # that is neither yes nor no fails.
     - name: Is GitHub Pages set to publish from Actions?
       id: pages
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}

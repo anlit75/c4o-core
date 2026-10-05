@@ -106,10 +106,114 @@ expect 0 "results page: the sections of a newer image" results ''
 printf '<h2>Signoff checks</h2><h2>Worst setup path</h2><h2>Area</h2><h2>Power</h2><h2>Waveform</h2><a href="/commit/abc123">' \
   > "$work/build/site/index.html"
 expect 0 "results page: the sections of the 2.18 image" results ''
+# Coverage is demanded only when the caller lists it.
+page '' abc123
+expect 1 "results page: a Coverage section asked for and missing" results 'Coverage'
+page '<h2>Coverage</h2>' abc123
+expect 0 "results page: the Coverage section is there" results 'Coverage'
+page '<h2>Coverage</h2>' abc123
+expect 0 "results page: a page with Coverage that the caller did not ask for" results ''
 # The obsolete key is not read.
 printf '"//WAVE_SIGNALS":\n  - tb.clk\n' >> "$work/config.yaml"
 page '' abc123
 expect 0 "results page: //WAVE_SIGNALS in the config asks for no Waveform section" results ''
+
+# --- report/action.yml: when the Pages step runs ------------------------------
+# The `if:` of the step is read out of the action and evaluated for each event.
+# A manual run on main republishes the page; nothing off main does.
+pages_runs() {  # pages_runs <event> <ref>: exit 0 when the step would run
+  python3 - "$actions/report/action.yml" "$1" "$2" <<'PY'
+import re, sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["runs"]["steps"]
+cond = next(s["if"] for s in steps if s.get("id") == "pages")
+expr = cond.replace("github.event_name", "event").replace("github.ref", "ref")
+expr = expr.replace("&&", " and ").replace("||", " or ")
+assert re.fullmatch(r"[\w\s'=/()]+", expr), expr
+sys.exit(0 if eval(expr, {}, {"event": sys.argv[2], "ref": sys.argv[3]}) else 1)
+PY
+}
+expect 0 "pages: a push to main publishes" pages_runs push refs/heads/main
+expect 0 "pages: a manual run on main publishes" pages_runs workflow_dispatch refs/heads/main
+expect 1 "pages: a manual run on another branch does not" pages_runs workflow_dispatch refs/heads/feature
+expect 1 "pages: a push to another branch does not" pages_runs push refs/heads/feature
+expect 1 "pages: a pull request does not" pages_runs pull_request refs/pull/1/merge
+expect 1 "pages: a schedule on main does not" pages_runs schedule refs/heads/main
+
+# --- report/coverage.sh --------------------------------------------------------
+# `make` is stubbed twice: an image with the target, and one from before 2.21.
+reset
+mkdir -p "$work/bin"
+cat > "$work/bin/make" <<'SH'
+#!/bin/sh
+echo "make $*" >> "$STUB_LOG"
+case "$STUB" in
+  new) exit 0 ;;
+  old) [ "$1" = -n ] && { echo "make: *** No rule to make target 'coverage'.  Stop." >&2; exit 2; }; exit 0 ;;
+  broken) [ "$1" = -n ] && { echo "Cannot get the image" >&2; exit 2; }; exit 0 ;;
+  fails) [ "$1" = -n ] && exit 0; exit 1 ;;
+esac
+SH
+chmod +x "$work/bin/make"
+coverage_step() {  # coverage_step <stub> [sections, default Coverage]
+  (cd "$work" && : > "$work/stub.log" && PATH="$work/bin:$PATH" STUB="$1" STUB_LOG="$work/stub.log" \
+    EXTRA_SECTIONS="${2-Coverage}" bash "$actions/report/coverage.sh")
+}
+printf 'DESIGN_NAME: x\n"//COCOTB_TESTS":\n  - dir::a.py\n' > "$work/config.yaml"
+expect 0 "coverage step: an image with the target runs it" coverage_step new
+grep -qx "make coverage" "$work/stub.log" && echo "ok    coverage step: ... and ran make coverage" \
+  || { echo "FAIL  coverage step: make coverage was not run"; failures=$((failures + 1)); }
+refuses_text() {  # refuses_text <label> <exit> <text> <command...>: any exit code
+  local label=$1 want=$2 text=$3 out got
+  shift 3
+  out=$("$@" 2>&1)
+  got=$?
+  if [ "$got" -ne "$want" ]; then
+    echo "FAIL  $label: exit $got, expected $want"; echo "$out" | sed 's/^/        /'; failures=$((failures + 1))
+  elif ! grep -qF -- "$text" <<<"$out"; then
+    echo "FAIL  $label: no '$text' in the output"; echo "$out" | sed 's/^/        /'; failures=$((failures + 1))
+  else
+    echo "ok    $label"
+  fi
+}
+no_make_call() {  # no_make_call <label>
+  [ ! -s "$work/stub.log" ] && echo "ok    $1" || { echo "FAIL  $1: make was called"; cat "$work/stub.log" | sed 's/^/        /'; failures=$((failures + 1)); }
+}
+# Opt-in: the caller lists Coverage, or nothing runs and make is not asked.
+refuses_text "coverage step: not in sections is skipped" 0 "not measuring code coverage" coverage_step new ""
+no_make_call "coverage step: ... and make was not called"
+refuses_text "coverage step: other sections only is skipped" 0 "not measuring code coverage" coverage_step new $'Tests\nPower'
+no_make_call "coverage step: ... and make was not called for other sections"
+refuses_text "coverage step: a near name does not opt in" 0 "not measuring code coverage" coverage_step new $'Coverage report\ncoverage'
+no_make_call "coverage step: ... and make was not called for a near name"
+expect 0 "coverage step: Coverage among other sections runs it" coverage_step new $'Tests\nCoverage'
+grep -qx "make coverage" "$work/stub.log" && echo "ok    coverage step: ... and ran make coverage among others" \
+  || { echo "FAIL  coverage step: make coverage was not run among other sections"; failures=$((failures + 1)); }
+refuses_text "coverage step: an image from before 2.21 is a notice, not a failure" 0 "::notice::This c4o-core image has no 'make coverage'" coverage_step old
+grep -qx "make coverage" "$work/stub.log" && { echo "FAIL  coverage step: an old image ran make coverage"; failures=$((failures + 1)); } \
+  || echo "ok    coverage step: ... and did not run it"
+refuses_text "coverage step: make failing for another reason is not a skip" 1 "Cannot get the image" coverage_step broken
+refuses_text "coverage step: a failing make coverage fails the step" 1 "" coverage_step fails
+printf 'DESIGN_NAME: x\n"//TEST_FILES":\n  - dir::a.v\n' > "$work/config.yaml"
+refuses_text "coverage step: no //COCOTB_TESTS is skipped" 0 "no Python tests to measure" coverage_step new
+no_make_call "coverage step: ... without asking make"
+printf 'DESIGN_NAME: x\n"//COCOTB_TESTS":\n  - dir::a.py\n' > "$work/config.yaml"
+
+# The seed of the RTL run, so that both runs get one stimulus.
+mkdir -p "$work/build"
+printf '<testsuites><testsuite><properties><property name="random_seed" value="1789965785"/></properties></testsuite></testsuites>' \
+  > "$work/build/cocotb-results.xml"
+expect 0 "coverage step: runs with the RTL run's seed" coverage_step new
+grep -qx "make coverage SEED=1789965785" "$work/stub.log" && echo "ok    coverage step: ... as make coverage SEED=<that seed>" \
+  || { echo "FAIL  coverage step: expected 'make coverage SEED=1789965785'"; cat "$work/stub.log" | sed 's/^/        /'; failures=$((failures + 1)); }
+(cd "$work" && : > stub.log && PATH="$work/bin:$PATH" STUB=new STUB_LOG="$work/stub.log" EXTRA_SECTIONS=Coverage SEED=42 \
+  bash "$actions/report/coverage.sh" >/dev/null 2>&1)
+grep -qx "make coverage" "$work/stub.log" && echo "ok    coverage step: a SEED the caller set is not overridden" \
+  || { echo "FAIL  coverage step: a caller's SEED was overridden"; cat "$work/stub.log" | sed 's/^/        /'; failures=$((failures + 1)); }
+printf 'not xml' > "$work/build/cocotb-results.xml"
+expect 0 "coverage step: an unreadable results file runs without a seed" coverage_step new
+grep -qx "make coverage" "$work/stub.log" && echo "ok    coverage step: ... and passed no SEED" \
+  || { echo "FAIL  coverage step: expected a bare make coverage"; failures=$((failures + 1)); }
+rm -r "$work/build"
 
 # --- report/cocotb-gates.sh --------------------------------------------------
 # The two logs the cocotb gate step compares. Each case writes what cocotb

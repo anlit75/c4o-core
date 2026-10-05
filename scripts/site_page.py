@@ -52,9 +52,17 @@ section { background: var(--card); border: 1px solid var(--line); border-radius:
           padding: 24px 28px; margin: 0 0 20px; }
 h2 { margin: 0 0 12px; font-size: 22px; letter-spacing: -.01em; }
 section > p, .note { color: var(--muted); font-size: 14px; }
-.kpis { display: flex; flex-wrap: wrap; gap: 12px; }
-.kpi { flex: 1 1 260px; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-.kpi.wide { flex-basis: 100%; }
+.kpis { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+.kpi { grid-column: span 4; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.kpi.timing { grid-column: span 8; }
+.kpi.wide { grid-column: 1 / -1; }
+.kpi .stats { display: grid; gap: 4px 8px; }
+.kpi.timing .stats { grid-template-columns: 1fr 1fr; }
+.kpi.timing .stat + .stat { border-left: 1px solid var(--line); padding-left: 16px; }
+.kpi .stat.good .value { color: var(--pass); } .kpi .stat.bad .value { color: var(--fail); }
+.kpi.coverage .stats { grid-auto-flow: column; grid-auto-columns: auto; justify-content: space-between; }
+.kpi.coverage .stat .value { font-size: 22px; }
+.kpi .stat .value { white-space: nowrap; overflow-wrap: normal; }
 .kpi .label { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .05em;
               text-transform: uppercase; }
 .kpi .value { font-size: 26px; font-weight: 650; letter-spacing: -.01em; line-height: 1.25;
@@ -83,6 +91,7 @@ td.FAIL::before { content: "\u2715"; margin-right: 6px; }
 table.tests th:not(:first-child), table.tests td:not(:first-child) { width: 96px; }
 tr.total td { font-weight: 650; border-top: 2px solid var(--fg); }
 .PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
+td.src { overflow-wrap: anywhere; }
 td.bar, th.bar { width: 120px; padding-right: 0; }
 td.bar span { display: block; height: 8px; border-radius: 4px; background: var(--accent); }
 td.bar .track { background: var(--line); }
@@ -129,7 +138,11 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
   .hero-art { max-width: 320px; margin-inline: auto; }
 }
 @media (max-width: 600px) { section { padding: 16px; }
-  .kpi { flex-basis: 140px; padding: 12px; } .kpi .value { font-size: 20px; }
+  .kpis { grid-template-columns: 1fr 1fr; }
+  .kpi { grid-column: span 1; padding: 12px; } .kpi .value { font-size: 20px; }
+  .kpi.timing, .kpi.coverage, .kpi.wide { grid-column: span 2; }
+  .kpi.coverage .stat .value { font-size: 20px; }
+  .kpi.timing .stat + .stat { padding-left: 12px; }
   table.power td:nth-child(2), table.power th:nth-child(2),
   table.power td:nth-child(3), table.power th:nth-child(3),
   table.power td:nth-child(4), table.power th:nth-child(4) { display: none; }
@@ -137,6 +150,7 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
   table.tests th:not(:first-child), table.tests td:not(:first-child) { width: 56px; }
   th { letter-spacing: .02em; font-size: 11px; } th, td { padding-right: 8px; }
   td.bar, th.bar { width: 60px; } }
+@media (max-width: 360px) { .kpi.coverage .stat .value { font-size: 17px; } }
 """
 
 def cocotb_cases(path):
@@ -214,9 +228,6 @@ def kpi(label, value, state=None):
     if state is None and label.endswith("slack"):
         state = "bad" if main.startswith("-") else "good" if main.startswith("+") else None
     good = f" {state}" if state else ""
-    if label == "lint warnings" and not detail:
-        # A bare count reads as a flaw; say what it counts.
-        detail = "Verilator on the RTL, inside the flow: warnings, not errors"
     wide = " wide" if len(main) > 32 else ""
     detail = f'<div class="detail">{esc(detail)}</div>' if detail else ""
     return (f'<div class="kpi{wide}{good}"><div class="label">{esc(label)}</div>'
@@ -536,7 +547,94 @@ def signoff_section(signoff, physical):
                 "crosstalk and dynamic IR drop.</p>")
     return out
 
-def summary_cards(numbers, physical, power, signoff):
+COVERAGE_LABELS = {"line": "Block", "branch": "Branch", "toggle": "Toggle", "user": "User cover"}
+
+def coverage_percent(entry):
+    """'79.2%', or None when the design has nothing of that kind."""
+    return None if entry is None or entry.get("percent") is None else f"{entry['percent']:.1f}%"
+
+def coverage_card(coverage):
+    """
+    The Summary card: one stat for each kind, with no total across them. Block,
+    branch and toggle count different things, so one number for all of them
+    would mean none of them.
+    """
+    types = coverage.get("types", {})
+    stats = "".join(
+        f'<div class="stat"><div class="value">{coverage_percent(types[name]) or "&mdash;"}</div>'
+        f'<div class="detail">{COVERAGE_LABELS[name]}</div></div>'
+        for name in COVERAGE_LABELS if name in types)
+    return f'<div class="kpi coverage"><div class="label">code coverage</div><div class="stats">{stats}</div></div>'
+
+def timing_card(physical):
+    """
+    The Summary card for timing: worst setup and hold slack side by side, each
+    coloured by its sign. A slack the run did not report is left out, and with
+    neither there is no card.
+    """
+    stats = ""
+    for name in ("setup", "hold"):
+        if name in physical:
+            ws, vio = physical[name]
+            text = slack_text(ws)
+            state = "bad" if text.startswith("-") else "good"
+            stats += (f'<div class="stat {state}"><div class="value">{html.escape(text)}</div>'
+                      f'<div class="detail">{name} &middot; {html.escape(violations_text(vio))}</div></div>')
+    return (f'<div class="kpi timing"><div class="label">timing, worst slack</div>'
+            f'<div class="stats">{stats}</div></div>') if stats else ""
+
+def coverage_section(coverage, cocotb_runs=()):
+    """
+    What fraction of the RTL the cocotb tests ran, from build/coverage/summary.json:
+    a row per kind and the same numbers per module.
+    The run is Verilator's, a second one beside the Icarus run in Tests, so the
+    section says it is not the verdict.
+    """
+    esc = html.escape
+    types = coverage.get("types", {})
+    rows = "".join(
+        f"<tr><td>{COVERAGE_LABELS[name]}</td>"
+        f'<td class="num">{entry["hit"]:,} / {entry["total"]:,}</td>'
+        f'<td class="num">{coverage_percent(entry) or "&mdash;"}</td>'
+        '<td class="bar"><span class="track"><span style="width:'
+        f'{entry["percent"] or 0:.0f}%"></span></span></td></tr>'
+        for name, entry in ((n, types[n]) for n in COVERAGE_LABELS if n in types))
+    files = coverage.get("files") or []
+    seed = coverage.get("seed")
+    rtl_seed = next((sd for title, sd, _ in cocotb_runs if title == "cocotb, RTL"), None)
+    if seed and seed == rtl_seed:
+        seed_line = (f"<p>This run used seed <code>{esc(seed)}</code>, the seed of the RTL run in Tests.</p>")
+    elif seed:
+        seed_line = (f"<p>This run used seed <code>{esc(seed)}</code>. "
+                     "It is not the seed of the RTL run in Tests.</p>")
+    else:
+        seed_line = ""
+    out = ("<h2>Coverage</h2>"
+           "<p>How much of the RTL the cocotb tests ran. Verilator measured it in a second run of the same tests.</p>"
+           "<p>The Tests section above decides pass and fail. This run does not, because Verilator is 2-state.</p>"
+           + seed_line +
+           '<div class="scroll"><table class="coverage"><tr><th>kind</th><th class="num">covered</th>'
+           f'<th class="num">share</th><th class="bar"></th></tr>{rows}</table></div>')
+    if files:
+        out += ("<p>The numbers are for " + ", ".join(f"<code>{esc(f)}</code>" for f in files)
+                + ". These are the files in <code>VERILOG_FILES</code>.</p>")
+    out += ('<p class="hint">Not measured: expression coverage and FSM coverage. '
+            "The Verilator in the image does not have them.</p>")
+
+    modules = coverage.get("modules") or []
+    if modules:
+        shown = [n for n in COVERAGE_LABELS if n in types]
+        cell = lambda t, n: f'<td class="num">{coverage_percent(t.get(n)) or "&mdash;"}</td>'
+        out += (f'<details class="coverage-modules"><summary>Coverage by module ({len(modules)})</summary>'
+                '<div class="scroll"><table><tr><th>module</th>'
+                + "".join(f'<th class="num">{COVERAGE_LABELS[n].lower()}</th>' for n in shown) + "</tr>"
+                + "".join(f"<tr><td class=\"src\"><code>{esc(m['name'])}</code></td>"
+                          + "".join(cell(m["types"], n) for n in shown) + "</tr>" for m in modules)
+                + "</table></div></details>")
+
+    return out
+
+def summary_cards(numbers, physical, power, signoff, coverage=None):
     """
     The Summary section's cards: the numbers a visitor asks first, each built
     from the data its section below is built from, and left out when that
@@ -544,11 +642,10 @@ def summary_cards(numbers, physical, power, signoff):
     """
     rows = dict(numbers)
     cards = []
+    # Three to a row: what the chip is, then its clock and timing, then what
+    # it was checked by and what it costs.
     if "die" in rows:
         cards.append(kpi("die", rows["die"]))
-    period = (physical.get("constraints") or {}).get("clock_period", (None,))[0]
-    if clock_mhz(period):
-        cards.append(kpi("clock", f"{clock_mhz(period)}  ({period:g} ns period)"))
     if "utilization" in rows:
         # Of the core, not the die beside it.
         core = physical.get("core")
@@ -560,10 +657,12 @@ def summary_cards(numbers, physical, power, signoff):
                          + (f", {synth:,} after synthesis)" if synth is not None else ")")))
     elif synth is not None:
         cards.append(kpi("instances", f"{synth:,}  (after synthesis)"))
-    for name in ("setup", "hold"):
-        if name in physical:
-            ws, vio = physical[name]
-            cards.append(kpi(f"worst {name} slack", f"{slack_text(ws)}  ({violations_text(vio)})"))
+    period = (physical.get("constraints") or {}).get("clock_period", (None,))[0]
+    if clock_mhz(period):
+        cards.append(kpi("clock", f"{clock_mhz(period)}  ({period:g} ns period)"))
+    cards.append(timing_card(physical))
+    if coverage:
+        cards.append(coverage_card(coverage))
     total = next((r[4] for r in power[1] if r[0] == "Total"), None) if power else None
     if total is not None:
         # The corner in words, as the Power section gives it.
@@ -575,13 +674,12 @@ def summary_cards(numbers, physical, power, signoff):
     if signoff:
         failed, ran = signoff_words(signoff)
         cards.append(kpi("signoff", failed or f"clean  ({ran})", "bad" if failed else "good"))
-    if "lint warnings" in rows:
-        cards.append(kpi("lint warnings", rows["lint warnings"]))
+    cards = [c for c in cards if c]
     return f'<h2>Summary</h2><div class="kpis">{"".join(cards)}</div>' if cards else ""
 
 def render(design, numbers, layout, cocotb_runs, env,
            signoff=(), area=None, power=None, gds=None,
-           description=None, cells=(), physical=None, drive=()):
+           description=None, cells=(), physical=None, drive=(), coverage=None):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -606,6 +704,8 @@ def render(design, numbers, layout, cocotb_runs, env,
     cells        -- (class, count, 'synthesis' | 'flow' | 'other') per instance class
     drive        -- (drive strength, after synthesis, after routing) per strength,
                     a stage with no source None; physical may also carry library
+    coverage     -- build/coverage/summary.json as a dict (types, modules, files,
+                    uncovered), or None
 
     The page is laid out to be shared, as a portfolio piece: the layout first,
     then the verdicts (tests, timing and its constraints), then what the chip
@@ -659,9 +759,12 @@ def render(design, numbers, layout, cocotb_runs, env,
                 f'<td class="num">{sim_ns:g}</td></tr>'
                 for name, verdict, sim_ns in run) + "</table></div>")
 
-    glance = summary_cards(numbers, physical, power, signoff)
+    glance = summary_cards(numbers, physical, power, signoff, coverage)
     if glance:
         add("summary", "Summary", glance)
+
+    if coverage:
+        add("coverage", "Coverage", coverage_section(coverage, cocotb_runs))
 
     timing = timing_section(physical)
     if timing:
@@ -776,7 +879,7 @@ def render(design, numbers, layout, cocotb_runs, env,
         og += (f'<meta property="og:image" content="https://{esc(owner.lower())}.github.io/'
                f'{esc(name)}/{esc(layout)}"><meta name="twitter:card" content="summary">')
 
-    order = ["layout", "summary", "tests", "timing", "area", "power", "signoff"]
+    order = ["layout", "summary", "tests", "coverage", "timing", "area", "power", "signoff"]
     parts.sort(key=lambda p: order.index(p[0].split("-")[0]) if p[0].split("-")[0] in order
                else len(order))
 

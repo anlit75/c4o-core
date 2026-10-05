@@ -523,6 +523,234 @@ def cmd_cocotb(args, config):
     # The verdict only exists in the results file, so that is what decides here.
     check_cocotb_results(results)
 
+# What `coverage` writes. Everything under here is rebuilt on each run.
+COVERAGE_DIR = "build/coverage"
+
+# The coverage kinds Verilator writes, by the prefix of a record's `page`
+# (v_line/<module>, v_toggle/<module>, ...), in the order the page lists them.
+COVERAGE_TYPES = [("line", "v_line"), ("branch", "v_branch"),
+                  ("toggle", "v_toggle"), ("user", "v_user")]
+
+# What a reader sees, where the .dat and summary.json say `line`.
+COVERAGE_NAMES = {"line": "block"}
+
+def coverage_percent(hit, total):
+    """One decimal, or None when the design has nothing of that kind to cover."""
+    return round(hit * 100 / total, 1) if total else None
+
+def parse_coverage_dat(path):
+    """
+    Per-type and per-module numbers from a Verilator coverage.dat, counted from
+    the typed records: the `page` of each `C` line is v_<type>/<module>, and a
+    point is hit when its count is at least one.
+
+    Not from `--write-info`. Its lcov lines take the smallest of the line,
+    branch and toggle counts on each source line, so a DA number is none of
+    the three.
+
+    Returns (types, modules, files). types is {type: {hit, total, percent}},
+    with line, branch and toggle always present and user only when the design
+    has a `cover property`. modules is {module: types}. files is the source
+    files the points sit in.
+    """
+    counts = {}   # (module, type) -> [hit, total]
+    files = set()
+    with open(path) as f:
+        for text in f:
+            m = re.match(r"C '(.*)' (\d+)$", text.rstrip("\n"))
+            if not m:
+                continue
+            # Fields are \x01 apart and a key is split from its value by \x02.
+            fields = dict(item.split("\x02", 1) for item in m.group(1).split("\x01") if "\x02" in item)
+            kind, _, module = fields.get("page", "").partition("/")
+            kind = {prefix: name for name, prefix in COVERAGE_TYPES}.get(kind)
+            if kind is None:
+                continue
+            point = counts.setdefault((module, kind), [0, 0])
+            point[1] += 1
+            point[0] += int(m.group(2)) >= 1
+            if "f" in fields:
+                files.add(fields["f"])
+
+    def summarise(selected):
+        out = {}
+        for name, _ in COVERAGE_TYPES:
+            hit = sum(h for (_, k), (h, _) in selected.items() if k == name)
+            total = sum(t for (_, k), (_, t) in selected.items() if k == name)
+            if total or name != "user":
+                out[name] = {"hit": hit, "total": total, "percent": coverage_percent(hit, total)}
+        return out
+
+    modules = {}
+    for module in sorted({m for m, _ in counts}):
+        modules[module] = summarise({k: v for k, v in counts.items() if k[0] == module})
+    return summarise(counts), modules, sorted(files)
+
+def display_path(path):
+    """A source path as the page shows it: relative to the repository when it is in it."""
+    rel = os.path.relpath(path)
+    return path if rel.startswith("..") else rel
+
+def uncovered_lines(dat):
+    """
+    The source lines that a line or branch point sits on and no test hit, from
+    the records of a coverage.dat. Where a record has an `S` field, that is the
+    lines its block spans, as "166,169-177". Otherwise it is the `l` field.
+
+    A signal that only failed toggle coverage is not here: its declaration is
+    not code that did not run. The Toggle row and the module table show it.
+
+    Returns [{file, line, text}] in file and line order. text is the line of
+    the source, empty when the file cannot be read.
+    """
+    missed = {}
+    with open(dat) as f:
+        for text in f:
+            m = re.match(r"C '(.*)' (\d+)$", text.rstrip("\n"))
+            if not m or int(m.group(2)) >= 1:
+                continue
+            fields = dict(item.split("\x02", 1) for item in m.group(1).split("\x01") if "\x02" in item)
+            if fields.get("page", "").partition("/")[0] not in ("v_line", "v_branch"):
+                continue
+            lines = set()
+            for part in fields.get("S", fields.get("l", "")).split(","):
+                first, _, last = part.partition("-")
+                if first.isdigit():
+                    lines.update(range(int(first), int(last or first) + 1))
+            missed.setdefault(fields.get("f", "?"), set()).update(lines)
+
+    out = []
+    for path in sorted(missed):
+        try:
+            with open(path, errors="replace") as f:
+                source = f.read().splitlines()
+        except OSError:
+            source = []
+        for number in sorted(missed[path]):
+            code = source[number - 1].strip() if 0 < number <= len(source) else ""
+            out.append({"file": display_path(path), "line": number, "text": code})
+    return out
+
+def merge_coverage(dats, merged):
+    """Sums the counts of several coverage.dat into one. Verilator overwrites its own."""
+    run_command(["verilator_coverage", "--write", merged] + dats)
+
+def cmd_coverage(args, config):
+    """
+    Measures how much of the RTL the cocotb tests ran. Same tests as `cocotb`,
+    run again on Verilator with its coverage counters compiled in.
+
+    It measures; it does not judge. The verdict on the tests is `cocotb`, which
+    runs on Icarus: Verilator is 2-state, so a signal that reads x on Icarus
+    before reset reads 0 here, and a test can pass in one and fail in the other.
+    A test failing here is reported and the command still succeeds, with the
+    coverage the run wrote. A design Verilator cannot build fails it.
+    """
+    test_files = get_files(args, config, key="COCOTB_TESTS")
+    if not test_files and getattr(args, "if_configured", False) is True:
+        skip_unconfigured(config, "coverage", "COCOTB_TESTS", "TEST_FILES")
+        return
+    if not test_files:
+        log_error(
+            "No cocotb tests: set COCOTB_TESTS (or \"//COCOTB_TESTS\") to the "
+            "Python test files in the config."
+        )
+        sys.exit(1)
+
+    toplevel = config_get(config, "DESIGN_NAME")
+    if not toplevel:
+        log_error("coverage needs DESIGN_NAME to know which module to drive.")
+        sys.exit(1)
+
+    # Rebuilt from nothing, so a file left by an earlier run is never reported.
+    if os.path.isdir(COVERAGE_DIR):
+        shutil.rmtree(COVERAGE_DIR)
+    work = os.path.abspath(os.path.join(COVERAGE_DIR, "work"))
+    os.makedirs(work)
+    results = os.path.abspath(os.path.join(COVERAGE_DIR, "results.xml"))
+
+    sources = [os.path.abspath(f) for f in get_files(args, config, key="VERILOG_FILES")]
+    modules = [os.path.splitext(os.path.basename(f))[0] for f in test_files]
+    search = [os.path.dirname(os.path.abspath(f)) for f in test_files]
+    flags = ["--coverage"] + disable_warnings(config)
+
+    # cocotb's own Makefile does the Verilator build and run, as it does for
+    # anyone who writes `SIM=verilator`. It is called from a directory of its
+    # own: Verilator writes coverage.dat into the current directory.
+    env = dict(os.environ)
+    env.update({
+        "SIM": "verilator",
+        "TOPLEVEL": toplevel,
+        "TOPLEVEL_LANG": "verilog",
+        "MODULE": ",".join(modules),
+        "VERILOG_SOURCES": " ".join(sources),
+        "VERILOG_INCLUDE_DIRS": " ".join(os.path.abspath(d) for d in get_include_dirs(config)),
+        "COMPILE_ARGS": " ".join(flags),
+        "SIM_BUILD": os.path.join(work, "sim_build"),
+        "COCOTB_RESULTS_FILE": results,
+        "PYTHONPATH": os.pathsep.join(dict.fromkeys(search + [os.getcwd()])),
+    })
+    makefile = os.path.join(cocotb_config("--makefiles"), "Makefile.sim")
+
+    build = subprocess.run(
+        ["make", "-f", makefile, os.path.join(work, "sim_build", "Vtop")],
+        cwd=work, env=env, capture_output=True, text=True,
+    )
+    with open(os.path.join(COVERAGE_DIR, "build.log"), "w") as f:
+        f.write(build.stdout + build.stderr)
+    if build.returncode != 0:
+        print("\n".join((build.stdout + build.stderr).splitlines()[-40:]))
+        log_error("Verilator could not build the design with coverage. The log is build/coverage/build.log.")
+        sys.exit(1)
+    log_info("Running the cocotb tests on Verilator")
+    sys.stdout.flush()
+    ran = subprocess.run(["make", "-f", makefile], cwd=work, env=env)
+
+    # Renamed on the way out: Verilator writes coverage.dat again, on top of
+    # itself, for each simulation it runs.
+    raw = os.path.join(work, "coverage.dat")
+    if not os.path.exists(raw):
+        log_error(f"Verilator wrote no coverage.dat (make exit code {ran.returncode}).")
+        sys.exit(1)
+    run_dat = os.path.join(COVERAGE_DIR, "run-1.dat")
+    os.replace(raw, run_dat)
+    shutil.rmtree(work)  # the compiled model is large and is not a result
+    merged = os.path.join(COVERAGE_DIR, "coverage.dat")
+    merge_coverage([run_dat], merged)
+
+    types, per_module, files = parse_coverage_dat(merged)
+
+    tests = seed = None
+    if os.path.exists(results):
+        try:
+            seed, cases = site_page.cocotb_cases(results)
+            tests = {"total": len(cases), "passed": sum(v == "PASS" for _, v, _ in cases)}
+        except ElementTree.ParseError:
+            pass
+
+    summary = {
+        "tests": tests,
+        "seed": seed,
+        "files": [display_path(f) for f in files],
+        "types": types,
+        "modules": [{"name": name, "types": t} for name, t in per_module.items()],
+        "uncovered": uncovered_lines(merged),
+    }
+    with open(os.path.join(COVERAGE_DIR, "summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
+        f.write("\n")
+
+    print()
+    for name, _ in COVERAGE_TYPES:
+        if name in types:
+            t = types[name]
+            pct = "n/a" if t["percent"] is None else f"{t['percent']:.1f}%"
+            print(f"  {COVERAGE_NAMES.get(name, name).ljust(8)} {pct.rjust(6)}  ({t['hit']}/{t['total']})")
+    print()
+    if tests:
+        log_info(f"Verilator ran {tests['passed']}/{tests['total']} tests. Pass or fail is decided by `cocotb` on Icarus, not by this run.")
+    log_info(f"Wrote {os.path.join(COVERAGE_DIR, 'summary.json')}")
+
 def check_cocotb_results(path):
     """Exits non-zero if the run recorded a failure. vvp will not."""
     if not os.path.exists(path):
@@ -1345,8 +1573,8 @@ def physical_details(metrics):
 
 def cmd_site(args, config):
     """
-    Writes build/site/index.html: the cocotb verdicts, the timing verdict and
-    the constraints behind it, area and instances, power and signoff, with the
+    Writes build/site/index.html: the cocotb verdicts, code coverage, the timing
+    verdict and the constraints behind it, area and instances, power and signoff, with the
     layout render beside the title. Each part is included when the file behind
     it exists, so it works after `make cocotb` alone as well as after the full
     flow.
@@ -1403,7 +1631,18 @@ def cmd_site(args, config):
             sys.exit(1)
         cocotb_runs.append((title, seed, cases))
 
-    if not (numbers or layout or cocotb_runs or details):
+    # From `make coverage`. Left out when it was not run, like every other part.
+    coverage = None
+    summary_path = os.path.join(COVERAGE_DIR, "summary.json")
+    if os.path.exists(summary_path):
+        try:
+            with open(summary_path) as f:
+                coverage = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            log_error(f"Could not read {summary_path}: {e}")
+            sys.exit(1)
+
+    if not (numbers or layout or cocotb_runs or details or coverage):
         log_error(
             "Nothing to put on the page: no metrics.json under runs/ and no "
             "cocotb results. Run make cocotb or make gds first."
@@ -1415,7 +1654,7 @@ def cmd_site(args, config):
     with open(index, "w") as f:
         f.write(site_page.render(design, numbers, layout, cocotb_runs, os.environ,
                                  description=config_get(config, "DESCRIPTION", None),
-                                 **details))
+                                 coverage=coverage, **details))
     log_info(f"Wrote {index}")
 
 def cmd_pdk(args, config):
@@ -1479,6 +1718,17 @@ def build_parser():
         help="Skip, with a message, when COCOTB_TESTS is not set (used by make all)",
     )
     cocotb_parser.set_defaults(func=cmd_cocotb)
+
+    # Coverage command
+    coverage_parser = subparsers.add_parser(
+        "coverage", help="Measure code coverage of the cocotb tests on Verilator"
+    )
+    coverage_parser.add_argument("--files", nargs="*", help="Verilog RTL files")
+    coverage_parser.add_argument(
+        "--if-configured", action="store_true",
+        help="Skip, with a message, when COCOTB_TESTS is not set",
+    )
+    coverage_parser.set_defaults(func=cmd_coverage)
 
     # Gate-level sim command
     gatesim_parser = subparsers.add_parser(

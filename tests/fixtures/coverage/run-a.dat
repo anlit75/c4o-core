@@ -1,0 +1,16 @@
+# SystemC::Coverage-3
+C 'fsrc/top.vl3n1pagev_line/topoblockS3h.top' 5
+C 'fsrc/top.vl6n2pagev_line/topoblockS6h.top' 0
+C 'fsrc/top.vl9n3pagev_line/topoblockS9h.top' 2
+C 'fsrc/top.vl12n4pagev_line/topoblockS12h.top' 0
+C 'fsrc/top.vl6n5pagev_branch/topoifS6h.top' 1
+C 'fsrc/top.vl6n6pagev_branch/topoelseS6h.top' 0
+C 'fsrc/top.vl1n7pagev_toggle/topoah.top' 3
+C 'fsrc/top.vl1n8pagev_toggle/topobh.top' 0
+C 'fsrc/top.vl2n9pagev_toggle/topoc[0]h.top' 7
+C 'fsrc/top.vl2n10pagev_toggle/topoc[1]h.top' 0
+C 'fsrc/top.vl4n11pagev_toggle/topoqh.top' 1
+C 'fsrc/top.vl5n12pagev_toggle/toporh.top' 0
+C 'fsrc/sub.vl2n1pagev_line/suboblockS2h.top.u' 4
+C 'fsrc/sub.vl1n2pagev_toggle/suboxh.top.u' 1
+C 'fsrc/sub.vl1n3pagev_toggle/suboyh.top.u' 1
