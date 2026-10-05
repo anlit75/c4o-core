@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.20.1](https://github.com/anlit75/c4o-core/compare/v2.20.0...v2.20.1) (2026-10-05)
+
+
+### Fixes
+
+* restore the results page Summary and tidy its wording ([#76](https://github.com/anlit75/c4o-core/issues/76)) ([cfbdf51](https://github.com/anlit75/c4o-core/commit/cfbdf51abb40813d466e94b15c595c49225b8291))
+
 ## [2.20.0](https://github.com/anlit75/c4o-core/compare/v2.19.0...v2.20.0) (2026-10-04)
 
 
