@@ -10,7 +10,7 @@ handed.
 import html
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree
 
 CSS = """
@@ -61,7 +61,12 @@ section > p, .note { color: var(--muted); font-size: 14px; }
               font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .kpi.good .value { color: var(--pass); }
 .kpi.wide .value { font-size: 15px; font-weight: 500; }
+.kpi.bad .value { color: var(--fail); }
 .kpi .detail { color: var(--muted); font-size: 13px; }
+details { margin-top: 16px; }
+summary { cursor: pointer; font-weight: 600; font-size: 16px; }
+details > :not(summary) { margin-top: 12px; }
+.narrow-only { display: none; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 15px; }
 th, td { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line);
@@ -128,6 +133,9 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
   table.power td:nth-child(2), table.power th:nth-child(2),
   table.power td:nth-child(3), table.power th:nth-child(3),
   table.power td:nth-child(4), table.power th:nth-child(4) { display: none; }
+  .narrow-only { display: block; }
+  table.tests th:not(:first-child), table.tests td:not(:first-child) { width: 56px; }
+  th { letter-spacing: .02em; font-size: 11px; } th, td { padding-right: 8px; }
   td.bar, th.bar { width: 60px; } }
 """
 
@@ -183,10 +191,12 @@ def power_groups(text):
                 continue
     return rows
 
-def kpi(label, value):
+def kpi(label, value, state=None):
     """
     One summary number as a card: `report` writes "+4.70 ns  (0 violations)",
     and the part in brackets is the detail under the headline figure.
+    state -- "good" or "bad" colours the figure; a slack is good when it is
+             not negative, unless the caller says otherwise
     """
     esc = html.escape
     main, _, detail = value.partition("  (")
@@ -201,7 +211,9 @@ def kpi(label, value):
     elif main.isdigit():
         main = f"{int(main):,}"
     detail = detail.replace("um^2", "\u00b5m\u00b2")
-    good = " good" if label.endswith("slack") and main.startswith("+") else ""
+    if state is None and label.endswith("slack"):
+        state = "bad" if main.startswith("-") else "good" if main.startswith("+") else None
+    good = f" {state}" if state else ""
     if label == "lint warnings" and not detail:
         # A bare count reads as a flaw; say what it counts.
         detail = "Verilator on the RTL, inside the flow: warnings, not errors"
@@ -270,6 +282,45 @@ def makeup(area, cells, instances=None):
                           for g, colour, name in groups if sums[g]]))
     return out
 
+def join_words(items):
+    """['a', 'b', 'c'] -> 'a, b and c'."""
+    return " and ".join(filter(None, [", ".join(items[:-1]), items[-1:] and items[-1]]))
+
+def clock_mhz(period):
+    """A clock period in ns as '100 MHz', or None when it is not a period."""
+    return f"{1000 / period:.0f} MHz" if period and period > 0 else None
+
+def milliwatts(watts):
+    """Watts as '0.248 mW': the unit of every power headline."""
+    return f"{watts * 1e3:.3f} mW"
+
+def slack_text(ws):
+    """A slack in ns, signed: '+4.70 ns'."""
+    return f"{ws:+.2f} ns"
+
+def violations_text(n):
+    """'0 violations', '1 violation'; '?' when the run did not say."""
+    return "? violations" if n is None else f"{n:,} violation{'' if n == 1 else 's'}"
+
+def signoff_words(present):
+    """
+    (failed, ran) for the signoff checks of entrypoint.signoff_checks: `failed`
+    names what failed, with counts, and is empty when nothing did; `ran` names
+    the checks that reported. One reading for `report`, the chip and the card.
+    """
+    failed = ", ".join(f"{count} {label}" + (f" ({bad})" if bad else "")
+                       for label, count, _, bad in present if count)
+    ran = ", ".join(f"{tools} DRC" if label == "DRC" and " and " not in tools else label
+                    for label, _, tools, _ in present)
+    return failed, ran
+
+def instance_counts(numbers):
+    """(after synthesis, after routing) from the `instances` row, each None when absent."""
+    text = dict(numbers).get("instances", "")
+    synth = re.search(r"(\d+) after synthesis", text)
+    routed = re.search(r"(\d+) after routing", text)
+    return (int(synth[1]) if synth else None, int(routed[1]) if routed else None)
+
 def drive_table(drive):
     """
     Instances by drive strength, after synthesis and after routing, as a table
@@ -287,19 +338,21 @@ def drive_table(drive):
         f"<tr><td>X{n}</td>" + "".join(f'<td class="num">{row[i]:,}</td>' for i, _ in stages) + "</tr>"
         for row in drive for n in (row[0],))
     total = "".join(f'<td class="num">{sum(row[i] for row in drive):,}</td>' for i, _ in stages)
-    out = ("<h3>Drive strength</h3>"
-           "<p>Instances by the <code>_N</code> that ends their library name, as in <code>dfrtp_2</code>. "
+    out = ("<p>Instances by the <code>_N</code> that ends their library name, as in <code>dfrtp_2</code>. "
            "Well taps, decap, fill and antenna diodes have no drive strength and are left out.</p>"
            f'<div class="scroll"><table class="drive"><tr><th>drive strength</th>{head}</tr>'
            f'{body}<tr class="total"><td>Total</td>{total}</tr></table></div>')
     if len(stages) == 2:
         changed = sorted(((r[2] - r[1], r[0]) for r in drive if r[2] != r[1]),
                          key=lambda c: (-abs(c[0]), c[1]))
-        words = [f"{'added' if d > 0 else 'removed'} {abs(d):,} at X{n}" for d, n in changed]
-        sentence = " and ".join(filter(None, [", ".join(words[:-1]), words[-1:] and words[-1]]))
-        out += (f"<p>Place and route {sentence}.</p>" if words
+        sentences = [f"{verb} {join_words([f'{abs(d):,} X{n}' for d, n in changed if (d > 0) == up])} instances."
+                     for up, verb in ((True, "added"), (False, "removed"))
+                     if any((d > 0) == up for d, _ in changed)]
+        out += ("<p>Place and route " + " It ".join(sentences) + "</p>" if sentences
                 else "<p>Place and route did not change the mix.</p>")
-    return out
+    return (f'<details class="drive-strength"><summary>Drive strength of the instances '
+            f'({len(drive)} size{"" if len(drive) == 1 else "s"})</summary>'
+            + out + "</details>")
 
 def human_size(n):
     """Bytes as a short size: 6 B, 12.3 kB, 3.8 MB."""
@@ -323,13 +376,16 @@ def hero_art(layout, design, numbers, pdk):
     die = re.match(r"([\d.]+) x ([\d.]+) um", rows.get("die", ""))
     if die:
         caption.append(f"{float(die[1]):,.1f} \u00d7 {float(die[2]):,.1f} \u00b5m")
-    # The headline instance count, the first number of the row.
-    count = re.match(r"\d+", rows.get("instances", ""))
-    if count:
-        caption.append(f"{int(count[0]):,} instances")
+    # The picture is the routed layout, so the count is the routed one. Say
+    # which count it is when that is the only one there is.
+    synth, routed = instance_counts(numbers)
+    if routed is not None:
+        caption.append(f"{routed:,} instances after routing")
+    elif synth is not None:
+        caption.append(f"{synth:,} instances after synthesis")
     if pdk:
         caption.append(esc(pdk))
-    caption = (f"<figcaption>{' &middot; '.join(caption)}</figcaption>" if caption else "")
+    caption = f"<figcaption>{' &middot; '.join(caption)}</figcaption>" if caption else ""
     return (f'<figure class="hero-art" id="layout"><a href="{esc(layout)}">'
             f'<img src="{esc(layout)}" alt="Layout of {esc(design)}"></a>{caption}</figure>')
 
@@ -338,42 +394,26 @@ PROCESS = {"ss": "slow", "tt": "typical", "ff": "fast", "sf": "slow-fast", "fs":
 RC = {"min": "minimum", "nom": "typical", "max": "maximum"}
 
 def corner_words(corner):
-    """'max_ss_100C_1v60' -> 'maximum wire RC, slow transistors, 100 °C, 1.60 V', or None."""
+    """'max_ss_100C_1v60' -> 'maximum wire RC, slow transistors, 100 °C, 1.60 V', or None.
+    The name pads the temperature to three digits: 025C is 25 °C."""
     m = CORNER.match(corner)
     if not m:
         return None
     rc, process, minus, temp, volts, frac = m.groups()
-    return (f"{RC[rc]} wire RC, {PROCESS[process]} transistors, {'-' if minus else ''}{temp} &deg;C, "
+    return (f"{RC[rc]} wire RC, {PROCESS[process]} transistors, {'-' if minus else ''}{int(temp)} &deg;C, "
             f"{volts}.{frac} V")
-
-def summary_rows(numbers, physical):
-    """
-    `report`'s rows for the cards of the area section, with what a physical
-    designer asks next folded into their details: the core the utilization is
-    a share of, and the well taps among the instances. The slacks are left
-    out, since the timing section gives them.
-    """
-    rows = []
-    for label, value in numbers:
-        if label in ("setup slack", "hold slack"):
-            continue
-        if label == "utilization" and physical.get("core"):
-            w, h = physical["core"]
-            label, value = "core utilization", f"{value}  (of a {w:,.1f} \u00d7 {h:,.1f} \u00b5m core)"
-        elif label == "instances":
-            m = re.fullmatch(r"(\d+) after synthesis, (\d+) after routing", value)
-            if m:
-                taps = physical.get("taps")
-                value = (f"{m[1]}  (after synthesis; {int(m[2]):,} after routing"
-                         + (f", {taps:,} of them well taps" if taps else "") + ")")
-            elif physical.get("taps") and value.endswith(" after routing"):
-                value += f"  ({physical['taps']:,} of them well taps)"
-        rows.append((label, value))
-    return rows
 
 def run_name(title):
     """"cocotb, RTL" -> "RTL", "cocotb, gate level" -> "gates": a column head."""
     return {"cocotb, RTL": "RTL", "cocotb, gate level": "gates"}.get(title, title)
+
+def test_name(name):
+    """
+    A test name for a table cell. It may wrap after an underscore and nowhere
+    else: <wbr> is a break opportunity that adds no character, so a copied
+    name is the exact name.
+    """
+    return html.escape(name).replace("_", "_<wbr>")
 
 def merged_tests(cocotb_runs):
     """
@@ -399,7 +439,7 @@ def merged_tests(cocotb_runs):
             f"on the gates synthesis produced.</p>{seeds}"
             '<div class="scroll"><table class="tests"><tr><th>test</th>'
             + "".join(f"<th>{esc(h)}</th>" for h in heads) + "</tr>" + "".join(
-                f"<tr><td><code>{esc(name)}</code></td>"
+                f"<tr><td><code>{test_name(name)}</code></td>"
                 + "".join(cell(vs.get(name)) for vs in verdicts) + "</tr>"
                 for name in names) + "</table></div>")
 
@@ -425,9 +465,9 @@ def timing_section(physical):
     count = lambda n: "?" if n is None else f"{n:,}"
     def row(name, ws, vio):
         r2r = physical.get("r2r_" + name)
-        return (f'<tr><td>{name}</td><td class="num {"PASS" if ws >= 0 else "FAIL"}">{ws:+.2f} ns</td>'
+        return (f'<tr><td>{name}</td><td class="num {"PASS" if ws >= 0 else "FAIL"}">{slack_text(ws)}</td>'
                 f'<td class="num">{count(vio)}</td>'
-                f'<td class="num">{f"{r2r:+.2f} ns" if r2r is not None else "&mdash;"}</td></tr>')
+                f'<td class="num">{slack_text(r2r) if r2r is not None else "&mdash;"}</td></tr>')
     rows = "".join(row(name, ws, vio) for name, (ws, vio) in checks)
     out = (f'<h2>Timing</h2><p class="{"PASS" if met else "FAIL"}"><strong>'
            f'{"Timing is met: no setup or hold slack is negative." if met else "Timing is not met."}'
@@ -442,7 +482,7 @@ def timing_section(physical):
     if constraints:
         period = constraints.get("clock_period", (None,))[0]
         value = {
-            "clock_period": lambda v: f"{v:g} ns" + (f" ({1000 / v:.0f} MHz)" if v > 0 else ""),
+            "clock_period": lambda v: f"{v:g} ns" + (f" ({clock_mhz(v)})" if clock_mhz(v) else ""),
             "uncertainty": lambda v: f"{v:g} ns",
             "transition": lambda v: f"{v:g} ns",
             "derate": lambda v: f"{v:g}%",
@@ -453,13 +493,15 @@ def timing_section(physical):
         label = {"clock_period": "clock period", "uncertainty": "clock uncertainty",
                  "transition": "clock transition", "derate": "timing derate",
                  "io_delay": "input and output delay"}
-        out += ("<h3>Constraints the run used</h3><p>Read from the post-route timing step of the run. "
+        shown = [n for n in value if n in constraints]
+        out += (f'<details class="constraints"><summary>Constraints the run used ({len(shown)})</summary>'
+                "<p>Read from the post-route timing step of the run. "
                 "The slack above holds for these values only.</p>"
                 '<div class="scroll"><table><tr><th>constraint</th><th>value</th><th>source</th></tr>'
                 + "".join(f"<tr><td>{label[name]}</td><td>{value[name](v)}</td>"
                           f"<td>{source[mine]}</td></tr>"
-                          for name, (v, mine) in ((n, constraints[n]) for n in value if n in constraints))
-                + "</table></div>")
+                          for name, (v, mine) in ((n, constraints[n]) for n in shown))
+                + "</table></div></details>")
     return out
 
 def signoff_section(signoff, physical):
@@ -493,6 +535,49 @@ def signoff_section(signoff, physical):
                 + ". LibreLane sets no limit, so none is claimed. Not analysed: electromigration, "
                 "crosstalk and dynamic IR drop.</p>")
     return out
+
+def summary_cards(numbers, physical, power, signoff):
+    """
+    The Summary section's cards: the numbers a visitor asks first, each built
+    from the data its section below is built from, and left out when that
+    data is missing. No card is a placeholder.
+    """
+    rows = dict(numbers)
+    cards = []
+    if "die" in rows:
+        cards.append(kpi("die", rows["die"]))
+    period = (physical.get("constraints") or {}).get("clock_period", (None,))[0]
+    if clock_mhz(period):
+        cards.append(kpi("clock", f"{clock_mhz(period)}  ({period:g} ns period)"))
+    if "utilization" in rows:
+        # Of the core, not the die beside it.
+        core = physical.get("core")
+        cards.append(kpi("core utilization" if core else "utilization", rows["utilization"]
+                         + (f"  (of a {core[0]:,.1f} \u00d7 {core[1]:,.1f} \u00b5m core)" if core else "")))
+    synth, routed = instance_counts(numbers)
+    if routed is not None:
+        cards.append(kpi("instances", f"{routed:,}  (after routing"
+                         + (f", {synth:,} after synthesis)" if synth is not None else ")")))
+    elif synth is not None:
+        cards.append(kpi("instances", f"{synth:,}  (after synthesis)"))
+    for name in ("setup", "hold"):
+        if name in physical:
+            ws, vio = physical[name]
+            cards.append(kpi(f"worst {name} slack", f"{slack_text(ws)}  ({violations_text(vio)})"))
+    total = next((r[4] for r in power[1] if r[0] == "Total"), None) if power else None
+    if total is not None:
+        # The corner in words, as the Power section gives it.
+        words = corner_words(power[0])
+        cards.append(kpi("total power", f"{milliwatts(total)}  ("
+                         + (html.unescape(words) if words else f"corner {power[0]}") + ")"))
+    elif "power" in rows:
+        cards.append(kpi("total power", rows["power"]))
+    if signoff:
+        failed, ran = signoff_words(signoff)
+        cards.append(kpi("signoff", failed or f"clean  ({ran})", "bad" if failed else "good"))
+    if "lint warnings" in rows:
+        cards.append(kpi("lint warnings", rows["lint warnings"]))
+    return f'<h2>Summary</h2><div class="kpis">{"".join(cards)}</div>' if cards else ""
 
 def render(design, numbers, layout, cocotb_runs, env,
            signoff=(), area=None, power=None, gds=None,
@@ -548,10 +633,6 @@ def render(design, numbers, layout, cocotb_runs, env,
         else:
             chips.append(("PASS" if passed == len(cases) else "FAIL",
                           f"{passed}/{len(cases)} tests passed"))
-    if signoff:
-        errors = sum(item[1] for item in signoff)
-        chips.append(("FAIL", f"Signoff: {errors} errors") if errors
-                     else ("PASS", "Signoff clean"))
     # Setup and hold both: a negative hold slack is a chip that fails on
     # silicon at any clock speed, so "Timing met" on setup alone would be a
     # wrong verdict, not a partial one.
@@ -559,6 +640,10 @@ def render(design, numbers, layout, cocotb_runs, env,
     if slacks:
         chips.append(("FAIL", "Timing missed") if any(s < 0 for s in slacks)
                      else ("PASS", "Timing met"))
+    if signoff:
+        errors = sum(item[1] for item in signoff)
+        chips.append(("FAIL", f"Signoff: {errors} errors") if errors
+                     else ("PASS", "Signoff clean"))
 
     if len(cocotb_runs) > 1:
         add("tests", "Tests", merged_tests(cocotb_runs))
@@ -570,16 +655,19 @@ def render(design, numbers, layout, cocotb_runs, env,
             f"<h2>{esc(title)}: {passed}/{len(run)} passed</h2>{replay}"
             '<div class="scroll"><table><tr><th>test</th><th>result</th>'
             '<th class="num">sim time (ns)</th></tr>' + "".join(
-                f'<tr><td><code>{esc(name)}</code></td><td class="{verdict}">{verdict}</td>'
+                f'<tr><td><code>{test_name(name)}</code></td><td class="{verdict}">{verdict}</td>'
                 f'<td class="num">{sim_ns:g}</td></tr>'
                 for name, verdict, sim_ns in run) + "</table></div>")
+
+    glance = summary_cards(numbers, physical, power, signoff)
+    if glance:
+        add("summary", "Summary", glance)
 
     timing = timing_section(physical)
     if timing:
         add("timing", "Timing", timing)
 
-    cards = "".join(kpi(label, value) for label, value in summary_rows(numbers, physical))
-    if area or cells or cards or drive:
+    if area or cells or drive:
         hold = physical.get("hold_buffers")
         if hold:
             # Most of them, in a design with a fast-corner hold problem.
@@ -592,27 +680,32 @@ def render(design, numbers, layout, cocotb_runs, env,
                         + (", single threshold voltage" if library.startswith("sky130_fd_sc_") else "")
                         + ".</p>" if library else "")
         add("area", "Area and instances", "<h2>Area and instances</h2>" + library_line
-            + (f'<div class="kpis">{cards}</div>' if cards else "")
             + makeup(area or {}, cells, physical.get("synthesized"))
             + drive_table(drive))
 
     if power:
         corner, rows = power
-        total = next((r[4] for r in rows if r[0] == "Total"), 0) or 1
+        total_w = next((r[4] for r in rows if r[0] == "Total"), None)
+        total = total_w or 1
         rows = [r for r in rows if r[4] or r[0] == "Total"]  # Macro, Pad: zero here
         # One decimal throughout; leakage is orders of magnitude below the
         # rest, and four significant digits of it were noise.
         uw = lambda w: f"{w * 1e6:,.1f}" if w * 1e6 >= 0.05 or not w else "&lt;0.1"
         words = corner_words(corner)
         period = (physical.get("constraints") or {}).get("clock_period", (None,))[0]
-        clock = (f" Clock {1000 / period:.0f} MHz, from a period of {period:g} ns."
-                 if period and period > 0 else "")
+        clock = (f" Clock {clock_mhz(period)}, from a period of {period:g} ns."
+                 if clock_mhz(period) else "")
         add("power", "Power",
-            f"<h2>Power</h2><p>Corner <code>{esc(corner)}</code>" + (f" ({words})" if words else "")
-            + f", in &micro;W.{clock} Dynamic is internal plus switching; static is leakage.</p>"
+            "<h2>Power</h2><p>" + (f"<strong>{milliwatts(total_w)} in total</strong> at corner "
+                                   if total_w is not None else "Corner ")
+            + f"<code>{esc(corner)}</code>" + (f" ({words})" if words else "")
+            + f".{clock} Dynamic is internal plus switching. Static is leakage. "
+            "The table is in &micro;W.</p>"
             "<p>Switching activity is OpenSTA's default, 0.1 toggles per clock on data nets. "
             "It is not taken from simulation, so this estimates where power goes. "
             "It does not measure a workload.</p>"
+            '<p class="hint narrow-only">On a narrow screen the table hides the internal, '
+            "switching and leakage columns.</p>"
             '<div class="scroll"><table class="power"><tr><th>group</th><th class="num">internal</th>'
             '<th class="num">switching</th><th class="num">leakage</th>'
             '<th class="num">total</th><th class="num">share</th><th class="bar"></th></tr>' + "".join(
@@ -635,9 +728,11 @@ def render(design, numbers, layout, cocotb_runs, env,
     # next one replaces it, so a reader needs to know how old it is.
     # SOURCE_DATE_EPOCH, when set, pins it (reproducible builds, tests).
     epoch = env.get("SOURCE_DATE_EPOCH")
-    built = (datetime.fromtimestamp(int(epoch), timezone.utc) if epoch
-             else datetime.now(timezone.utc))
-    meta = [f"Built {built:%Y-%m-%d %H:%M} UTC"]
+    # Taiwan time, a fixed offset: no DST, and no tz database in the image.
+    taipei = timezone(timedelta(hours=8))
+    built = (datetime.fromtimestamp(int(epoch), taipei) if epoch
+             else datetime.now(taipei))
+    meta = [f"Built {built:%Y-%m-%d %H:%M} (UTC+8)"]
     server, repo = env.get("GITHUB_SERVER_URL"), env.get("GITHUB_REPOSITORY")
     sha, run = env.get("GITHUB_SHA"), env.get("GITHUB_RUN_ID")
     if server and repo and sha:
@@ -681,7 +776,7 @@ def render(design, numbers, layout, cocotb_runs, env,
         og += (f'<meta property="og:image" content="https://{esc(owner.lower())}.github.io/'
                f'{esc(name)}/{esc(layout)}"><meta name="twitter:card" content="summary">')
 
-    order = ["layout", "tests", "timing", "area", "power", "signoff"]
+    order = ["layout", "summary", "tests", "timing", "area", "power", "signoff"]
     parts.sort(key=lambda p: order.index(p[0].split("-")[0]) if p[0].split("-")[0] in order
                else len(order))
 
@@ -715,9 +810,9 @@ def render(design, numbers, layout, cocotb_runs, env,
         + "</main>"
         + '<footer class="wrap"><p>'
         + (f'Source: <a href="{esc(server)}/{esc(repo)}">{esc(repo)}</a>. ' if server and repo else "")
-        + 'Built with <a href="https://github.com/anlit75/ChipForAll">'
-          "ChipForAll</a>, on open-source EDA tools. Generated by c4o-core "
-          "<code>site</code>.</p></footer>"
+        + 'Made with <a href="https://github.com/anlit75/ChipForAll">ChipForAll</a>, '
+          "an open-source chip design flow. "
+          'This page is generated by <a href="https://github.com/anlit75/c4o-core">c4o-core</a>.</p></footer>'
         + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in actions else "")
         + "</body></html>\n"
     )

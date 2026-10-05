@@ -837,15 +837,12 @@ def signoff_row(metrics):
     if not present:
         return None
 
-    failed = [f"{count} {label}" + (f" ({bad})" if bad else "")
-              for label, count, _, bad in present if count]
+    failed, ran = site_page.signoff_words(present)
     if failed:
-        return ("signoff", ", ".join(failed))
+        return ("signoff", failed)
     # Name the checks that actually ran: 'clean' is only as strong as its list.
     # DRC says its tools, since one of the two may be all that reported.
-    return ("signoff", "clean  (" + ", ".join(
-        f"{tools} DRC" if label == "DRC" and " and " not in tools else label
-        for label, _, tools, _ in present) + ")")
+    return ("signoff", f"clean  ({ran})")
 
 # KLAYOUT_RENDER is registered with extension "png" and folder "render", so the
 # file is <design>.png -- not <design>.klayout.png, which is what the format's
@@ -1179,9 +1176,9 @@ def report_rows(metrics, path):
     if corner_power:
         corner, groups = corner_power
         total = next(g[4] for g in groups if g[0] == "Total")
-        rows.append(("power", f"{total * 1e3:.3f} mW  ({corner})"))  # watts
+        rows.append(("power", f"{site_page.milliwatts(total)}  ({corner})"))  # watts
     elif metrics.get("power__total") is not None:
-        rows.append(("power", f"{metrics['power__total'] * 1e3:.3f} mW  (corner not named)"))
+        rows.append(("power", f"{site_page.milliwatts(metrics['power__total'])}  (corner not named)"))
 
     signoff = signoff_row(metrics)
     if signoff:

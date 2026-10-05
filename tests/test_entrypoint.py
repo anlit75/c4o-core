@@ -7,6 +7,7 @@ import contextlib
 import unittest
 import tempfile
 import shutil
+import calendar
 from unittest.mock import patch, MagicMock
 
 # Add scripts/ to path
@@ -1546,7 +1547,7 @@ class TestEntrypoint(unittest.TestCase):
             # Utilization is of the core, not the die beside it.
             self.assertIn('<div class="label">core utilization</div><div class="value">57.1%</div>'
                           '<div class="detail">of a 58.4 \u00d7 57.1 \u00b5m core</div>', page)
-            self.assertIn("46 of them well taps", page)
+            self.assertIn("46 well taps", page)
             self.assertIn("35 timing-repair buffers, 26 of them for hold", page)
             self.assertIn("timing repair also resizes instances", page)
             # stat.json: 1366.3104 total, 683.1552 of it sequential -- this
@@ -1560,9 +1561,8 @@ class TestEntrypoint(unittest.TestCase):
             # 198 after routing. 57 logic + 26 sequential + 27 inverters from
             # synthesis; 46 taps + 35 timing-repair + 7 clock buffers added.
             self.assertIn("<h3>Instances: 110 after synthesis, 198 after routing</h3>", page)
-            self.assertIn('<div class="label">instances</div><div class="value">110</div>'
-                          '<div class="detail">after synthesis; 198 after routing, '
-                          '46 of them well taps</div>', page)
+            self.assertIn('<div class="label">instances</div><div class="value">198</div>'
+                          '<div class="detail">after routing, 110 after synthesis</div>', page)
             self.assertIn("from synthesis 110 ", page)
             self.assertIn("added by the flow 88 ", page)
             self.assertNotIn("instance classes", page)
@@ -1583,7 +1583,9 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn(">247.9<", page)
             self.assertIn(">54.4%<", page)
             self.assertNotIn("<div class=\"label\">power</div>", page)
-            self.assertNotIn("<div class=\"label\">signoff</div>", page)
+            # Signoff has its section, and a card in the overview only.
+            self.assertEqual(page.count('<div class="label">signoff</div>'), 1)
+            self.assertIn('<div class="label">signoff</div>', self._section_text(page, "summary"))
         finally:
             os.chdir(cwd)
 
@@ -1591,8 +1593,8 @@ class TestEntrypoint(unittest.TestCase):
         return re.findall(r'<section id="([^"]+)"', page)
 
     def test_site_orders_the_sections_for_a_reviewer(self):
-        # Layout and verdicts first (tests, timing with its constraints), then
-        # area and instances, power, and signoff last.
+        # The summary first, then the verdicts (tests, timing with its
+        # constraints), then area and instances, power, and signoff last.
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
@@ -1600,8 +1602,9 @@ class TestEntrypoint(unittest.TestCase):
             with open("build/cocotb-results.xml", "w") as f:
                 f.write(self.COCOTB_XML)
             page = self._run_site()
-            self.assertEqual(self._sections(page), ["tests-0", "timing", "area", "power", "signoff"])
-            self.assertLess(page.index("<header"), page.index('<section id="tests-0"'))
+            self.assertEqual(self._sections(page),
+                             ["summary", "tests-0", "timing", "area", "power", "signoff"])
+            self.assertLess(page.index('<section id="summary"'), page.index('<section id="tests-0"'))
         finally:
             os.chdir(cwd)
 
@@ -1885,13 +1888,13 @@ class TestEntrypoint(unittest.TestCase):
             page = self._site()
             area = page[page.index('<section id="area">'):]
             area = area[:area.index("</section>")]
-            self.assertIn("<h3>Drive strength</h3>", area)
+            self.assertIn("<summary>Drive strength of the instances (3 sizes)</summary>", area)
             self.assertIn('<th>drive strength</th><th class="num">after synthesis</th>'
                           '<th class="num">after routing</th>', area)
             rows = re.findall(r'<tr><td>(X\d+)</td><td class="num">(\d+)</td><td class="num">(\d+)</td></tr>', area)
             self.assertEqual(rows, [("X1", "0", "18"), ("X2", "65", "65"), ("X16", "0", "3")])
             self.assertIn('<tr class="total"><td>Total</td><td class="num">65</td><td class="num">86</td></tr>', area)
-            self.assertIn("Place and route added 18 at X1 and added 3 at X16.", area)
+            self.assertIn("Place and route added 18 X1 and 3 X16 instances.", area)
             # The 113 routed instances less the 27 well taps are the 86.
             self.assertIn("65 after synthesis, 113 after routing", area)
             self.assertIn("27 well taps", area)
@@ -1926,7 +1929,7 @@ class TestEntrypoint(unittest.TestCase):
     def test_site_drive_strength_reading_says_what_routing_added_and_removed(self):
         # Hand-made rows: a real run only ever added.
         text = entrypoint.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
-        self.assertIn("Place and route added 2 at X1 and removed 2 at X2.", text)
+        self.assertIn("Place and route added 2 X1 instances. It removed 2 X2 instances.", text)
         text = entrypoint.site_page.drive_table([(2, 3, 3)])
         self.assertIn("Place and route did not change the mix.", text)
 
@@ -2029,7 +2032,28 @@ class TestEntrypoint(unittest.TestCase):
         try:
             with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):
                 page = self._run_site()
-            self.assertIn("Built 1970-01-01 00:00 UTC", page)
+            self.assertIn("Built 1970-01-01 08:00 (UTC+8)", page)
+            # 16:30 UTC is already the next day in Taiwan: a page built with
+            # the UTC clock, or a wrong offset, shows the wrong date.
+            epoch = str(calendar.timegm((2026, 9, 21, 16, 30, 0)))
+            with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": epoch}):
+                page = self._site()
+            self.assertIn("Built 2026-09-22 00:30 (UTC+8)", page)
+            self.assertNotIn("UTC</", page)
+            self.assertNotIn("2026-09-21", page)
+            # Off a pinned epoch the clock is read in the same offset.
+            site_page = entrypoint.site_page
+            fixed = site_page.datetime(2026, 1, 1, 16, 0, tzinfo=site_page.timezone.utc)
+
+            class FakeClock(site_page.datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return fixed.astimezone(tz)
+
+            env = {k: v for k, v in os.environ.items() if k != "SOURCE_DATE_EPOCH"}
+            with patch.object(site_page, "datetime", FakeClock), patch.dict(os.environ, env, clear=True):
+                page = self._site()
+            self.assertIn("Built 2026-01-02 00:00 (UTC+8)", page)
         finally:
             os.chdir(cwd)
 
@@ -2094,8 +2118,9 @@ class TestEntrypoint(unittest.TestCase):
             self.assertNotIn('<td class="num PASS">-0.50', page)
             self.assertIn("Timing is not met.", page)
             self.assertNotIn("Timing is met", page)
-            self.assertIn('<div class="value">110</div>', page)
-            self.assertIn("12,345 after routing", page)
+            self.assertIn('<div class="value">12,345</div>', page)
+            self.assertIn("after routing, 110 after synthesis", page)
+            self.assertIn('<div class="kpi bad"><div class="label">worst setup slack</div>', page)
         finally:
             os.chdir(cwd)
 
@@ -2127,7 +2152,7 @@ class TestEntrypoint(unittest.TestCase):
             header = page[page.index("<header"):page.index("</header>")]
             self.assertIn('<header class="has-art">', page)
             self.assertIn('<figure class="hero-art" id="layout">', header)
-            self.assertIn("69.5 \u00d7 80.2 \u00b5m &middot; 110 instances &middot; sky130A", header)
+            self.assertIn("69.5 \u00d7 80.2 \u00b5m &middot; 198 instances after routing &middot; sky130A", header)
             self.assertIn('<p class="byline">by <a href="https://github.com/someone">someone</a></p>', header)
             # The layout is the hero now, not a section of its own further down.
             self.assertNotIn('<section id="layout"', page)
@@ -2230,7 +2255,8 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn('<a class="btn" href="https://github.com/Some/repo">View source</a>', page)
             # The schematic is a file of `make schematic`, not part of the page.
             self.assertNotIn("Schematic", page)
-            self.assertNotIn("<details", page)
+            # Only the constraints and the drive strength fold away.
+            self.assertEqual(page.count("<details"), 2)
         finally:
             os.chdir(cwd)
 
@@ -2268,7 +2294,8 @@ class TestEntrypoint(unittest.TestCase):
             os.remove("runs/blinky_run/55-openroad-stapostpnr/nom_tt_025C_1v80/power.rpt")
             page = self._site()
             self.assertNotIn("<h2>Power</h2>", page)
-            self.assertIn("<div class=\"label\">power</div>", page)
+            self.assertIn('<div class="label">total power</div><div class="value">0.290 mW</div>'
+                          '<div class="detail">corner not named</div>', page)
         finally:
             os.chdir(cwd)
 
@@ -2589,6 +2616,379 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("1/2 passed", page)
             self.assertNotIn("Waveform", page)
             self.assertFalse(os.path.exists("build/site/wave.svg"))
+        finally:
+            os.chdir(cwd)
+
+    # --- the Summary section ---
+
+    def _summary(self, page):
+        """{label: (value, detail)} of the Summary section's cards."""
+        found = re.search(r'<section id="summary">.*?</section>', page, re.S)
+        region = found[0] if found else ""
+        return {m[1]: (m[2], m[3]) for m in re.findall(
+            r'<div class="kpi([^"]*)"><div class="label">([^<]*)</div><div class="value">([^<]*)</div>'
+            r'(?:<div class="detail">([^<]*)</div>)?', region)}
+
+    SUMMARY_LABELS = ["die", "clock", "core utilization", "instances", "worst setup slack",
+                       "worst hold slack", "total power", "signoff", "lint warnings"]
+
+    def test_summary_has_every_item_and_is_the_first_section_under_the_nav(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site()
+            self.assertEqual(list(self._summary(page)), self.SUMMARY_LABELS)
+            self.assertIn("<h2>Summary</h2>", page)
+            self.assertEqual(self._sections(page), ["summary", "timing", "area", "power", "signoff"])
+            self.assertLess(page.index("<nav"), page.index('<section id="summary">'))
+            self.assertLess(page.index('<section id="summary">'), page.index('<section id="timing">'))
+            nav = page[page.index("<nav"):page.index("</nav>")]
+            self.assertLess(nav.index('href="#summary"'), nav.index('href="#timing"'))
+            self.assertIn(">Summary</a>", nav)
+            self.assertNotIn('role="region"', page)
+        finally:
+            os.chdir(cwd)
+
+    def test_summary_values_are_the_values_of_the_sections(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site()
+            cards = self._summary(page)
+            section = lambda name: self._section_text(page, name)
+            timing, area, power = section("timing"), section("area"), section("power")
+            # Slack: the timing table's own cells.
+            for name in ("setup", "hold"):
+                value, detail = cards[f"worst {name} slack"]
+                self.assertIn(f'<tr><td>{name}</td><td class="num PASS">{value}</td>'
+                              f'<td class="num">{detail.split()[0]}</td>', timing)
+            # Clock: the constraint row, as MHz first.
+            self.assertEqual(cards["clock"], ("100 MHz", "10 ns period"))
+            self.assertIn("<td>clock period</td><td>10 ns (100 MHz)</td>", timing)
+            self.assertIn("Clock 100 MHz, from a period of 10 ns.", power)
+            # Power: the headline of the power section, and the table's Total row.
+            mw = cards["total power"][0]
+            self.assertEqual(mw, "0.248 mW")
+            self.assertIn(f"<strong>{mw} in total</strong>", power)
+            self.assertIn(">247.9<", power)
+            # The corner in words, as the Power section writes it.
+            self.assertEqual(cards["total power"][1],
+                             "typical wire RC, typical transistors, 25 \u00b0C, 1.80 V")
+            self.assertIn("(typical wire RC, typical transistors, 25 &deg;C, 1.80 V)", power)
+            self.assertNotIn("nom_tt_025C_1v80", self._section_text(page, "summary"))
+            # Instances: the area section's heading, routed first.
+            self.assertEqual(cards["instances"], ("198", "after routing, 110 after synthesis"))
+            self.assertIn("<h3>Instances: 110 after synthesis, 198 after routing</h3>", area)
+            # Die, utilization and instances live in the Summary only; the
+            # area section keeps the detail the Summary has no room for.
+            for label in ("die", "core utilization", "instances", "lint warnings"):
+                self.assertNotIn(f'<div class="label">{label}</div>', area)
+            self.assertNotIn('class="kpi', area)
+            # The core size is on the utilization card only.
+            self.assertNotIn("Core:", area)
+            self.assertNotIn("57.1 &micro;m", area)
+            self.assertEqual(cards["core utilization"], ("57.1%", "of a 58.4 \u00d7 57.1 \u00b5m core"))
+            self.assertEqual(cards["die"][0], "69.5 \u00d7 80.2 \u00b5m")
+            self.assertIn("Verilator on the RTL, inside the flow", cards["lint warnings"][1])
+            self.assertEqual(cards["signoff"][0], "clean")
+            self.assertNotIn("FAIL", section("signoff"))
+            self.assertEqual(cards["lint warnings"][0], "0")
+        finally:
+            os.chdir(cwd)
+
+    def test_summary_omits_a_card_whose_data_is_missing(self):
+        def without(*keys):
+            def edit(metrics):
+                for key in keys:
+                    metrics.pop(key, None)
+            return edit
+        cases = [
+            ("worst hold slack", without("timing__hold__ws")),
+            ("worst setup slack", without("timing__setup__ws")),
+            ("die", without("design__die__bbox")),
+            ("core utilization", without("design__instance__utilization")),
+            ("lint warnings", without("design__lint_warning__count")),
+            ("signoff", without("magic__drc_error__count", "klayout__drc_error__count",
+                                "design__lvs_error__count", "route__antenna_violation__count",
+                                "design__xor_difference__count")),
+        ]
+        cwd = os.getcwd()
+        for label, edit in cases:
+            with self.subTest(label):
+                os.chdir(self.test_dir)
+                try:
+                    cards = self._summary(self._run_site(edit))
+                finally:
+                    os.chdir(cwd)
+                    shutil.rmtree(os.path.join(self.test_dir, "runs"), ignore_errors=True)
+                self.assertNotIn(label, cards)
+                # The others are still there, and none is a placeholder zero.
+                self.assertGreater(len(cards), 3)
+                for value, _ in cards.values():
+                    self.assertNotIn(value, ("", "0 mW", "0.000 mW", "None", "?"))
+
+    def test_summary_leaves_out_the_clock_and_power_it_has_no_report_for(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._run_site()
+            # No STA step and no config.yaml clock: no clock card. No power.rpt
+            # and no bare metric: no power card.
+            os.remove("runs/blinky_run/55-openroad-stapostpnr/config.json")
+            os.remove("runs/blinky_run/55-openroad-stapostpnr/nom_tt_025C_1v80/power.rpt")
+            with open("runs/blinky_run/final/metrics.json") as f:
+                metrics = json.load(f)
+            del metrics["power__total"]
+            with open("runs/blinky_run/final/metrics.json", "w") as f:
+                json.dump(metrics, f)
+            cards = self._summary(self._site({"DESIGN_NAME": "blinky"}))
+            self.assertNotIn("clock", cards)
+            self.assertNotIn("total power", cards)
+            self.assertIn("die", cards)
+            # The config's own clock is the fallback the timing section uses too.
+            cards = self._summary(self._site({"DESIGN_NAME": "blinky", "CLOCK_PERIOD": 4.0}))
+            self.assertEqual(cards["clock"], ("250 MHz", "4 ns period"))
+        finally:
+            os.chdir(cwd)
+
+    def test_summary_instances_say_which_stage_when_only_one_is_known(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            cards = self._summary(self._run_site(
+                lambda m: m.pop("design__instance__count__stdcell")))
+            self.assertEqual(cards["instances"], ("110", "after synthesis"))
+        finally:
+            os.chdir(cwd)
+
+    def test_summary_power_without_a_report_is_the_bare_metric_and_says_so(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._run_site()
+            os.remove("runs/blinky_run/55-openroad-stapostpnr/nom_tt_025C_1v80/power.rpt")
+            cards = self._summary(self._site({"DESIGN_NAME": "blinky"}))
+            self.assertEqual(cards["total power"], ("0.290 mW", "corner not named"))
+        finally:
+            os.chdir(cwd)
+
+    def test_summary_is_absent_without_a_run(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            page = self._site({"DESIGN_NAME": "top"})
+            self.assertNotIn("Summary", page)
+            self.assertNotIn('class="kpi', page)
+        finally:
+            os.chdir(cwd)
+
+    def test_summary_names_what_failed_in_signoff_and_a_negative_slack(self):
+        def broken(metrics):
+            metrics["klayout__drc_error__count"] = 3
+            metrics["design__lvs_error__count"] = 1
+            metrics["timing__hold__ws"] = -0.05
+            metrics["timing__hold_vio__count"] = 1
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            page = self._run_site(broken)
+            cards = self._summary(page)
+            self.assertEqual(cards["signoff"][0], "3 DRC (KLayout), 1 LVS")
+            self.assertIn('<div class="kpi bad"><div class="label">signoff</div>', page)
+            self.assertEqual(cards["worst hold slack"], ("-0.05 ns", "1 violation"))
+            self.assertIn('<div class="kpi bad"><div class="label">worst hold slack</div>', page)
+            # `report` says the same words as the card: one reading of the checks.
+            with open("runs/blinky_run/final/metrics.json") as f:
+                self.assertEqual(entrypoint.signoff_row(json.load(f)),
+                                 ("signoff", "3 DRC (KLayout), 1 LVS"))
+        finally:
+            os.chdir(cwd)
+
+    def _section_text(self, page, name):
+        return page[page.index(f'<section id="{name}">'):].split("</section>")[0]
+
+    def test_the_tests_table_fits_a_phone_without_scrolling_sideways(self):
+        # A long test name breaks anywhere, and the result columns are narrow
+        # at 600px and below, so RTL and GATES stay in view. Measured in a
+        # browser at 390px: the table's scrollWidth equals its clientWidth.
+        css = entrypoint.site_page.CSS
+        self.assertRegex(css, re.compile(
+            r"@media \(max-width: 600px\).*?table\.tests th:not\(:first-child\), "
+            r"table\.tests td:not\(:first-child\) \{ width: 56px; \}", re.S))
+
+    def test_hero_caption_gives_the_routed_count_and_says_what_the_picture_is(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run()
+            os.makedirs("runs/blinky_run/final/render")
+            open("runs/blinky_run/final/render/blinky.png", "w").close()
+            page = self._site({"DESIGN_NAME": "blinky", "PDK": "sky130A"})
+            caption = page[page.index("<figcaption>"):page.index("</figcaption>")]
+            self.assertIn("113 instances after routing", caption)
+            self.assertNotIn("65 instances", caption)
+            self.assertEqual(caption, "<figcaption>56.4 \u00d7 67.1 \u00b5m &middot; 113 instances "
+                                      "after routing")
+            self.assertNotIn("LibreLane draws it", page)
+            self.assertNotIn("layer colors", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_hero_caption_labels_the_count_when_only_synthesis_gave_one(self):
+        text = entrypoint.site_page.hero_art(
+            "layout.png", "d", [("instances", "110 after synthesis")], None)
+        self.assertIn("110 instances after synthesis", text)
+        text = entrypoint.site_page.hero_art("layout.png", "d", [], None)
+        self.assertNotIn("<figcaption>", text)
+
+    def test_corner_words_write_the_temperature_as_a_number(self):
+        words = entrypoint.site_page.corner_words
+        self.assertIn(", 25 &deg;C, 1.80 V", words("nom_tt_025C_1v80"))
+        self.assertIn(", -40 &deg;C, 1.95 V", words("max_ff_n40C_1v95"))
+        self.assertIn(", 100 &deg;C, 1.60 V", words("max_ss_100C_1v60"))
+        self.assertIn(", 0 &deg;C,", words("nom_tt_000C_1v80"))
+        self.assertNotIn("025", words("nom_tt_025C_1v80"))
+        self.assertIsNone(words("nonsense"))
+
+    def test_power_headline_is_in_milliwatts_and_the_table_says_it_is_not(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            power = self._section_text(self._run_site(), "power")
+            self.assertIn("<strong>0.248 mW in total</strong> at corner <code>nom_tt_025C_1v80</code> "
+                          "(typical wire RC, typical transistors, 25 &deg;C, 1.80 V).", power)
+            self.assertIn("The table is in &micro;W.", power)
+            self.assertNotIn("025 &deg;C", power)
+            self.assertNotIn(";", re.sub(r"&[a-z]+;", "", re.sub(r"<[^>]*>", "", power)))
+            # The columns the phone hides are named in a note shown only there.
+            self.assertIn('<p class="hint narrow-only">On a narrow screen the table hides '
+                          "the internal, switching and leakage columns.</p>", power)
+            self.assertRegex(entrypoint.site_page.CSS,
+                             re.compile(r"@media \(max-width: 600px\).*?\.narrow-only \{ display: block; \}", re.S))
+            self.assertIn(".narrow-only { display: none; }", entrypoint.site_page.CSS)
+        finally:
+            os.chdir(cwd)
+
+    def test_constraints_and_drive_strength_are_collapsed_with_a_label(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run()
+            page = self._site()
+            timing = self._section_text(page, "timing")
+            self.assertRegex(timing, r'<details class="constraints"><summary>Constraints the run used \(5\)</summary>'
+                                     r'.*<td>clock period</td>.*</table></div></details>')
+            self.assertNotIn("<h3>Constraints", page)
+            # The verdict table stays outside the fold.
+            self.assertLess(timing.index("<td>setup</td>"), timing.index("<details"))
+            area = self._section_text(page, "area")
+            self.assertRegex(area, r'<details class="drive-strength"><summary>Drive strength of the '
+                                   r'instances \(3 sizes\)</summary>.*<table class="drive">.*Place and route added.*</details>')
+            self.assertNotIn("<details open", page)
+        finally:
+            os.chdir(cwd)
+
+    def test_a_details_label_counts_the_rows_inside(self):
+        text = entrypoint.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
+        self.assertIn("(3 sizes)</summary>", text)
+        self.assertEqual(text.count("<tr><td>X"), 3)
+        text = entrypoint.site_page.drive_table([(2, 3, 3)])
+        self.assertIn("(1 size)</summary>", text)
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            timing = self._section_text(self._run_site(), "timing")
+            details = timing[timing.index("<details"):]
+            rows = len(re.findall(r"<tr><td>clock |<tr><td>timing |<tr><td>input ", details))
+            self.assertEqual(rows, 5)
+            self.assertIn("<summary>Constraints the run used (5)</summary>", details)
+            # Fewer constraints in the run, fewer in the label.
+            shutil.rmtree("runs")
+            path = "runs/blinky_run/55-openroad-stapostpnr/config.json"
+            shutil.copytree(self.RUN_FIXTURE, "runs")
+            with open(path) as f:
+                config = json.load(f)
+            for key in [k for k in config if "DERATING" in k]:
+                del config[key]
+            with open(path, "w") as f:
+                json.dump(config, f)
+            timing = self._section_text(self._site(), "timing")
+            n = timing.count("<tr><td>", timing.index("<details"))
+            self.assertIn(f"<summary>Constraints the run used ({n})</summary>", timing)
+            self.assertLess(n, 5)
+        finally:
+            os.chdir(cwd)
+
+    def test_the_header_has_no_about_line_under_the_lede(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run()
+            page = self._site({"DESIGN_NAME": "blinky", "//DESCRIPTION": "A blinker."})
+            self.assertNotIn("automated report", page)
+            self.assertNotIn('class="about"', page)
+            self.assertIn('<p class="lede">A blinker.</p><p class="meta">', page)
+        finally:
+            os.chdir(cwd)
+
+    def test_the_chips_read_tests_then_timing_then_signoff(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            for name in ("cocotb-results.xml", "cocotb-gl-results.xml"):
+                with open("build/" + name, "w") as f:
+                    f.write(self.COCOTB_XML)
+            page = self._run_site()
+            chips = re.findall(r'<span class="chip [A-Z]+">([^<]*)</span>', page)
+            self.assertEqual(chips, ["1/2 on RTL", "1/2 on gates", "Timing met", "Signoff clean"])
+        finally:
+            os.chdir(cwd)
+
+    def test_a_test_name_breaks_after_an_underscore_and_copies_whole(self):
+        name = entrypoint.site_page.test_name("reset_in_the_middle_restarts")
+        self.assertEqual(name, "reset_<wbr>in_<wbr>the_<wbr>middle_<wbr>restarts")
+        # <wbr> adds no character: the text a reader copies is the name.
+        self.assertEqual(re.sub(r"<[^>]*>", "", name), "reset_in_the_middle_restarts")
+        # The name is escaped before the breaks go in.
+        self.assertEqual(entrypoint.site_page.test_name("a<b_c"), "a&lt;b_<wbr>c")
+        css = entrypoint.site_page.CSS
+        self.assertNotIn("overflow-wrap: anywhere", css.split("td code")[1][:40] if "td code" in css else "")
+        self.assertNotIn("td code { overflow-wrap: anywhere; }", css)
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            os.makedirs("build")
+            with open("build/cocotb-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            single = self._site({"DESIGN_NAME": "top"})
+            self.assertRegex(single, r"<code>[a-z]+_<wbr>[a-z_<wbr>]*</code>")
+            with open("build/cocotb-gl-results.xml", "w") as f:
+                f.write(self.COCOTB_XML)
+            merged = self._site({"DESIGN_NAME": "top"})
+            self.assertRegex(merged, r"<tr><td><code>[a-z]+_<wbr>")
+        finally:
+            os.chdir(cwd)
+
+    def test_the_footer_is_written_for_a_reader_and_links_the_generator(self):
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            self._real_run()
+            env = {"GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "o/r",
+                   "GITHUB_SHA": "abcdef0"}
+            with patch.dict(os.environ, env):
+                page = self._site()
+            footer = page[page.index("<footer"):page.index("</footer>")]
+            self.assertIn('Source: <a href="https://github.com/o/r">o/r</a>. ', footer)
+            self.assertIn('Made with <a href="https://github.com/anlit75/ChipForAll">ChipForAll</a>, '
+                          "an open-source chip design flow. "
+                          'This page is generated by <a href="https://github.com/anlit75/c4o-core">c4o-core</a>.', footer)
+            self.assertNotIn("<code>site</code>", footer)
+            self.assertNotIn("EDA", footer)
         finally:
             os.chdir(cwd)
 
