@@ -583,7 +583,7 @@ def timing_card(physical):
     return (f'<div class="kpi timing"><div class="label">timing, worst slack</div>'
             f'<div class="stats">{stats}</div></div>') if stats else ""
 
-def coverage_section(coverage, cocotb_runs=()):
+def coverage_section(coverage, cocotb_runs=(), regression=None):
     """
     What fraction of the RTL the cocotb tests ran, from build/coverage/summary.json:
     a row per kind and the same numbers per module.
@@ -602,7 +602,14 @@ def coverage_section(coverage, cocotb_runs=()):
     files = coverage.get("files") or []
     seed = coverage.get("seed")
     rtl_seed = next((sd for title, sd, _ in cocotb_runs if title == "cocotb, RTL"), None)
-    if seed and seed == rtl_seed:
+    if coverage.get("runs"):
+        # Merged over a test list: the seed is the list's base seed, not a run's.
+        base = (regression or {}).get("seed")
+        match = ("It is the base seed of the Regression section." if regression and str(base) == str(seed)
+                 else "It is not the base seed of the Regression section." if regression else "")
+        seed_line = (f"<p>Merged over {coverage['runs']} regression runs, from base seed "
+                     f"<code>{esc(str(seed))}</code>. {match}</p>".replace(" </p>", "</p>"))
+    elif seed and seed == rtl_seed:
         seed_line = (f"<p>This run used seed <code>{esc(seed)}</code>, the seed of the RTL run in Tests.</p>")
     elif seed:
         seed_line = (f"<p>This run used seed <code>{esc(seed)}</code>. "
@@ -632,6 +639,35 @@ def coverage_section(coverage, cocotb_runs=()):
                           + "".join(cell(m["types"], n) for n in shown) + "</tr>" for m in modules)
                 + "</table></div></details>")
 
+    return out
+
+def regression_section(regression):
+    """
+    The regress run of build/regress/summary.json: runs passed out of runs for
+    each test, and for each failed seed the command that replays it.
+    """
+    esc = html.escape
+    runs = regression.get("runs") or []
+    counts = {}
+    for run in runs:
+        row = counts.setdefault(run["entry"], [0, 0])
+        row[1] += 1
+        row[0] += run["verdict"] == "pass"
+    passed = sum(done for done, _ in counts.values())
+    out = (f"<h2>Regression: {passed}/{len(runs)} runs passed</h2>"
+           "<p>Each test of the list, run once for each of its seeds.</p>"
+           f"<p>Base seed <code>{esc(str(regression.get('seed')))}</code>. "
+           "Setting it as <code>SEED</code> reruns the whole list with the same seeds.</p>"
+           '<div class="scroll"><table><tr><th>test</th><th class="num">passed</th></tr>'
+           + "".join(f'<tr><td><code>{test_name(entry)}</code></td>'
+                     f'<td class="num {"PASS" if done == total else "FAIL"}">{done}/{total}</td></tr>'
+                     for entry, (done, total) in counts.items())
+           + "</table></div>")
+    failed = [run for run in runs if run["verdict"] != "pass"]
+    if failed:
+        out += ("<p>Replay a failed run with its own seed:</p><ul>"
+                + "".join(f'<li><code>make cocotb SEED={esc(str(run["seed"]))} TEST={esc(run["entry"])}</code></li>'
+                          for run in failed) + "</ul>")
     return out
 
 def summary_cards(numbers, physical, power, signoff, coverage=None):
@@ -679,7 +715,8 @@ def summary_cards(numbers, physical, power, signoff, coverage=None):
 
 def render(design, numbers, layout, cocotb_runs, env,
            signoff=(), area=None, power=None, gds=None,
-           description=None, cells=(), physical=None, drive=(), coverage=None):
+           description=None, cells=(), physical=None, drive=(), coverage=None,
+           regression=None):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -706,6 +743,7 @@ def render(design, numbers, layout, cocotb_runs, env,
                     a stage with no source None; physical may also carry library
     coverage     -- build/coverage/summary.json as a dict (types, modules, files,
                     uncovered), or None
+    regression   -- build/regress/summary.json as a dict (seed, runs), or None
 
     The page is laid out to be shared, as a portfolio piece: the layout first,
     then the verdicts (tests, timing and its constraints), then what the chip
@@ -733,6 +771,10 @@ def render(design, numbers, layout, cocotb_runs, env,
         else:
             chips.append(("PASS" if passed == len(cases) else "FAIL",
                           f"{passed}/{len(cases)} tests passed"))
+    if regression and regression.get("runs"):
+        ok = sum(run["verdict"] == "pass" for run in regression["runs"])
+        total = len(regression["runs"])
+        chips.append(("PASS" if ok == total else "FAIL", f"{ok}/{total} regression runs"))
     # Setup and hold both: a negative hold slack is a chip that fails on
     # silicon at any clock speed, so "Timing met" on setup alone would be a
     # wrong verdict, not a partial one.
@@ -759,12 +801,15 @@ def render(design, numbers, layout, cocotb_runs, env,
                 f'<td class="num">{sim_ns:g}</td></tr>'
                 for name, verdict, sim_ns in run) + "</table></div>")
 
+    if regression and regression.get("runs"):
+        add("regression", "Regression", regression_section(regression))
+
     glance = summary_cards(numbers, physical, power, signoff, coverage)
     if glance:
         add("summary", "Summary", glance)
 
     if coverage:
-        add("coverage", "Coverage", coverage_section(coverage, cocotb_runs))
+        add("coverage", "Coverage", coverage_section(coverage, cocotb_runs, regression))
 
     timing = timing_section(physical)
     if timing:
@@ -879,7 +924,7 @@ def render(design, numbers, layout, cocotb_runs, env,
         og += (f'<meta property="og:image" content="https://{esc(owner.lower())}.github.io/'
                f'{esc(name)}/{esc(layout)}"><meta name="twitter:card" content="summary">')
 
-    order = ["layout", "summary", "tests", "coverage", "timing", "area", "power", "signoff"]
+    order = ["layout", "summary", "tests", "regression", "coverage", "timing", "area", "power", "signoff"]
     parts.sort(key=lambda p: order.index(p[0].split("-")[0]) if p[0].split("-")[0] in order
                else len(order))
 

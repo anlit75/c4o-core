@@ -213,6 +213,22 @@ printf 'not xml' > "$work/build/cocotb-results.xml"
 expect 0 "coverage step: an unreadable results file runs without a seed" coverage_step new
 grep -qx "make coverage" "$work/stub.log" && echo "ok    coverage step: ... and passed no SEED" \
   || { echo "FAIL  coverage step: expected a bare make coverage"; failures=$((failures + 1)); }
+# After make regress its base seed is the one: coverage then runs the same list.
+mkdir -p "$work/build/regress"
+printf '{"seed": 4711, "runs": []}' > "$work/build/regress/summary.json"
+printf '<testsuites><testsuite><properties><property name="random_seed" value="1789965785"/></properties></testsuite></testsuites>' \
+  > "$work/build/cocotb-results.xml"
+expect 0 "coverage step: a regression summary is there" coverage_step new
+grep -qx "make coverage SEED=4711" "$work/stub.log" && echo "ok    coverage step: ... its base seed wins over the RTL run's" \
+  || { echo "FAIL  coverage step: expected 'make coverage SEED=4711'"; sed 's/^/        /' "$work/stub.log"; failures=$((failures + 1)); }
+(cd "$work" && : > stub.log && PATH="$work/bin:$PATH" STUB=new STUB_LOG="$work/stub.log" EXTRA_SECTIONS=Coverage SEED=42 \
+  bash "$actions/report/coverage.sh" >/dev/null 2>&1)
+grep -qx "make coverage" "$work/stub.log" && echo "ok    coverage step: a SEED the caller set wins over the regression's" \
+  || { echo "FAIL  coverage step: a caller's SEED was overridden by the regression's"; sed 's/^/        /' "$work/stub.log"; failures=$((failures + 1)); }
+printf 'not json' > "$work/build/regress/summary.json"
+expect 0 "coverage step: an unreadable regression summary" coverage_step new
+grep -qx "make coverage SEED=1789965785" "$work/stub.log" && echo "ok    coverage step: ... falls back to the RTL run's seed" \
+  || { echo "FAIL  coverage step: expected the RTL run's seed"; sed 's/^/        /' "$work/stub.log"; failures=$((failures + 1)); }
 rm -r "$work/build"
 
 # --- report/cocotb-gates.sh --------------------------------------------------
@@ -259,6 +275,43 @@ refuses "tests configured: neither names both keys" '"//TEST_FILES"' configured
 refuses "tests configured: ... and the other key" '"//COCOTB_TESTS"' configured
 printf 'DESIGN_NAME: x\n"//TEST_FILES_OLD":\n  - dir::a.v\n"//GATE_TESTS":\n  - dir::g.v\n' > "$work/config.yaml"
 refuses "tests configured: a near name or a gate testbench does not count" "neither" configured
+
+# --- checks/regress-summary.sh -----------------------------------------------
+# What the run's summary page says about a regress run, from the same
+# build/regress/summary.json the results page reads.
+reset
+mkdir -p "$work/build/regress"
+regress_summary() { (cd "$work" && : > summary.md && GITHUB_STEP_SUMMARY="$work/summary.md" bash "$actions/checks/regress-summary.sh"); }
+printf '{"seed": 99, "runs": [
+  {"entry": "test_a", "seed": 1, "verdict": "pass"},
+  {"entry": "test_a", "seed": 2, "verdict": "pass"},
+  {"entry": "test_b.f", "seed": 7, "verdict": "fail"}], "total": 3, "passed": 2, "failed": 1}' \
+  > "$work/build/regress/summary.json"
+expect 0 "regress summary: a summary file is written to the page" regress_summary
+page_has() {  # page_has <label> <text the summary page must have>
+  grep -qF -- "$2" "$work/summary.md" && echo "ok    $1" \
+    || { echo "FAIL  $1: no '$2' on the page"; sed 's/^/        /' "$work/summary.md"; failures=$((failures + 1)); }
+}
+page_has "regress summary: the total" "2/3 runs passed"
+page_has "regress summary: the base seed reruns the list" "make regress SEED=99"
+page_has "regress summary: a row for each test" "| \`test_a\` | 2/2 |"
+page_has "regress summary: ... with its failures" "| \`test_b.f\` | 0/1 |"
+page_has "regress summary: a failed run has its replay command" "make cocotb SEED=7 TEST=test_b.f"
+if grep -qF "SEED=1 " "$work/summary.md"; then
+  echo "FAIL  regress summary: a passing seed must not get a replay command"; failures=$((failures + 1))
+else
+  echo "ok    regress summary: a passing seed gets no replay command"
+fi
+printf '{"seed": 5, "runs": [{"entry": "t", "seed": 1, "verdict": "pass"}], "total": 1, "passed": 1, "failed": 0}' \
+  > "$work/build/regress/summary.json"
+expect 0 "regress summary: all passed" regress_summary
+if grep -qF "Replay" "$work/summary.md"; then
+  echo "FAIL  regress summary: nothing failed, so no replay section"; failures=$((failures + 1))
+else
+  echo "ok    regress summary: nothing failed, so no replay section"
+fi
+rm "$work/build/regress/summary.json"
+expect 1 "regress summary: no summary file is an error, not an empty section" regress_summary
 
 # --- scripts/move-major-branch.sh --------------------------------------------
 # Against a bare repository standing in for origin. Two commits, a then b.

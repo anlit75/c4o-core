@@ -30,10 +30,26 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
-# The seed of the RTL run that the page shows, so that both runs get the same
-# random stimulus. A SEED the caller set wins.
+# The seed of the run that the page shows, so that both get the same random
+# stimulus. A SEED the caller set wins. After `make regress` that is its base
+# seed, which makes `make coverage` run the same list with the same seeds.
+# Otherwise it is the seed of the RTL run.
 args=()
-if [ -z "${SEED:-}" ] && [ -f build/cocotb-results.xml ]; then
+if [ -z "${SEED:-}" ] && [ -f build/regress/summary.json ]; then
+  seed=$(python3 - <<'PY'
+import json
+try:
+    print(json.load(open("build/regress/summary.json")).get("seed", ""))
+except (OSError, ValueError):
+    print("")
+PY
+)
+  if [ -n "$seed" ]; then
+    echo "Using the regression's base seed $seed."
+    args=("SEED=$seed")
+  fi
+fi
+if [ -z "${SEED:-}" ] && [ ${#args[@]} -eq 0 ] && [ -f build/cocotb-results.xml ]; then
   seed=$(python3 - <<'PY'
 import xml.etree.ElementTree as ET
 try:

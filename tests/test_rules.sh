@@ -85,6 +85,15 @@ if grep -qF -- "WAVES" <<<"$out"; then
 else
   ok "host: a plain make cocotb passes no WAVES"
 fi
+check "host: TEST reaches the container" 0 "-e TEST=test_a.f $image cocotb" in_repo "$host" make -n cocotb TEST=test_a.f
+check "host: SEED, WAVES and TEST reach the container together" 0 "-e RANDOM_SEED=7 -e WAVES=1 -e TEST=test_a $image cocotb" \
+  in_repo "$host" make -n cocotb SEED=7 WAVES=1 TEST=test_a
+out=$(in_repo "$host" make -n cocotb SEED=7 2>&1)
+if grep -qF -- "TEST" <<<"$out"; then
+  fail "host: a make cocotb without TEST must not pass TEST" "$out"
+else
+  ok "host: a make cocotb without TEST passes no TEST"
+fi
 check "host: SEED reaches the cocotb tests that gatesim runs" 0 "-e RANDOM_SEED=7 $image gatesim" \
   in_repo "$host" make -n gatesim SEED=7
 # all asks for no test kind by name, so it skips the one that is not configured.
@@ -113,6 +122,24 @@ if grep -qF "coverage" <<<"$out"; then
   fail "host: make all must not run coverage" "$out"
 else
   ok "host: make all does not run coverage"
+fi
+
+# regress is a target of its own and is not part of all.
+check "host: make help lists regress" 0 "make regress" in_repo "$host" make help
+check "host: make help says how to run one test" 0 "make cocotb SEED=<n> TEST=<entry>" in_repo "$host" make help
+check "host: regress runs the regress command" 0 "$image regress" in_repo "$host" make -n regress
+check "host: SEED reaches the regress run" 0 "-e RANDOM_SEED=7 $image regress" in_repo "$host" make -n regress SEED=7
+out=$(in_repo "$host" make -n regress 2>&1)
+if grep -qF -- "--if-configured" <<<"$out"; then
+  fail "host: make regress by itself must not skip" "$out"
+else
+  ok "host: make regress by itself does not skip"
+fi
+out=$(in_repo "$host" make -n all 2>&1)
+if grep -qF "regress" <<<"$out"; then
+  fail "host: make all must not run regress" "$out"
+else
+  ok "host: make all does not run regress"
 fi
 
 # --- what a repository adds below the include ---------------------------------
@@ -147,6 +174,10 @@ check "inside: commands call the entrypoint directly" 0 "python3 /opt/c4o-core/s
 check "inside: WAVES reaches the entrypoint" 0 "env WAVES=1 python3 /opt/c4o-core/scripts/entrypoint.py cocotb" dmake -n cocotb WAVES=1
 check "inside: SEED and WAVES reach the entrypoint" 0 "env RANDOM_SEED=7 WAVES=1 python3 /opt/c4o-core/scripts/entrypoint.py cocotb" \
   dmake -n cocotb SEED=7 WAVES=1
+check "inside: TEST reaches the entrypoint" 0 "env TEST=test_a.f python3 /opt/c4o-core/scripts/entrypoint.py cocotb" dmake -n cocotb TEST=test_a.f
+check "inside: SEED, WAVES and TEST reach the entrypoint" 0 "env RANDOM_SEED=7 WAVES=1 TEST=test_a python3 /opt/c4o-core/scripts/entrypoint.py cocotb" \
+  dmake -n cocotb SEED=7 WAVES=1 TEST=test_a
+check "inside: SEED reaches regress" 0 "env RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py regress" dmake -n regress SEED=7
 check "inside: coverage calls the entrypoint directly" 0 "python3 /opt/c4o-core/scripts/entrypoint.py coverage" dmake -n coverage
 [ ! -e "$inside/.c4o" ] && ok "inside: nothing is copied to .c4o/" || fail "inside: .c4o/ was written inside the image"
 cat >> "$inside/Makefile" <<'EOF'

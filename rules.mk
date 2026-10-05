@@ -72,7 +72,7 @@ SITE_ENV := -e GITHUB_SERVER_URL -e GITHUB_REPOSITORY -e GITHUB_SHA -e GITHUB_RU
 # Inside the image -- the Dev Container -- the tools are called directly. On a
 # host each command is a container of C4O_IMAGE.
 #
-# C4O_COCOTB is C4O_CMD with a seed and the waves switch threaded through.
+# C4O_COCOTB is C4O_CMD with a seed, the waves switch and a test name threaded through.
 # cocotb seeds Python's random module from the seed and logs the value it used,
 # so
 #
@@ -86,27 +86,32 @@ SITE_ENV := -e GITHUB_SERVER_URL -e GITHUB_REPOSITORY -e GITHUB_SHA -e GITHUB_RU
 #
 # writes build/<DESIGN_NAME>.vcd. WAVES reaches the container as it is.
 #
+#   make cocotb TEST=<module>[.<function>]
+#
+# runs one module of COCOTB_TESTS, or one test of it. TEST reaches the container
+# as it is. `make regress` prints this line, with the seed, for each run it lost.
+#
 # c4o_tool runs one of the image's other programs the same two ways:
 #
-#   $(call c4o_tool,sv2v) src/a.sv
+#   $(call c4o_tool,sv2v) rtl/a.sv
 ENTRYPOINT_SCRIPT := /opt/c4o-core/scripts/entrypoint.py
 ifneq ($(wildcard $(ENTRYPOINT_SCRIPT)),)
 C4O_IN_CONTAINER := 1
 C4O_CMD := python3 $(ENTRYPOINT_SCRIPT)
-C4O_COCOTB = $(if $(or $(SEED),$(WAVES)),env $(strip $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)))) $(C4O_CMD)
+C4O_COCOTB = $(if $(or $(SEED),$(WAVES),$(TEST)),env $(strip $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)) $(if $(TEST),TEST=$(TEST)))) $(C4O_CMD)
 C4O_SITE := $(C4O_CMD)
 C4O_PDK := env PDK_ROOT=$(PDK_ROOT) $(C4O_CMD)
 c4o_tool = $(1)
 else
 C4O_IN_CONTAINER :=
 C4O_CMD := $(DOCKER_RUN) $(C4O_IMAGE)
-C4O_COCOTB = $(DOCKER_RUN) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES))) $(C4O_IMAGE)
+C4O_COCOTB = $(DOCKER_RUN) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
 C4O_SITE := $(DOCKER_RUN) $(SITE_ENV) $(C4O_IMAGE)
 C4O_PDK := $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(C4O_IMAGE)
 c4o_tool = $(DOCKER_RUN) --entrypoint $(1) $(C4O_IMAGE)
 endif
 
-.PHONY: all help lint sim cocotb coverage gatesim synth schematic gds pdk report site clean distclean shell
+.PHONY: all help lint sim cocotb regress coverage gatesim synth schematic gds pdk report site clean distclean shell
 
 # A bare `make all` asks for no test kind by name: it runs each kind whose key
 # is in config.yaml and fails when neither is. The target-specific variable
@@ -125,6 +130,9 @@ help::
 	@echo "  make cocotb  - Run the Python (cocotb) testbenches"
 	@echo "                 (repeat a random failure: make cocotb SEED=<n>)"
 	@echo "                 (write build/<DESIGN_NAME>.vcd: make cocotb WAVES=1)"
+	@echo "                 (run one module or test: make cocotb SEED=<n> TEST=<entry>)"
+	@echo "  make regress - Run the tests listed in //REGRESSION over many seeds (build/regress/)"
+	@echo "                 (repeat the whole list: make regress SEED=<n>)"
 	@echo "  make coverage - Measure how much of the RTL the cocotb tests run (build/coverage/)"
 	@echo "  make gatesim - Re-simulate the synthesised netlist (after make gds)"
 	@echo "  make synth   - Run Yosys synthesis"
@@ -150,6 +158,14 @@ sim:
 # `make sim`: it is a second way to write a testbench.
 cocotb:
 	$(C4O_COCOTB) cocotb $(C4O_IF_CONFIGURED)
+
+# The test list of REGRESSION, each test over its seeds, from one compile. Not
+# part of `all`: a list runs the tests once for every seed. The
+# summary is build/regress/summary.json. C4O_COCOTB so that SEED, the base seed
+# every run's seed comes from, reaches it. Named by itself it fails without the
+# key, like `make cocotb`.
+regress:
+	$(C4O_COCOTB) regress $(C4O_IF_CONFIGURED)
 
 # The cocotb tests again, on Verilator with coverage counters, for the numbers
 # that Icarus cannot give. Not part of `all`, and not a verdict: `make cocotb`

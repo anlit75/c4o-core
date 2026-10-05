@@ -1,9 +1,10 @@
 name: c4o-core checks
 description: >
-  The checks that run in seconds: lint, the Verilog testbenches and the Python
+  The checks of a push: lint, the Verilog testbenches and the Python
   (cocotb) testbenches when config.yaml asks for them, synthesis, and the
   schematic. Fails when config.yaml asks for neither kind of test. The cocotb
-  output is kept in build/cocotb-rtl.log.
+  output is kept in build/cocotb-rtl.log. With "//REGRESSION" it also runs the
+  test list over its seeds, and keeps the output in build/regress.log.
 runs:
   using: composite
   steps:
@@ -48,6 +49,25 @@ runs:
       uses: test-summary/action@v2
       with:
         paths: build/cocotb-results.xml
+
+    # Skipped when config.yaml names no test list, the way the cocotb step is.
+    # With the key there, `make regress` fails on a bad list or a failed run.
+    - name: Regression
+      shell: bash
+      run: |
+        if ! grep -q '^"//REGRESSION":' config.yaml; then
+          echo "config.yaml has no //REGRESSION -- no test list to run."
+          exit 0
+        fi
+        mkdir -p build
+        set -o pipefail
+        make regress 2>&1 | tee build/regress.log
+
+    # always() for the same reason: a failed run is when the table matters.
+    - name: Regression results on the summary page
+      if: always() && hashFiles('build/regress/summary.json') != ''
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/regress-summary.sh"
 
     - name: Logic synthesis
       shell: bash
