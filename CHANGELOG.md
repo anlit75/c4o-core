@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.21.0](https://github.com/anlit75/c4o-core/compare/v2.20.1...v2.21.0) (2026-10-05)
+
+
+### Features
+
+* measure code coverage on Verilator and show it on the results page ([#78](https://github.com/anlit75/c4o-core/issues/78)) ([9eff22c](https://github.com/anlit75/c4o-core/commit/9eff22c158e33cbe3f0b1832c9a28ca38877c767))
+
 ## [2.20.1](https://github.com/anlit75/c4o-core/compare/v2.20.0...v2.20.1) (2026-10-05)
 
 
