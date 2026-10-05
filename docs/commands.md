@@ -60,6 +60,15 @@ async def reset_clears_the_count(dut):
 
 `sim` and `cocotb` both accept `--if-configured`. The command then skips, with a message, when its own key is not set. `make all` uses it. It fails when neither `"//TEST_FILES"` nor `"//COCOTB_TESTS"` is set. Without the flag, a missing key is always an error.
 
+### Running one module or one test
+
+`TEST=<module>[.<function>]` in the environment restricts `cocotb` to one module of `"//COCOTB_TESTS"`, or to one test of it. The module is the file name without `.py`. An unknown module fails before the design is compiled, and the message lists the modules. Without `TEST`, every module runs. The `--netlist` run and `gatesim` ignore it.
+
+```sh
+make cocotb TEST=test_uart
+make cocotb TEST=test_uart.random_bytes_test SEED=1789965785
+```
+
 Two things worth knowing before you write one:
 
 *   **A failing cocotb test does not fail the simulator.** `vvp` exits 0 whether
@@ -105,6 +114,43 @@ The two runs keep separate verdicts, `build/cocotb-results.xml` and
 
 `make cocotb WAVES=1` writes `build/<DESIGN_NAME>.vcd` from the RTL run. The signal names start at the design: `counter.count`. Without `WAVES=1` nothing is dumped. The `--netlist` run never dumps. `site` does not read the file.
 
+## Many seeds (regress)
+
+`regress` runs a list of cocotb tests, each over several seeds. `"//REGRESSION"` names the list. The path may start with `dir::`.
+
+```yaml
+"//REGRESSION": dir::tb/regression.yaml
+```
+
+```yaml
+- test: test_blinky_random            # a module of "//COCOTB_TESTS": every test in it
+  seeds: 20
+- test: test_uart.random_bytes_test   # <module>.<function>: one test
+  seeds: 50
+- test: test_blinky_cocotb            # seeds defaults to 1
+```
+
+`test` names a module of `"//COCOTB_TESTS"`, and `.<function>` is optional. `seeds` is a whole number of 1 or more. Each `test` may appear once. A missing list, a YAML error, an unknown module, a missing `test` or a bad `seeds` stops the command before anything is compiled. The message names the entry.
+
+The command compiles the RTL once. Then it runs `vvp` once for each entry and seed, with `MODULE`, `TESTCASE` (only when the entry names a function) and `RANDOM_SEED` set. A failed run does not stop the others. The exit code is 1 when any run failed.
+
+The seeds come from one base seed. `RANDOM_SEED` in the environment sets it. Without it, the command picks one and prints it. The same base seed gives the same runs. An entry draws its seeds from the base seed and its own name, so adding an entry leaves the seeds of the others alone. `make regress SEED=<n>` reruns the whole list.
+
+`vvp` exits 0 when a test fails. The verdict of each run is its results file. A run with no results file, an unreadable one or one with no test in it is a failed run.
+
+At the end the command prints a table of runs passed for each entry. For each failed run it prints the command that replays it:
+
+```text
+make cocotb SEED=910098751 TEST=test_blinky_random
+```
+
+| In `build/regress/` | What it holds |
+|---|---|
+| `<entry>-<seed>.xml` | The cocotb results of one run. |
+| `summary.json` | The base seed, each run with its entry, seed and verdict (`pass` or `fail`), and the totals. |
+
+The directory is emptied at the start of every run. `--if-configured` skips, with a message, when `"//REGRESSION"` is not set. Without the flag, a missing key is an error. `make all` does not run `regress`. `site` adds a Regression section when `summary.json` exists.
+
 ## Code coverage (coverage)
 
 `coverage` shows how much of the RTL the Python tests run. It runs the `"//COCOTB_TESTS"` again on Verilator, with coverage counters in the model. Icarus has no code coverage.
@@ -124,14 +170,16 @@ The verdict stays with `cocotb`, which runs on Icarus. Verilator is 2-state, so 
 
 A line counts as not reached when a line point or a branch point on it was not hit. A signal that never toggled does not add a line. The Toggle row and the module table show it.
 
-`make coverage SEED=<n>` sets the seed, as `make cocotb SEED=<n>` does. The `report` action passes the seed of the RTL run, and the page says which seed the coverage run used.
+`make coverage SEED=<n>` sets the seed, as `make cocotb SEED=<n>` does. The `report` action passes the base seed of the regression when `build/regress/summary.json` exists, and the seed of the RTL run otherwise. The page says which seed the coverage run used.
+
+With `"//REGRESSION"` set, the command measures the runs of `regress` instead. Verilator builds the design once. Then it simulates each entry and seed, with the same list and the same seeds as `regress` for one base seed. The runs are `run-<n>.dat` in the order of the list, and the command merges them. Failed tests still do not fail the command. `summary.json` then holds the base seed as `seed` and the number of runs as `runs`.
 
 Verilator overwrites `coverage.dat` on each run. The command renames it and merges the files with `verilator_coverage --write`. The numbers count the points of each kind in that file. They do not come from the lcov export, which mixes the three kinds.
 
 | In `build/coverage/` | What it holds |
 |---|---|
 | `coverage.dat` | The merged counts. |
-| `summary.json` | The numbers for each kind and each module, the files they cover, the seed, and the lines no test reached. |
+| `summary.json` | The numbers for each kind and each module, the files they cover, the seed, the number of runs (with `"//REGRESSION"`), and the lines no test reached. |
 | `results.xml` | The cocotb results of the Verilator run. `build/cocotb-results.xml` is not changed. |
 | `build.log` | The Verilator build output. |
 
@@ -351,7 +399,8 @@ The sections run in this order:
 | Section | Read from | What to keep in mind |
 |---|---|---|
 | Tests | the cocotb results | When an RTL and a gate-level run exist, they share one table with a column each. |
-| Coverage | `build/coverage/summary.json` | A row for each kind with the points hit and the total. Then the numbers for each module in a collapsed list, the seed and the files covered. The lines no test reached are in `summary.json` only. The Summary gets a code coverage card with one stat for each kind. The card has no total across the kinds. Pass and fail stay with the Tests section. Without `make coverage`, the page has no Coverage section and no card. |
+| Regression | `build/regress/summary.json` | Runs passed out of runs for each entry, then the replay command of each failed run. It follows Tests. Without `make regress`, the page has no Regression section and no chip. |
+| Coverage | `build/coverage/summary.json` | A row for each kind with the points hit and the total. Then the numbers for each module in a collapsed list, the seed and the files covered. The lines no test reached are in `summary.json` only. The Summary gets a code coverage card with one stat for each kind. The card has no total across the kinds. Pass and fail stay with the Tests section. Without `make coverage`, the page has no Coverage section and no card. After a `regress` list, it says the numbers are merged over the runs and whether the base seed is the one of the Regression section. |
 | Timing | `metrics.json`, and `config.json` of the newest `*-openroad-stapostpnr` step | Says whether timing is met. Gives the worst setup and hold slack over all corners, the violation count and the reg-to-reg slack. Then lists the constraints the run used: clock period, clock uncertainty, clock transition, timing derate and I/O delay. Each says whether `config.yaml` set it or the flow defaulted it. A constraint the run does not state is left out. |
 | Area and instances | `metrics.json`, synthesis's `reports/stat.json` and `final/nl/*.nl.v` | Cards for die, core utilization and instances. One bar of the area after routing, split into synthesis's flip-flops and logic and the difference that place and route added. One bar of the instance count by class, split into what synthesis produced, what the flow added and anything unclassified. The headline is the count after synthesis. The count after routing comes second. A table of instances by drive strength follows, after synthesis and after routing, with a line saying what place and route added. The section names the standard cell library from the run's `config.json`. For a `sky130_fd_sc_*` library it adds that the library has a single threshold voltage. |
 | Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential, combinational and clock split. States the corner, the clock frequency from `CLOCK_PERIOD` and the activity, which is OpenSTA's default and not a simulation's. |

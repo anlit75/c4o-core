@@ -41,6 +41,7 @@ The Python entrypoint of the engine has these commands:
 | `lint` | Runs the Verilator lint checks on `VERILOG_FILES`. |
 | `sim` | Compiles `VERILOG_FILES` and `TEST_FILES` with Icarus Verilog and runs the simulation. |
 | `cocotb` | Runs cocotb tests on `VERILOG_FILES` and `COCOTB_TESTS`. The tests are Python coroutines that drive the RTL. `--netlist` runs the same tests on the synthesised gates. `WAVES=1` also writes `build/<DESIGN_NAME>.vcd`. |
+| `regress` | Runs the tests of the `//REGRESSION` list over many seeds. Prints the command that replays each failed run. Writes `build/regress/`. |
 | `coverage` | Runs the `COCOTB_TESTS` again on Verilator and measures block, branch and toggle coverage. Writes `build/coverage/`. It does not decide pass or fail. |
 | `gatesim` | Simulates the **synthesised netlist** with the PDK cell models, on `GATE_TESTS`. Without `GATE_TESTS`, it runs the `COCOTB_TESTS` on the netlist. |
 | `synth` | Runs logic synthesis with Yosys on `VERILOG_FILES` only. Writes `build/synthesis.json`. The script is fixed: see [docs/commands.md](docs/commands.md#synth-and-systemverilog-in-every-command). |
@@ -83,6 +84,7 @@ Write one source file on each line. The `//` keys belong to this engine, so `dir
 | `"//TEST_FILES"` | Verilog testbenches for `sim`. Globs work. The engine also reads `TEST_FILES` with no prefix, but only the name with the prefix passes the LibreLane validation with no message. |
 | `"//SIM_TOP"` | The testbench module to elaborate. Necessary when `"//TEST_FILES"` matches more than one file. |
 | `"//COCOTB_TESTS"` | Python testbenches for `cocotb`. Globs work. |
+| `"//REGRESSION"` | A YAML list of `test` and `seeds` for `regress`. See [docs/commands.md](docs/commands.md#many-seeds-regress). |
 | `"//GATE_TESTS"` / `"//GATE_TOP"` | The same two keys, for `gatesim`. |
 | `CLOCK_PORT` / `CLOCK_PERIOD` | The clock to constrain, and its period in ns. |
 | `PDK` / `STD_CELL_LIBRARY` | Necessary for `gatesim`, `cocotb --netlist`, `pdk` and `check`. |

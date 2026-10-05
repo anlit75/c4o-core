@@ -39,14 +39,15 @@ These names stay the same in all 2.x releases.
 |---|---|
 | `C4O_IMAGE`, `LIBRELANE_IMAGE` | The two images. You set them. |
 | `C4O_CMD` | Runs a c4o-core command: `$(C4O_CMD) lint`. |
-| `C4O_COCOTB` | The same, with `SEED` and `WAVES` passed on: `$(C4O_COCOTB) cocotb --netlist`. |
-| `$(call c4o_tool,<program>)` | Runs a different program of the image: `$(call c4o_tool,sv2v) src/a.sv`. |
+| `C4O_COCOTB` | The same, with `SEED`, `WAVES` and `TEST` passed on: `$(C4O_COCOTB) cocotb --netlist`. |
+| `$(call c4o_tool,<program>)` | Runs a different program of the image: `$(call c4o_tool,sv2v) rtl/a.sv`. |
 | `DOCKER_RUN` | `docker run` with the repository mounted at `/workspace` and your user id. |
 | `C4O_IN_CONTAINER` | Not empty when `make` runs inside the image. |
 | `DESIGN_NAME` | Read from `config.yaml`. |
 | `PDK_ROOT` | Where the PDK is on the host. Default: `pdks/` in the repository. |
 | `LIBRELANE_ARGS` | More flags for LibreLane. With `--from`, `-F` or `--only`, `make gds` keeps the previous run. |
-| `SEED` | The seed for `make cocotb` and for `make gatesim` with Python tests. |
+| `SEED` | The seed for `make cocotb` and for `make gatesim` with Python tests. For `make regress` it is the base seed of the list. |
+| `TEST` | `make cocotb TEST=<module>[.<function>]` runs one module or one test of `"//COCOTB_TESTS"`. |
 | `WAVES` | `make cocotb WAVES=1` writes `build/<DESIGN_NAME>.vcd`. `make gatesim` passes it on and writes no VCD. |
 
 `C4O_CMD`, `C4O_COCOTB` and `c4o_tool` call the program directly inside the image, and start a container on a host. You write the target one time and it works in the two places.
@@ -65,7 +66,7 @@ A bare `make` runs `all`, also when one of your targets is above the include.
 
 ## The targets
 
-`all`, `help`, `lint`, `sim`, `cocotb`, `coverage`, `gatesim`, `synth`, `schematic`, `pdk`, `gds`, `report`, `site`, `shell`, `clean`, `distclean`. `make help` gives one line for each. [commands.md](commands.md) tells you what the c4o-core command behind each one does.
+`all`, `help`, `lint`, `sim`, `cocotb`, `regress`, `coverage`, `gatesim`, `synth`, `schematic`, `pdk`, `gds`, `report`, `site`, `shell`, `clean`, `distclean`. `make help` gives one line for each. [commands.md](commands.md) tells you what the c4o-core command behind each one does.
 
 ### Which tests run
 
@@ -79,7 +80,9 @@ A bare `make` runs `all`, also when one of your targets is above the include.
 
 `make all` fails when neither key is set. A repository with no test does not pass.
 
-`make coverage` runs the Python tests of `"//COCOTB_TESTS"` again on Verilator and writes `build/coverage/`. `make all` does not run it. It does not decide whether the tests pass. `make cocotb` decides that. `make coverage SEED=<n>` sets the seed. See [commands.md](commands.md#code-coverage-coverage).
+`make regress` runs the test list that `"//REGRESSION"` names, each entry over its seeds. `make all` does not run it, and it fails without the key. `make regress SEED=<n>` reruns the whole list with the same seeds. `make cocotb SEED=<n> TEST=<entry>` replays one run. See [commands.md](commands.md#many-seeds-regress).
+
+`make coverage` runs the Python tests of `"//COCOTB_TESTS"` again on Verilator and writes `build/coverage/`. `make all` does not run it. It does not decide whether the tests pass. `make cocotb` decides that. `make coverage SEED=<n>` sets the seed. With `"//REGRESSION"` it runs the list of `make regress` and merges the runs. See [commands.md](commands.md#code-coverage-coverage).
 
 `make gatesim` runs the Verilog testbench of `"//GATE_TESTS"`. Without that key, it runs the Python tests of `"//COCOTB_TESTS"` on the netlist. With neither key it fails. `make gatesim SEED=<n>` sets the seed in the same way as `make cocotb SEED=<n>`.
 

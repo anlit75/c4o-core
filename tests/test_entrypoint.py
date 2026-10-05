@@ -3267,6 +3267,82 @@ class TestCoverage(unittest.TestCase):
             entrypoint.cmd_coverage(MagicMock(files=None, if_configured=False), config or self.CONFIG)
         return out.getvalue()
 
+    # --- over a test list ----------------------------------------------------
+
+    def listed(self, text="- test: test_top\n  seeds: 3\n- test: test_top.f\n  seeds: 2\n"):
+        self.project()
+        os.makedirs("tb", exist_ok=True)
+        open("tb/regression.yaml", "w").write(text)
+        return dict(self.CONFIG, **{"//REGRESSION": "dir::tb/regression.yaml"})
+
+    def test_a_list_is_one_build_and_a_simulation_for_each_entry_and_seed(self):
+        config = self.listed()
+        os.environ["RANDOM_SEED"] = "31"
+        calls = []
+        try:
+            self.coverage(config, calls=calls)
+        finally:
+            del os.environ["RANDOM_SEED"]
+        builds = [c for c, _ in calls if c[0] == "make" and c[-1].endswith("Vtop")]
+        sims = [kw["env"] for c, kw in calls if c[0] == "make" and not c[-1].endswith("Vtop")]
+        self.assertEqual(len(builds), 1)
+        self.assertEqual(len(sims), 5)
+        expect = entrypoint.derive_seeds(31, "test_top", 3) + entrypoint.derive_seeds(31, "test_top.f", 2)
+        self.assertEqual([e["RANDOM_SEED"] for e in sims], [str(x) for x in expect])
+        self.assertEqual([e.get("TESTCASE") for e in sims], [None] * 3 + ["f"] * 2)
+        self.assertTrue(all(e["MODULE"] == "test_top" for e in sims))
+        for n in range(1, 6):
+            self.assertTrue(os.path.exists(f"build/coverage/run-{n}.dat"))
+
+    def test_the_summary_of_a_list_has_the_base_seed_and_the_number_of_runs(self):
+        config = self.listed()
+        os.environ["RANDOM_SEED"] = "31"
+        try:
+            self.coverage(config)
+        finally:
+            del os.environ["RANDOM_SEED"]
+        summary = json.load(open("build/coverage/summary.json"))
+        self.assertEqual((summary["seed"], summary["runs"]), (31, 5))
+        # Counted over every run, and the command still succeeds with failures in them.
+        self.assertEqual(summary["tests"], {"total": 10, "passed": 5})
+
+    def test_without_a_list_the_summary_has_no_runs_key(self):
+        self.project()
+        self.coverage()
+        self.assertNotIn("runs", json.load(open("build/coverage/summary.json")))
+
+    def test_the_merge_takes_every_runs_counts(self):
+        config = self.listed()
+        merged = []
+        real = entrypoint.merge_coverage
+        with patch("entrypoint.merge_coverage", side_effect=lambda d, m: (merged.append(list(d)), real(d, m))):
+            self.coverage(config)
+        self.assertEqual(merged, [[f"build/coverage/run-{n}.dat" for n in range(1, 6)]])
+
+    def test_a_bad_list_stops_before_the_build(self):
+        config = self.listed("- test: test_nope\n")
+        calls = []
+        with patch("entrypoint.log_error"), self.assertRaises(SystemExit) as cm:
+            self.coverage(config, calls=calls)
+        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual([c for c, _ in calls if c[0] == "make"], [])
+
+    def test_a_list_run_that_wrote_no_coverage_fails_the_command(self):
+        config = self.listed()
+        with self.assertRaises(SystemExit) as cm:
+            self.coverage(config, writes_dat=False, sim_rc=1)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_the_page_says_the_coverage_is_merged_and_whether_the_base_seeds_match(self):
+        merged = self.summary(seed=31, runs=5)
+        same = self.page(merged, regression={"seed": 31, "runs": [{"entry": "t", "seed": 1, "verdict": "pass"}]})
+        self.assertIn("Merged over 5 regression runs, from base seed <code>31</code>. "
+                      "It is the base seed of the Regression section.", same)
+        other = self.page(merged, regression={"seed": 32, "runs": [{"entry": "t", "seed": 1, "verdict": "pass"}]})
+        self.assertIn("It is not the base seed of the Regression section.", other)
+        alone = self.page(self.summary(seed="1789965785"))
+        self.assertNotIn("Merged over", alone)
+
     def test_failing_tests_still_give_coverage_and_the_command_succeeds(self):
         self.project()
         os.makedirs("build")
@@ -3326,6 +3402,448 @@ class TestCoverage(unittest.TestCase):
         open("build/coverage/stale.dat", "w").write("old")
         self.coverage()
         self.assertFalse(os.path.exists("build/coverage/stale.dat"))
+
+class TestRegress(unittest.TestCase):
+    """`regress` and `cocotb TEST=`: the list, the seeds, the verdicts, the page."""
+    PASS_XML = '<testsuites><testsuite><testcase name="t" sim_time_ns="1"/></testsuite></testsuites>'
+    FAIL_XML = '<testsuites><testsuite><testcase name="t" sim_time_ns="1"><failure message="x"/></testcase></testsuite></testsuites>'
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        for d in ("rtl", "tb"):
+            os.makedirs(d)
+        open("rtl/top.v", "w").write("`timescale 1ns/1ps\nmodule top; endmodule")
+        for name in ("test_a", "test_b"):
+            open(f"tb/{name}.py", "w").write("")
+        self.config = {"VERILOG_FILES": ["rtl/*.v"], "DESIGN_NAME": "top",
+                       "//COCOTB_TESTS": ["dir::tb/test_*.py"],
+                       "//REGRESSION": "dir::tb/regression.yaml"}
+        self.env_patch = patch.dict(os.environ, {}, clear=False)
+        self.env_patch.start()
+        for name in ("RANDOM_SEED", "TEST", "TESTCASE", "WAVES"):
+            os.environ.pop(name, None)
+        os.environ["SOURCE_DATE_EPOCH"] = "0"  # the page says when it was built
+
+    def tearDown(self):
+        self.env_patch.stop()
+        os.chdir(self.cwd)
+        shutil.rmtree(self.test_dir)
+
+    def listing(self, text):
+        with open("tb/regression.yaml", "w") as f:
+            f.write(text)
+
+    def args(self, **kw):
+        a = MagicMock()
+        a.files = None
+        a.if_configured = False
+        a.netlist = None
+        for k, v in kw.items():
+            setattr(a, k, v)
+        return a
+
+    def regress(self, verdicts=None, **kw):
+        """
+        Runs cmd_regress with the simulator replaced. `verdicts` maps (module,
+        seed-index order) -> XML; by default every run passes. Returns (runs,
+        run_command mock, exit code or None, printed text).
+        """
+        runs = []
+        verdicts = verdicts or {}
+
+        def fake_vvp(cmd, env=None):
+            runs.append(env)
+            xml = verdicts.get((env["MODULE"], env.get("TESTCASE")), self.PASS_XML)
+            if xml is not None:
+                with open(env["COCOTB_RESULTS_FILE"], "w") as f:
+                    f.write(xml)
+            return MagicMock(returncode=0)
+
+        out, code = io.StringIO(), None
+        with patch("entrypoint.run_command") as run_command, \
+             patch("entrypoint.cocotb_config", return_value=os.path.dirname(__file__)), \
+             patch("entrypoint.subprocess.run", side_effect=fake_vvp), \
+             contextlib.redirect_stdout(out):
+            try:
+                entrypoint.cmd_regress(self.args(**kw), self.config)
+            except SystemExit as e:
+                code = e.code
+        return runs, run_command, code, out.getvalue()
+
+    def summary(self):
+        with open("build/regress/summary.json") as f:
+            return json.load(f)
+
+    # --- the list ------------------------------------------------------------
+
+    def test_a_module_a_function_and_the_default_of_one_seed(self):
+        self.listing("- test: test_a\n  seeds: 20\n- test: test_b.f\n  seeds: 3\n")
+        got = entrypoint.load_regression(self.config, ["tb/test_a.py", "tb/test_b.py"])
+        self.assertEqual(got, [("test_a", "test_a", None, 20), ("test_b.f", "test_b", "f", 3)])
+        self.listing("- test: test_a\n")
+        got = entrypoint.load_regression(self.config, ["tb/test_a.py"])
+        self.assertEqual(got, [("test_a", "test_a", None, 1)])
+
+    def assertRejected(self, text, message):
+        """The list is refused with `message` in the log, before anything is compiled."""
+        self.listing(text)
+        with patch("entrypoint.log_error") as log:
+            runs, run_command, code, _ = self.regress()
+        self.assertEqual(code, 1)
+        self.assertIn(message, " ".join(str(c[0][0]) for c in log.call_args_list))
+        run_command.assert_not_called()
+        self.assertEqual(runs, [])
+
+    def test_an_unknown_module_is_refused_and_the_modules_are_named(self):
+        self.assertRejected("- test: test_nope\n", "no module test_nope in COCOTB_TESTS. The modules are: test_a, test_b")
+
+    def test_a_function_of_an_unknown_module_is_refused(self):
+        self.assertRejected("- test: test_nope.f\n", "no module test_nope")
+
+    def test_an_entry_without_test_is_refused(self):
+        self.assertRejected("- seeds: 5\n", "entry 1: needs a `test`")
+
+    def test_a_trailing_dot_is_refused(self):
+        self.assertRejected("- test: test_a.\n", "ends in a dot")
+
+    def test_seeds_must_be_a_positive_whole_number(self):
+        for bad in ("0", "-3", "2.5", "'4'", "true", "null"):
+            with self.subTest(seeds=bad):
+                self.assertRejected(f"- test: test_a\n  seeds: {bad}\n", "seeds must be a whole number of 1 or more")
+
+    def test_an_unknown_key_is_refused(self):
+        self.assertRejected("- test: test_a\n  seed: 5\n", "unknown key seed")
+
+    def test_a_test_listed_twice_is_refused(self):
+        self.assertRejected("- test: test_a\n- test: test_a\n", "listed twice")
+
+    def test_an_empty_list_and_a_non_list_are_refused(self):
+        self.assertRejected("", "at least one entry")
+        self.assertRejected("test: test_a\n", "must be a list")
+
+    def test_malformed_yaml_is_refused(self):
+        self.assertRejected("- test: [unclosed\n", "Failed to parse")
+
+    def test_a_missing_list_file_is_refused(self):
+        with patch("entrypoint.log_error") as log:
+            runs, run_command, code, _ = self.regress()
+        self.assertEqual(code, 1)
+        self.assertIn("Cannot read the test list tb/regression.yaml", log.call_args[0][0])
+        run_command.assert_not_called()
+
+    def test_every_problem_is_reported_not_only_the_first(self):
+        self.listing("- test: test_x\n- test: test_a\n  seeds: 0\n")
+        with patch("entrypoint.log_error") as log:
+            _, _, code, _ = self.regress()
+        self.assertEqual(code, 1)
+        self.assertEqual(log.call_count, 2)
+
+    # --- the seeds -----------------------------------------------------------
+
+    def test_the_same_base_seed_gives_the_same_seeds(self):
+        self.assertEqual(entrypoint.derive_seeds(1234, "test_a", 20),
+                         entrypoint.derive_seeds(1234, "test_a", 20))
+        self.assertNotEqual(entrypoint.derive_seeds(1234, "test_a", 20),
+                            entrypoint.derive_seeds(1235, "test_a", 20))
+
+    def test_the_seeds_of_an_entry_are_distinct_and_positive(self):
+        seeds = entrypoint.derive_seeds(7, "test_a", 500)
+        self.assertEqual(len(set(seeds)), 500)
+        self.assertTrue(all(0 < s < 2**31 for s in seeds))
+
+    def test_an_entry_keeps_its_seeds_when_the_list_changes(self):
+        # Another entry, or another order, must not change what this one runs.
+        os.environ["RANDOM_SEED"] = "77"
+        self.listing("- test: test_a\n  seeds: 3\n- test: test_b\n  seeds: 3\n")
+        self.regress()
+        both = [r["seed"] for r in self.summary()["runs"] if r["entry"] == "test_b"]
+        self.listing("- test: test_b\n  seeds: 3\n")
+        self.regress()
+        alone = [r["seed"] for r in self.summary()["runs"]]
+        self.assertEqual(both, alone)
+
+    def test_random_seed_in_the_environment_is_the_base_seed(self):
+        self.listing("- test: test_a\n  seeds: 4\n")
+        os.environ["RANDOM_SEED"] = "4242"
+        self.regress()
+        again = self.summary()
+        self.assertEqual(again["seed"], 4242)
+        self.regress()
+        self.assertEqual(self.summary()["runs"], again["runs"])
+        self.assertEqual([r["seed"] for r in again["runs"]], entrypoint.derive_seeds(4242, "test_a", 4))
+
+    def test_without_random_seed_the_base_seed_is_new_each_time(self):
+        self.listing("- test: test_a\n")
+        self.regress()
+        first = self.summary()["seed"]
+        self.regress()
+        self.assertNotEqual(self.summary()["seed"], first)
+
+    def test_a_base_seed_that_is_not_a_number_is_refused(self):
+        self.listing("- test: test_a\n")
+        os.environ["RANDOM_SEED"] = "abc"
+        with patch("entrypoint.log_error") as log:
+            runs, run_command, code, _ = self.regress()
+        self.assertEqual(code, 1)
+        self.assertIn("RANDOM_SEED must be a whole number", log.call_args[0][0])
+        run_command.assert_not_called()
+
+    # --- the runs ------------------------------------------------------------
+
+    def test_the_rtl_is_compiled_once_and_every_seed_is_a_run(self):
+        self.listing("- test: test_a\n  seeds: 3\n- test: test_b.f\n  seeds: 2\n")
+        os.environ["RANDOM_SEED"] = "11"
+        runs, run_command, code, _ = self.regress()
+        self.assertIsNone(code)
+        self.assertEqual(run_command.call_count, 1)
+        self.assertEqual(run_command.call_args[0][0][0], "iverilog")
+        self.assertEqual(len(runs), 5)
+        a = [r for r in runs if r["MODULE"] == "test_a"]
+        b = [r for r in runs if r["MODULE"] == "test_b"]
+        self.assertEqual([r["RANDOM_SEED"] for r in a], [str(s) for s in entrypoint.derive_seeds(11, "test_a", 3)])
+        # TESTCASE only for the entry that names a function.
+        self.assertTrue(all("TESTCASE" not in r for r in a))
+        self.assertTrue(all(r["TESTCASE"] == "f" for r in b))
+        self.assertEqual(a[0]["COCOTB_RESULTS_FILE"], f"build/regress/test_a-{a[0]['RANDOM_SEED']}.xml")
+        self.assertEqual(b[0]["COCOTB_RESULTS_FILE"], f"build/regress/test_b.f-{b[0]['RANDOM_SEED']}.xml")
+        self.assertEqual(a[0]["TOPLEVEL"], "top")
+
+    def test_a_testcase_in_the_environment_does_not_leak_into_a_module_run(self):
+        self.listing("- test: test_a\n")
+        os.environ["TESTCASE"] = "stale"
+        runs, *_ = self.regress()
+        self.assertNotIn("TESTCASE", runs[0])
+
+    def test_the_summary_has_the_seed_the_runs_and_the_totals(self):
+        self.listing("- test: test_a\n  seeds: 2\n- test: test_b\n")
+        os.environ["RANDOM_SEED"] = "5"
+        self.regress({("test_b", None): self.FAIL_XML})
+        got = self.summary()
+        self.assertEqual(got["seed"], 5)
+        self.assertEqual((got["total"], got["passed"], got["failed"]), (3, 2, 1))
+        self.assertEqual([(r["entry"], r["verdict"]) for r in got["runs"]],
+                         [("test_a", "pass"), ("test_a", "pass"), ("test_b", "fail")])
+        self.assertEqual(sorted(got["runs"][0]), ["entry", "seed", "verdict"])
+
+    def test_a_failure_exits_1_after_the_remaining_runs_and_prints_its_replay(self):
+        self.listing("- test: test_a\n  seeds: 2\n- test: test_b\n  seeds: 2\n")
+        os.environ["RANDOM_SEED"] = "5"
+        runs, _, code, out = self.regress({("test_a", None): self.FAIL_XML})
+        self.assertEqual(code, 1)
+        self.assertEqual(len(runs), 4)  # the failure stopped nothing
+        seed = entrypoint.derive_seeds(5, "test_a", 2)[0]
+        self.assertIn(f"make cocotb SEED={seed} TEST=test_a", out)
+        self.assertIn("test_b", out)
+        self.assertIn("2/4 runs passed", out)
+
+    def test_a_run_that_wrote_no_results_is_a_failure(self):
+        self.listing("- test: test_a\n")
+        runs, _, code, _ = self.regress({("test_a", None): None})
+        self.assertEqual(code, 1)
+        self.assertEqual(self.summary()["runs"][0]["verdict"], "fail")
+
+    def test_results_with_no_test_in_them_are_a_failure(self):
+        self.listing("- test: test_a.nope\n")
+        _, _, code, _ = self.regress({("test_a", "nope"): "<testsuites><testsuite/></testsuites>"})
+        self.assertEqual(code, 1)
+
+    def test_unreadable_results_are_a_failure(self):
+        self.assertEqual(entrypoint.run_verdict("absent.xml"), "fail")
+        open("bad.xml", "w").write("<testsuites><not closed")
+        self.assertEqual(entrypoint.run_verdict("bad.xml"), "fail")
+
+    def test_an_error_element_also_fails_a_run(self):
+        open("e.xml", "w").write('<testsuites><testsuite><testcase name="x"><error message="b"/></testcase></testsuite></testsuites>')
+        self.assertEqual(entrypoint.run_verdict("e.xml"), "fail")
+
+    def test_the_table_has_a_row_per_entry(self):
+        self.listing("- test: test_a\n  seeds: 2\n- test: test_b\n")
+        _, _, code, out = self.regress()
+        self.assertIsNone(code)
+        self.assertRegex(out, r"test_a\s+ 2/2")
+        self.assertRegex(out, r"test_b\s+ 1/1")
+
+    def test_the_directory_is_cleared_so_no_old_verdict_survives(self):
+        os.makedirs("build/regress")
+        open("build/regress/summary.json", "w").write('{"stale": true}')
+        open("build/regress/old-1.xml", "w").write("x")
+        self.listing("- test: test_nope\n")  # stops after clearing
+        with patch("entrypoint.log_error"):
+            self.regress()
+        self.assertFalse(os.path.exists("build/regress/summary.json"))
+        self.assertFalse(os.path.exists("build/regress/old-1.xml"))
+
+    # --- without the key -----------------------------------------------------
+
+    def test_without_the_key_if_configured_skips_with_a_message(self):
+        del self.config["//REGRESSION"]
+        with patch("entrypoint.log_info") as info:
+            runs, run_command, code, _ = self.regress(if_configured=True)
+        self.assertIsNone(code)
+        self.assertIn("regress skipped: REGRESSION is not set", info.call_args[0][0])
+        run_command.assert_not_called()
+        self.assertEqual(runs, [])
+
+    def test_without_the_key_and_without_the_flag_it_is_an_error(self):
+        del self.config["//REGRESSION"]
+        with patch("entrypoint.log_error") as log:
+            _, run_command, code, _ = self.regress()
+        self.assertEqual(code, 1)
+        self.assertIn("No test list", log.call_args[0][0])
+        run_command.assert_not_called()
+
+    def test_skipping_leaves_no_summary_from_an_earlier_run(self):
+        os.makedirs("build/regress")
+        open("build/regress/summary.json", "w").write("{}")
+        del self.config["//REGRESSION"]
+        self.regress(if_configured=True)
+        self.assertFalse(os.path.exists("build/regress/summary.json"))
+
+    def test_the_key_is_also_read_without_its_prefix(self):
+        self.config["REGRESSION"] = self.config.pop("//REGRESSION")
+        self.listing("- test: test_a\n")
+        runs, _, code, _ = self.regress()
+        self.assertIsNone(code)
+        self.assertEqual(len(runs), 1)
+
+    def test_coverage_and_regress_run_the_same_entries_with_the_same_seeds(self):
+        self.listing("- test: test_a\n  seeds: 4\n- test: test_b.f\n  seeds: 2\n")
+        os.environ["RANDOM_SEED"] = "2024"
+        regress_runs, *_ = self.regress()
+        sims = []
+
+        def fake(cmd, *a, **kw):
+            if cmd[0] == "make" and not cmd[-1].endswith("Vtop"):
+                sims.append(kw["env"])
+                open(os.path.join(kw["cwd"], "coverage.dat"), "w").write("")
+            return MagicMock(returncode=0, stdout="/x", stderr="")
+
+        with patch("entrypoint.subprocess.run", side_effect=fake), \
+             patch("entrypoint.merge_coverage"), \
+             patch("entrypoint.parse_coverage_dat", return_value=({}, {}, [])), \
+             patch("entrypoint.uncovered_lines", return_value=[]), \
+             contextlib.redirect_stdout(io.StringIO()):
+            entrypoint.cmd_coverage(self.args(), self.config)
+        key = lambda e: (e["MODULE"], e.get("TESTCASE"), e["RANDOM_SEED"])
+        self.assertEqual([key(e) for e in sims], [key(e) for e in regress_runs])
+        self.assertEqual(len(sims), 6)
+
+    # --- cocotb TEST= --------------------------------------------------------
+
+    def cocotb(self, test=None, **kw):
+        if test is not None:
+            os.environ["TEST"] = test
+        with patch("entrypoint.run_command") as run_command, \
+             patch("entrypoint.cocotb_config", return_value=os.path.dirname(__file__)), \
+             patch("entrypoint.check_cocotb_results"), \
+             contextlib.redirect_stdout(io.StringIO()):
+            code = None
+            try:
+                entrypoint.cmd_cocotb(self.args(**kw), self.config)
+            except SystemExit as e:
+                code = e.code
+        return run_command, code
+
+    def test_test_restricts_cocotb_to_one_module(self):
+        run_command, code = self.cocotb("test_b")
+        env = run_command.call_args_list[1][1]["env"]
+        self.assertEqual(env["MODULE"], "test_b")
+        self.assertNotIn("TESTCASE", env)
+
+    def test_test_with_a_function_restricts_cocotb_to_that_test(self):
+        run_command, code = self.cocotb("test_b.my_test")
+        env = run_command.call_args_list[1][1]["env"]
+        self.assertEqual((env["MODULE"], env["TESTCASE"]), ("test_b", "my_test"))
+
+    def test_without_test_cocotb_runs_every_module_as_before(self):
+        run_command, code = self.cocotb()
+        env = run_command.call_args_list[1][1]["env"]
+        self.assertEqual(env["MODULE"], "test_a,test_b")
+        self.assertNotIn("TESTCASE", env)
+        # An empty TEST, as an unset make variable could leave, is no TEST.
+        os.environ["TEST"] = ""
+        run_command, code = self.cocotb()
+        self.assertEqual(run_command.call_args_list[1][1]["env"]["MODULE"], "test_a,test_b")
+
+    def test_an_unknown_test_is_refused_before_anything_is_compiled(self):
+        with patch("entrypoint.log_error") as log:
+            run_command, code = self.cocotb("test_nope")
+        self.assertEqual(code, 1)
+        self.assertIn("'test_nope' names no module of COCOTB_TESTS. The modules are: test_a, test_b", log.call_args[0][0])
+        run_command.assert_not_called()
+
+    def test_test_is_ignored_by_the_gate_level_run(self):
+        os.makedirs("runs/x/final/nl")
+        open("runs/x/final/nl/top.nl.v", "w").write("module top; endmodule")
+        self.config["PDK"] = "sky130A"
+        self.config["STD_CELL_LIBRARY"] = "sky130_fd_sc_hd"
+        with patch("entrypoint.find_netlist", return_value="runs/x/final/nl/top.nl.v"), \
+             patch("entrypoint.cell_models", return_value=[]):
+            run_command, code = self.cocotb("test_b", netlist="")
+        self.assertIsNone(code)
+        self.assertEqual(run_command.call_args_list[1][1]["env"]["MODULE"], "test_a,test_b")
+
+    # --- the results page ----------------------------------------------------
+
+    SUMMARY = {"seed": 99, "total": 4, "passed": 2, "failed": 2, "runs": [
+        {"entry": "test_a", "seed": 1, "verdict": "pass"},
+        {"entry": "test_a", "seed": 2, "verdict": "pass"},
+        {"entry": "test_b.f", "seed": 3, "verdict": "fail"},
+        {"entry": "test_b.f", "seed": 4, "verdict": "fail"}]}
+
+    def site(self):
+        os.makedirs("build", exist_ok=True)
+        with open("build/cocotb-results.xml", "w") as f:
+            f.write(self.PASS_XML)
+        with contextlib.redirect_stdout(io.StringIO()):
+            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+        with open("build/site/index.html") as f:
+            return f.read()
+
+    def test_the_page_has_a_regression_section_when_a_summary_exists(self):
+        os.makedirs("build/regress")
+        with open("build/regress/summary.json", "w") as f:
+            json.dump(self.SUMMARY, f)
+        page = self.site()
+        self.assertIn("Regression: 2/4 runs passed", page)
+        self.assertIn("2/2", page)  # test_a
+        self.assertIn("0/2", page)  # test_b.f
+        self.assertIn("make cocotb SEED=3 TEST=test_b.f", page)
+        self.assertIn("make cocotb SEED=4 TEST=test_b.f", page)
+        self.assertNotIn("make cocotb SEED=1 ", page)
+        self.assertIn('href="#regression"', page)
+        # After Tests, before anything physical.
+        self.assertLess(page.index('id="tests-0"'), page.index('id="regression"'))
+
+    def test_the_page_is_the_same_without_a_summary(self):
+        plain = self.site()
+        self.assertNotIn("egression", plain)
+        os.makedirs("build/regress")
+        with open("build/regress/summary.json", "w") as f:
+            json.dump(self.SUMMARY, f)
+        with_section = self.site()
+        self.assertNotEqual(plain, with_section)
+        os.remove("build/regress/summary.json")
+        self.assertEqual(self.site(), plain)
+
+    def test_the_regression_chip_is_red_when_a_run_failed(self):
+        page = entrypoint.site_page.render("top", [], None, [], {"SOURCE_DATE_EPOCH": "0"}, regression=self.SUMMARY)
+        self.assertIn('class="chip FAIL">2/4 regression runs', page)
+
+    def test_a_page_with_only_a_regression_is_not_empty(self):
+        os.makedirs("build/regress")
+        with open("build/regress/summary.json", "w") as f:
+            json.dump(self.SUMMARY, f)
+        with contextlib.redirect_stdout(io.StringIO()):
+            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+        self.assertTrue(os.path.exists("build/site/index.html"))
+
+    def test_the_page_escapes_what_it_did_not_write(self):
+        summary = dict(self.SUMMARY, runs=[{"entry": "<b>x</b>", "seed": 1, "verdict": "fail"}])
+        page = entrypoint.site_page.render("top", [], None, [], {}, regression=summary)
+        self.assertNotIn("<b>x</b>", page)
 
 if __name__ == '__main__':
     unittest.main()
