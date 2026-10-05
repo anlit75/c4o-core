@@ -468,6 +468,184 @@ jobs:
           ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test cocotb
           rm tests/smoke/test_failing_cocotb.py
 
+      # `coverage` runs the cocotb tests a second time, on Verilator. The design
+      # here has holes on purpose, so the numbers have a known answer: the else
+      # branch is never run and hole_marker never leaves 0. Each fact is read
+      # out of the files the command wrote, not out of its exit code.
+      - name: coverage measures the cocotb tests and leaves the Icarus verdict alone
+        run: |
+          mkdir -p cov/tests/smoke
+          cp tests/smoke/holes.v tests/smoke/test_holes_cocotb.py cov/tests/smoke/
+          cat > cov/config.yaml <<'EOF'
+          DESIGN_NAME: holes
+          VERILOG_FILES:
+            - dir::tests/smoke/holes.v
+          "//COCOTB_TESTS":
+            - dir::tests/smoke/test_holes_cocotb.py
+          EOF
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/cov "$@"; }
+          run c4o-core:test cocotb
+          before=$(sha256sum cov/build/cocotb-results.xml)
+          run -e RANDOM_SEED=4242 c4o-core:test coverage
+          [ "$before" = "$(sha256sum cov/build/cocotb-results.xml)" ] \
+            || { echo "coverage changed build/cocotb-results.xml, which is the Icarus verdict"; exit 1; }
+          for f in coverage.dat run-1.dat summary.json results.xml; do
+            [ -s "cov/build/coverage/$f" ] || { echo "build/coverage/$f is missing"; exit 1; }
+          done
+          [ ! -e cov/build/coverage/work ] || { echo "the compiled model was left in build/coverage"; exit 1; }
+          python3 - <<'PY'
+          import json, re, sys
+          d = json.load(open("cov/build/coverage/summary.json"))
+          got = {k: (v["hit"], v["total"], v["percent"]) for k, v in d["types"].items()}
+          want = {"line": (1, 1, 100.0), "branch": (3, 4, 75.0), "toggle": (5, 6, 83.3)}
+          if got != want:
+              sys.exit(f"::error::coverage numbers are {got}, expected {want}")
+          # The same numbers from the records themselves, counted here.
+          count = {}
+          for text in open("cov/build/coverage/coverage.dat"):
+              m = re.match(r"C '.*page\x02v_(\w+)/[^\x01]*.*' (\d+)$", text.rstrip("\n"))
+              if m:
+                  hit, total = count.get(m[1], (0, 0))
+                  count[m[1]] = (hit + (int(m[2]) >= 1), total + 1)
+          if count != {k: v[:2] for k, v in want.items()}:
+              sys.exit(f"::error::coverage.dat holds {count}")
+          if d["tests"] != {"total": 1, "passed": 1}:
+              sys.exit(f"::error::tests are {d['tests']}")
+          if d["files"] != ["tests/smoke/holes.v"]:
+              sys.exit(f"::error::files are {d['files']}")
+          if [m["name"] for m in d["modules"]] != ["holes"]:
+              sys.exit(f"::error::modules are {d['modules']}")
+          missed = [(m["line"], m["text"]) for m in d["uncovered"]]
+          # The else branch and its statement. Line 11, hole_marker's declaration,
+          # failed toggle only and is not code that did not run.
+          if missed != [(21, "end else begin"), (22, "hole_marker <= 1'b1;")]:
+              sys.exit(f"::error::the lines nothing ran are {missed}")
+          if d["seed"] != "4242":
+              sys.exit(f"::error::the coverage run's seed is {d['seed']}, expected the RANDOM_SEED it was given")
+          print("coverage:", got, "missed:", missed)
+          PY
+
+      - name: The page shows the coverage that was measured
+        run: |
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/cov "$@"; }
+          run c4o-core:test site
+          page=cov/build/site/index.html
+          ids=$(grep -o '<section id="[a-z0-9-]*"' "$page" | sed 's/.*id="//; s/"//' | tr '\n' ' ')
+          [ "$ids" = "summary tests-0 coverage " ] || { echo "sections are '$ids'"; exit 1; }
+          grep -qF "<h2>Coverage</h2>" "$page" || { echo "no Coverage heading"; exit 1; }
+          for row in '<td>Block</td><td class="num">1 / 1</td><td class="num">100.0%</td>' \
+                     '<td>Branch</td><td class="num">3 / 4</td><td class="num">75.0%</td>' \
+                     '<td>Toggle</td><td class="num">5 / 6</td><td class="num">83.3%</td>'; do
+            grep -qF "$row" "$page" || { echo "the page has no row $row"; exit 1; }
+          done
+          # The Summary card is three stats and nothing else: no figure across
+          # the kinds and no detail under them.
+          python3 - "$page" <<'PY'
+          import re, sys
+          page = open(sys.argv[1]).read()
+          card = re.search(r'<div class="kpi coverage"><div class="label">code coverage</div><div class="stats">(.*?</div></div>)</div></div>', page, re.S)
+          if not card:
+              sys.exit("::error::the Summary has no code coverage card")
+          stats = re.findall(r'<div class="stat"><div class="value">([^<]*)</div><div class="detail">([^<]*)</div></div>', card[1])
+          want = [("100.0%", "Block"), ("75.0%", "Branch"), ("83.3%", "Toggle")]
+          if stats != want or card[1].count('class="stat"') != 3 or "block." in card[0]:
+              sys.exit(f"::error::the code coverage card is {stats}, expected {want}: {card[0]}")
+          PY
+          # The lines are in summary.json, checked above, and not on the page.
+          ! grep -qF "sv2v" "$page" || { echo "the page explains sv2v"; exit 1; }
+          ! grep -qF "Line/block" "$page" || { echo "the page still says Line/block"; exit 1; }
+          ! grep -qF "Lines no test reached" "$page" || { echo "the page lists the lines no test reached"; exit 1; }
+          ! grep -qF "hole_marker &lt;=" "$page" || { echo "the page shows source lines"; exit 1; }
+          grep -qF "This run used seed <code>4242</code>" "$page" || { echo "the page does not name the coverage run's seed"; exit 1; }
+          grep -qF "Not measured: expression coverage and FSM coverage." "$page" || { echo "the page does not say what is not measured"; exit 1; }
+          # Without the coverage files the page is the page it was.
+          run --entrypoint rm c4o-core:test -rf build/coverage
+          run c4o-core:test site
+          # Not in the stylesheet, which names the card's class for every page.
+          body=$(python3 -c "import re, sys; print(re.sub(r'<style>.*?</style>', '', open(sys.argv[1]).read(), flags=re.S))" "$page")
+          ! grep -qiF "coverage" <<<"$body" || { echo "a page with no coverage data still mentions coverage"; exit 1; }
+
+      # The verdict is Icarus's, so a test that fails on Verilator does not make
+      # `coverage` fail -- but a design Verilator cannot build does. A cocotb
+      # test that fails on both is the case that shows the first half.
+      - name: coverage still reports when a test fails, and fails when the design cannot be built
+        run: |
+          mkdir -p cov2/tests/smoke cov3/tests/smoke
+          cp tests/smoke/counter.v cov2/tests/smoke/
+          cat > cov2/tests/smoke/test_failing_cocotb.py <<'EOF'
+          import cocotb
+
+          @cocotb.test()
+          async def always_fails(dut):
+              assert False, "deliberate"
+          EOF
+          cat > cov2/config.yaml <<'EOF'
+          DESIGN_NAME: counter
+          VERILOG_FILES:
+            - dir::tests/smoke/counter.v
+          "//COCOTB_TESTS":
+            - dir::tests/smoke/test_failing_cocotb.py
+          EOF
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/"$1" "${@:2}"; }
+          ! run cov2 c4o-core:test cocotb
+          run cov2 c4o-core:test coverage
+          python3 -c "
+          import json, sys
+          d = json.load(open('cov2/build/coverage/summary.json'))
+          sys.exit(0 if d['tests'] == {'total': 1, 'passed': 0} and d['types']['line']['total'] > 0 else 'tests: %s' % d['tests'])"
+
+          printf 'module broken(input clk;\n' > cov3/tests/smoke/broken.v
+          cp cov2/tests/smoke/test_failing_cocotb.py cov3/tests/smoke/
+          cat > cov3/config.yaml <<'EOF'
+          DESIGN_NAME: broken
+          VERILOG_FILES:
+            - dir::tests/smoke/broken.v
+          "//COCOTB_TESTS":
+            - dir::tests/smoke/test_failing_cocotb.py
+          EOF
+          if out=$(run cov3 c4o-core:test coverage 2>&1); then
+            echo "coverage passed on a design that does not build"; exit 1
+          fi
+          grep -qF "Verilator could not build the design" <<<"$out" \
+            || { echo "coverage failed, but not because of the build:"; echo "$out" | tail -20; exit 1; }
+          [ ! -e cov3/build/coverage/summary.json ] || { echo "a design that did not build has coverage numbers"; exit 1; }
+
+      # c4o-pyuvm does not build on Verilator without the waivers its config
+      # names, and coverage has to read that key as lint does.
+      - name: coverage applies LINTER_DISABLE_WARNINGS
+        run: |
+          mkdir -p cov4/tests/smoke
+          cat > cov4/tests/smoke/trunc.v <<'EOF'
+          `timescale 1ns/1ps
+          module trunc (input clk, output reg [3:0] count, output wire [1:0] low);
+              assign low = count;
+              always @(posedge clk) count <= count + 1;
+          endmodule
+          EOF
+          cat > cov4/tests/smoke/test_trunc.py <<'EOF'
+          import cocotb
+          from cocotb.clock import Clock
+          from cocotb.triggers import RisingEdge
+
+          @cocotb.test()
+          async def ticks(dut):
+              cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+              for _ in range(4):
+                  await RisingEdge(dut.clk)
+          EOF
+          cat > cov4/config.yaml <<'EOF'
+          DESIGN_NAME: trunc
+          VERILOG_FILES:
+            - dir::tests/smoke/trunc.v
+          "//COCOTB_TESTS":
+            - dir::tests/smoke/test_trunc.py
+          EOF
+          run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/cov4 c4o-core:test "$@"; }
+          ! run coverage
+          printf 'LINTER_DISABLE_WARNINGS: [WIDTHTRUNC]\n' >> cov4/config.yaml
+          run coverage
+          [ -s cov4/build/coverage/summary.json ] || { echo "no summary after the waiver"; exit 1; }
+
       # `cocotb --netlist` drives what synthesis produced, with the tests
       # unchanged. tests/smoke/test_counter_cocotb.py only ever touches clk,
       # rst and count, which is exactly why it survives the trip -- and is the
@@ -865,9 +1043,14 @@ jobs:
       - name: Physical design
         uses: ./c4o-core/actions/gds
 
+      # Coverage is asked for by name, as a caller's verify.yml does: this image
+      # has the target, so the page has to have the section.
       - name: Report
         id: report
         uses: ./c4o-core/actions/report
+        with:
+          sections: |
+            Coverage
 
       # Written by c4o-core's own `make site`, so the commit is this checkout's:
       # the workflow runs in c4o-core, and GITHUB_SHA is its commit.
@@ -887,15 +1070,15 @@ jobs:
           fi
           # The summary first, then the verdicts, area and instances, power,
           # and signoff last. The tests sections between the summary and
-          # timing are one or two, so they are left out of the list.
+          # coverage are one or two, so they are left out of the list.
           ids=$(grep -o '<section id="[a-z0-9-]*"' "$page" | sed 's/.*id="//; s/"//' | grep -v '^tests' | tr '\n' ' ')
-          [ "$ids" = "summary timing area power signoff " ] || { echo "::error::sections are '$ids'"; exit 1; }
+          [ "$ids" = "summary coverage timing area power signoff " ] || { echo "::error::sections are '$ids'"; exit 1; }
           # The summary holds the numbers a reader asks first. A card whose
           # data the real run has is named, so the section cannot lose it
           # unnoticed.
           # The page is one line, so the section is cut out of it by pattern.
           summary=$(grep -o '<section id="summary">.*' "$page" | sed 's#</section>.*##')
-          for card in die clock instances "worst setup slack" "worst hold slack" "total power" signoff; do
+          for card in die "core utilization" instances clock "timing, worst slack" "code coverage" "total power" signoff; do
             if ! grep -qF "<div class=\"label\">$card</div>" <<<"$summary"; then
               echo "::error::The summary has no '$card' card."
               exit 1
@@ -907,6 +1090,65 @@ jobs:
               exit 1
             fi
           done
+          # Coverage was measured by `make coverage` in the Report step, on the
+          # real design. The page must say what summary.json says, and the
+          # numbers must be possible: hit within total, the share right, and
+          # each kind counted again from coverage.dat itself.
+          python3 - "$page" <<'PY'
+          import json, re, sys
+          page = open(sys.argv[1]).read()
+          d = json.load(open("build/coverage/summary.json"))
+          types = d["types"]
+          for kind, label in (("line", "Block"), ("branch", "Branch"), ("toggle", "Toggle")):
+              if kind not in types:
+                  sys.exit(f"::error::summary.json has no {kind}")
+              t = types[kind]
+              if not (0 <= t["hit"] <= t["total"]):
+                  sys.exit(f"::error::{kind} hit {t['hit']} of {t['total']}")
+              if t["total"] and t["percent"] != round(t["hit"] * 100 / t["total"], 1):
+                  sys.exit(f"::error::{kind} percent {t['percent']} is not {t['hit']}/{t['total']}")
+              share = "&mdash;" if t["percent"] is None else f"{t['percent']:.1f}%"
+              row = f'<td>{label}</td><td class="num">{t["hit"]:,} / {t["total"]:,}</td><td class="num">{share}</td>'
+              if row not in page:
+                  sys.exit(f"::error::the page has no row {row}")
+          if not types["line"]["total"] or not types["toggle"]["total"]:
+              sys.exit("::error::coverage counted no line or toggle point in the design")
+          if not d["tests"] or d["tests"]["passed"] != d["tests"]["total"]:
+              sys.exit(f"::error::the Verilator run of the tests: {d['tests']}")
+          count = {}
+          for text in open("build/coverage/coverage.dat"):
+              m = re.match(r"C '.*page\x02v_(\w+)/[^\x01]*.*' (\d+)$", text.rstrip("\n"))
+              if m:
+                  hit, total = count.get(m[1], (0, 0))
+                  count[m[1]] = (hit + (int(m[2]) >= 1), total + 1)
+          for kind in ("line", "branch", "toggle"):
+              if count.get(kind, (0, 0)) != (types[kind]["hit"], types[kind]["total"]):
+                  sys.exit(f"::error::coverage.dat holds {count.get(kind)} for {kind}, summary.json {types[kind]}")
+          summary = re.search(r'<section id="summary">.*?</section>', page, re.S)[0]
+          # Three to a row: what the chip is, its clock and timing, then
+          # coverage, power and signoff.
+          order = re.findall(r'<div class="label">([^<]*)</div>', summary)
+          want = ["die", "core utilization", "instances", "clock", "timing, worst slack", "code coverage", "total power", "signoff"]
+          if order != want:
+              sys.exit(f"::error::the Summary cards are {order}, expected {want}")
+          # Timing is one card with both stats, each coloured by its own sign.
+          timing = re.search(r'<div class="kpi timing">.*?</div></div></div></div>', summary, re.S)[0]
+          stats = re.findall(r'<div class="stat (good|bad)"><div class="value">([^<]*)</div><div class="detail">(setup|hold) &middot; ([^<]*)</div>', timing)
+          if [s[2] for s in stats] != ["setup", "hold"]:
+              sys.exit(f"::error::the timing card has stats {stats}")
+          for state, value, name, _ in stats:
+              if state != ("bad" if value.startswith("-") else "good"):
+                  sys.exit(f"::error::the {name} stat is {state} for {value}")
+          card = re.search(r'<div class="kpi coverage"><div class="label">code coverage</div><div class="stats">(.*?</div></div>)</div></div>', summary, re.S)
+          got = re.findall(r'<div class="stat"><div class="value">([^<]*)</div><div class="detail">([^<]*)</div></div>', card[1])
+          expect = []
+          for kind, label in (("line", "Block"), ("branch", "Branch"), ("toggle", "Toggle")):
+              share = "&mdash;" if types[kind]["percent"] is None else f"{types[kind]['percent']:.1f}%"
+              expect.append((share, label))
+          if got != expect or card[1].count('class="stat"') != 3 or "block." in card[0]:
+              sys.exit(f"::error::the code coverage card is {got}, expected {expect}")
+          print("coverage:", {k: (v["hit"], v["total"]) for k, v in types.items()})
+          PY
           # The constraints are read from the real STA step's config.json. A key
           # name that does not match leaves its row out, so each one is named.
           for c in "clock period" "clock uncertainty" "clock transition" "timing derate" "input and output delay"; do

@@ -106,7 +106,7 @@ C4O_PDK := $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(C4O_IMAGE)
 c4o_tool = $(DOCKER_RUN) --entrypoint $(1) $(C4O_IMAGE)
 endif
 
-.PHONY: all help lint sim cocotb gatesim synth schematic gds pdk report site clean distclean shell
+.PHONY: all help lint sim cocotb coverage gatesim synth schematic gds pdk report site clean distclean shell
 
 # A bare `make all` asks for no test kind by name: it runs each kind whose key
 # is in config.yaml and fails when neither is. The target-specific variable
@@ -125,6 +125,7 @@ help::
 	@echo "  make cocotb  - Run the Python (cocotb) testbenches"
 	@echo "                 (repeat a random failure: make cocotb SEED=<n>)"
 	@echo "                 (write build/<DESIGN_NAME>.vcd: make cocotb WAVES=1)"
+	@echo "  make coverage - Measure how much of the RTL the cocotb tests run (build/coverage/)"
 	@echo "  make gatesim - Re-simulate the synthesised netlist (after make gds)"
 	@echo "  make synth   - Run Yosys synthesis"
 	@echo "  make schematic - Draw the circuit as build/schematic.svg"
@@ -149,6 +150,12 @@ sim:
 # `make sim`: it is a second way to write a testbench.
 cocotb:
 	$(C4O_COCOTB) cocotb $(C4O_IF_CONFIGURED)
+
+# The cocotb tests again, on Verilator with coverage counters, for the numbers
+# that Icarus cannot give. Not part of `all`, and not a verdict: `make cocotb`
+# decides whether the tests pass. C4O_COCOTB so that SEED reaches this run too.
+coverage:
+	$(C4O_COCOTB) coverage $(C4O_IF_CONFIGURED)
 
 # Simulates runs/<tag>/final/nl/, which `make gds` leaves behind, against the
 # PDK's own cell models. `make sim` says the RTL behaves; this says the gates

@@ -1575,8 +1575,8 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn('<td class="num">54.4%</td><td class="bar"><span class="track">'
                           '<span style="width:54%"></span></span></td>', page)
             self.assertRegex(page, r'<tr class="total"><td>Total</td>.*?<td class="bar"></td></tr>')
-            # A bare lint count reads as a flaw; it says what it counts.
-            self.assertIn("Verilator on the RTL, inside the flow", page)
+            # The lint count is not on the page.
+            self.assertNotIn("Verilator on the RTL, inside the flow", page)
             # power.rpt of DEFAULT_CORNER, not the bare power__total metric,
             # which in this run is max_ff's 0.290 mW.
             self.assertIn("<code>nom_tt_025C_1v80</code>", page)
@@ -2120,7 +2120,8 @@ class TestEntrypoint(unittest.TestCase):
             self.assertNotIn("Timing is met", page)
             self.assertIn('<div class="value">12,345</div>', page)
             self.assertIn("after routing, 110 after synthesis", page)
-            self.assertIn('<div class="kpi bad"><div class="label">worst setup slack</div>', page)
+            self.assertIn('<div class="stat bad"><div class="value">-0.50 ns</div>'
+                          '<div class="detail">setup &middot; ', page)
         finally:
             os.chdir(cwd)
 
@@ -2625,12 +2626,23 @@ class TestEntrypoint(unittest.TestCase):
         """{label: (value, detail)} of the Summary section's cards."""
         found = re.search(r'<section id="summary">.*?</section>', page, re.S)
         region = found[0] if found else ""
-        return {m[1]: (m[2], m[3]) for m in re.findall(
-            r'<div class="kpi([^"]*)"><div class="label">([^<]*)</div><div class="value">([^<]*)</div>'
-            r'(?:<div class="detail">([^<]*)</div>)?', region)}
+        out = {}
+        # The timing card holds two stats; each is read as the card it replaced.
+        for m in re.finditer(
+                r'<div class="kpi timing"><div class="label">[^<]*</div><div class="stats">(?P<stats>.*?</div></div>)</div></div>'
+                r'|<div class="kpi[^"]*"><div class="label">(?P<label>[^<]*)</div><div class="value">(?P<value>[^<]*)</div>'
+                r'(?:<div class="detail">(?P<detail>[^<]*)</div>)?', region, re.S):
+            if m["stats"]:
+                for value, name, vio in re.findall(
+                        r'<div class="stat (?:good|bad)"><div class="value">([^<]*)</div>'
+                        r'<div class="detail">(setup|hold) &middot; ([^<]*)</div>', m["stats"]):
+                    out[f"worst {name} slack"] = (value, vio)
+            else:
+                out[m["label"]] = (m["value"], m["detail"])
+        return out
 
-    SUMMARY_LABELS = ["die", "clock", "core utilization", "instances", "worst setup slack",
-                       "worst hold slack", "total power", "signoff", "lint warnings"]
+    SUMMARY_LABELS = ["die", "core utilization", "instances", "clock", "worst setup slack",
+                       "worst hold slack", "total power", "signoff"]
 
     def test_summary_has_every_item_and_is_the_first_section_under_the_nav(self):
         cwd = os.getcwd()
@@ -2681,7 +2693,7 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn("<h3>Instances: 110 after synthesis, 198 after routing</h3>", area)
             # Die, utilization and instances live in the Summary only; the
             # area section keeps the detail the Summary has no room for.
-            for label in ("die", "core utilization", "instances", "lint warnings"):
+            for label in ("die", "core utilization", "instances"):
                 self.assertNotIn(f'<div class="label">{label}</div>', area)
             self.assertNotIn('class="kpi', area)
             # The core size is on the utilization card only.
@@ -2689,10 +2701,11 @@ class TestEntrypoint(unittest.TestCase):
             self.assertNotIn("57.1 &micro;m", area)
             self.assertEqual(cards["core utilization"], ("57.1%", "of a 58.4 \u00d7 57.1 \u00b5m core"))
             self.assertEqual(cards["die"][0], "69.5 \u00d7 80.2 \u00b5m")
-            self.assertIn("Verilator on the RTL, inside the flow", cards["lint warnings"][1])
             self.assertEqual(cards["signoff"][0], "clean")
             self.assertNotIn("FAIL", section("signoff"))
-            self.assertEqual(cards["lint warnings"][0], "0")
+            # The lint count is not on the page.
+            self.assertNotIn("lint warnings", cards)
+            self.assertNotIn("lint warnings", page)
         finally:
             os.chdir(cwd)
 
@@ -2707,7 +2720,6 @@ class TestEntrypoint(unittest.TestCase):
             ("worst setup slack", without("timing__setup__ws")),
             ("die", without("design__die__bbox")),
             ("core utilization", without("design__instance__utilization")),
-            ("lint warnings", without("design__lint_warning__count")),
             ("signoff", without("magic__drc_error__count", "klayout__drc_error__count",
                                 "design__lvs_error__count", "route__antenna_violation__count",
                                 "design__xor_difference__count")),
@@ -2799,7 +2811,8 @@ class TestEntrypoint(unittest.TestCase):
             self.assertEqual(cards["signoff"][0], "3 DRC (KLayout), 1 LVS")
             self.assertIn('<div class="kpi bad"><div class="label">signoff</div>', page)
             self.assertEqual(cards["worst hold slack"], ("-0.05 ns", "1 violation"))
-            self.assertIn('<div class="kpi bad"><div class="label">worst hold slack</div>', page)
+            self.assertIn('<div class="stat bad"><div class="value">-0.05 ns</div>'
+                          '<div class="detail">hold &middot; 1 violation</div>', page)
             # `report` says the same words as the card: one reading of the checks.
             with open("runs/blinky_run/final/metrics.json") as f:
                 self.assertEqual(entrypoint.signoff_row(json.load(f)),
@@ -2991,6 +3004,328 @@ class TestEntrypoint(unittest.TestCase):
             self.assertNotIn("EDA", footer)
         finally:
             os.chdir(cwd)
+
+class TestCoverage(unittest.TestCase):
+    """`coverage`: the numbers from coverage.dat, the page they appear on, and the command's exit codes."""
+    FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "coverage")
+    COCOTB_XML = (
+        '<testsuites><testsuite name="all"><properties><property name="random_seed" value="1789965785"/></properties><testcase name="a_passes" sim_time_ns="10"/>'
+        '<testcase name="b_fails" sim_time_ns="10"><failure message="x"/></testcase>'
+        "</testsuite></testsuites>"
+    )
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.cwd = os.getcwd()
+        os.chdir(self.test_dir)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.test_dir)
+
+    def fixture(self, name):
+        return os.path.join(self.FIXTURES, name)
+
+    def summary(self, **extra):
+        types, modules, files = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        out = {"tests": {"total": 5, "passed": 5}, "files": files, "types": types,
+               "modules": [{"name": n, "types": t} for n, t in modules.items()],
+               "uncovered": [{"file": "src/top.v", "line": 6, "text": "q <= d;"}]}
+        out.update(extra)
+        return out
+
+    def page(self, coverage, **kwargs):
+        return entrypoint.site_page.render("top", [], None, [], {}, coverage=coverage, **kwargs)
+
+    # --- the numbers ---------------------------------------------------------
+
+    def test_each_kind_is_counted_from_its_own_records(self):
+        types, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        got = {k: (v["hit"], v["total"], v["percent"]) for k, v in types.items()}
+        # Not lcov's: those take the smallest of line, branch and toggle per source line.
+        self.assertEqual(got, {"line": (3, 5, 60.0), "branch": (1, 2, 50.0), "toggle": (5, 8, 62.5)})
+
+    def test_user_coverage_is_there_only_when_the_design_has_some(self):
+        a, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        b, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-b.dat"))
+        self.assertNotIn("user", a)
+        self.assertEqual((b["user"]["hit"], b["user"]["total"]), (1, 1))
+
+    def test_each_module_is_counted_apart_and_none_of_a_kind_is_not_zero_percent(self):
+        _, modules, files = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        self.assertEqual(list(modules), ["sub", "top"])
+        self.assertEqual((modules["top"]["line"]["hit"], modules["top"]["line"]["total"]), (2, 4))
+        self.assertEqual((modules["sub"]["toggle"]["hit"], modules["sub"]["toggle"]["total"]), (2, 2))
+        # sub has no branch: nothing to cover is None, which a page must not show as 0%.
+        self.assertEqual(modules["sub"]["branch"], {"hit": 0, "total": 0, "percent": None})
+        self.assertEqual(files, ["src/sub.v", "src/top.v"])
+
+    @unittest.skipUnless(shutil.which("verilator_coverage"), "needs verilator_coverage")
+    def test_two_runs_are_merged_by_adding_their_counts(self):
+        entrypoint.merge_coverage([self.fixture("run-a.dat"), self.fixture("run-b.dat")], "merged.dat")
+        types, _, _ = entrypoint.parse_coverage_dat("merged.dat")
+        # A point either run hit is hit. Neither alone has 4/5 lines.
+        self.assertEqual({k: (v["hit"], v["total"]) for k, v in types.items()},
+                         {"line": (4, 5), "branch": (2, 2), "toggle": (6, 8), "user": (1, 1)})
+
+    def test_uncovered_lines_are_blocks_and_branches_no_test_hit_and_never_toggle_holes(self):
+        os.makedirs("src")
+        with open("src/top.v", "w") as f:
+            f.write("".join(f"line {n}\n" for n in range(1, 15)))
+        got = entrypoint.uncovered_lines(self.fixture("run-a.dat"))
+        # Blocks at lines 6 and 12 and the else branch of line 6 are not hit.
+        # Lines 1, 2, 4 and 5 have toggle holes only, and are not listed.
+        self.assertEqual(got, [{"file": "src/top.v", "line": 6, "text": "line 6"},
+                               {"file": "src/top.v", "line": 12, "text": "line 12"}])
+
+    def test_a_block_that_spans_lines_lists_each_of_them(self):
+        os.makedirs("src")
+        open("src/top.v", "w").write("a\nb\nc\nd\ne\n")
+        with open("blocks.dat", "w") as f:
+            f.write("# SystemC::Coverage-3\n")
+            f.write("C '\x01f\x02src/top.v\x01l\x021\x01page\x02v_line/top\x01o\x02block\x01S\x021,3-4\x01h\x02.top' 0\n")
+            f.write("C '\x01f\x02src/top.v\x01l\x025\x01page\x02v_line/top\x01o\x02block\x01S\x025\x01h\x02.top' 1\n")
+        self.assertEqual([m["line"] for m in entrypoint.uncovered_lines("blocks.dat")], [1, 3, 4])
+
+    def test_the_text_of_an_unreadable_source_is_empty_not_an_error(self):
+        got = entrypoint.uncovered_lines(self.fixture("run-a.dat"))
+        self.assertEqual([m["text"] for m in got], ["", ""])
+
+    # --- the page ------------------------------------------------------------
+
+    def test_the_coverage_section_has_a_row_per_kind_with_hit_and_total(self):
+        page = self.page(self.summary())
+        section = page[page.index('<section id="coverage">'):]
+        section = section[:section.index("</section>")]
+        self.assertIn("<h2>Coverage</h2>", section)
+        for row in ("<td>Block</td><td class=\"num\">3 / 5</td><td class=\"num\">60.0%</td>",
+                    "<td>Branch</td><td class=\"num\">1 / 2</td><td class=\"num\">50.0%</td>",
+                    "<td>Toggle</td><td class=\"num\">5 / 8</td><td class=\"num\">62.5%</td>"):
+            self.assertIn(row, section)
+        self.assertNotIn("User cover", section)
+        self.assertIn("Coverage by module (2)", section)
+        # The lines stay in summary.json. The page does not list them.
+        self.assertNotIn("Lines no test reached", page)
+        self.assertNotIn("q &lt;= d;", page)
+        self.assertNotIn("coverage-uncovered", page)
+        self.assertIn("<code>src/top.v</code>", section)
+
+    def test_the_section_says_what_it_is_not_and_what_it_leaves_out(self):
+        page = self.page(self.summary())
+        self.assertIn("The Tests section above decides pass and fail.", page)
+        self.assertIn("Not measured: expression coverage and FSM coverage.", page)
+        self.assertNotIn("experimental", page)
+        self.assertNotIn("sv2v", page)
+        self.assertNotIn("generated <code>.v", page)
+        self.assertNotIn("Line/block", page)
+        self.assertIn("These are the files in <code>VERILOG_FILES</code>.", page)
+
+    def test_the_page_says_which_seed_the_coverage_run_used(self):
+        runs = [("cocotb, RTL", "1789965785", [("t", "PASS", 1.0)])]
+        same = entrypoint.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="1789965785"))
+        self.assertIn("This run used seed <code>1789965785</code>, the seed of the RTL run in Tests.", same)
+        other = entrypoint.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="7"))
+        self.assertIn("This run used seed <code>7</code>. It is not the seed of the RTL run in Tests.", other)
+        none = entrypoint.site_page.render("top", [], None, runs, {}, coverage=self.summary())
+        self.assertNotIn("This run used seed", none)
+
+    def test_user_coverage_gets_a_row_when_there_is_some(self):
+        types, modules, files = entrypoint.parse_coverage_dat(self.fixture("run-b.dat"))
+        self.assertIn("<td>User cover</td>", self.page(self.summary(types=types)))
+
+    def test_the_summary_card_has_a_line_for_each_kind_and_no_total(self):
+        page = self.page(self.summary())
+        summary = page[page.index('<section id="summary">'):]
+        summary = summary[:summary.index("</section>")]
+        card = re.search(r'<div class="kpi coverage"><div class="label">code coverage</div><div class="stats">(.*?</div></div>)</div></div>', summary, re.S)
+        self.assertTrue(card, summary)
+        # Three equal stats, in this order, and no number across them.
+        self.assertEqual(re.findall(r'<div class="stat"><div class="value">([^<]*)</div><div class="detail">([^<]*)</div></div>',
+                                    card[1]),
+                         [("60.0%", "Block"), ("50.0%", "Branch"), ("62.5%", "Toggle")])
+        self.assertNotIn('class="detail">block.', card[0])
+        self.assertNotIn("block.", summary)
+        self.assertNotIn("expression", summary)
+
+    def test_the_summary_card_adds_a_user_line_and_a_dash_for_a_kind_with_nothing(self):
+        types, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-b.dat"))
+        types["branch"] = {"hit": 0, "total": 0, "percent": None}
+        card = entrypoint.site_page.coverage_card(self.summary(types=types))
+        self.assertEqual(re.findall(r'<div class="value">([^<]*)</div><div class="detail">([^<]*)</div>', card),
+                         [("40.0%", "Block"), ("&mdash;", "Branch"), ("12.5%", "Toggle"), ("100.0%", "User cover")])
+
+    def test_a_kind_with_nothing_to_cover_shows_a_dash_and_not_zero(self):
+        types = self.summary()["types"]
+        types["branch"] = {"hit": 0, "total": 0, "percent": None}
+        page = self.page(self.summary(types=types))
+        self.assertIn('<td>Branch</td><td class="num">0 / 0</td><td class="num">&mdash;</td>', page)
+        self.assertNotIn("Branch 0.0%", page)
+
+    def test_coverage_comes_after_the_tests_and_before_timing(self):
+        runs = [("cocotb, RTL", "1", [("t", "PASS", 1.0)])]
+        page = entrypoint.site_page.render(
+            "top", [], None, runs, {}, coverage=self.summary(),
+            physical={"setup": (1.0, 0), "hold": (1.0, 0)})
+        ids = re.findall(r'<section id="([a-z0-9-]*)"', page)
+        self.assertLess(ids.index("tests-0"), ids.index("coverage"))
+        self.assertLess(ids.index("coverage"), ids.index("timing"))
+
+    def test_without_coverage_there_is_no_section_and_no_card(self):
+        runs = [("cocotb, RTL", "1", [("t", "PASS", 1.0)])]
+        page = entrypoint.site_page.render("top", [], None, runs, {}, physical={"setup": (1.0, 0)})
+        self.assertNotIn("Coverage", page)
+        self.assertNotIn("code coverage", page)
+        self.assertNotIn('id="coverage"', page)
+
+    def test_site_reads_the_summary_json_that_coverage_wrote(self):
+        os.makedirs("build/coverage")
+        with open("build/cocotb-results.xml", "w") as f:
+            f.write(self.COCOTB_XML)
+        with contextlib.redirect_stdout(io.StringIO()):
+            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+        self.assertNotIn("Coverage", open("build/site/index.html").read())
+        with open("build/coverage/summary.json", "w") as f:
+            json.dump(self.summary(), f)
+        with contextlib.redirect_stdout(io.StringIO()):
+            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+        page = open("build/site/index.html").read()
+        self.assertIn("<h2>Coverage</h2>", page)
+        self.assertIn('<div class="stat"><div class="value">60.0%</div><div class="detail">Block</div></div>', page)
+
+    # --- the Summary grid ----------------------------------------------------
+
+    def cards(self, physical, coverage=True, **kwargs):
+        numbers = [("die", "50.0 x 60.0 um  (3000.00 um^2)"), ("utilization", "55.0%"),
+                   ("instances", "20 after synthesis, 30 after routing")]
+        physical = dict(physical, constraints={"clock_period": (10.0, True)}, core=(40.0, 50.0))
+        power = ("nom_tt_025C_1v80", [("Total", 0.0, 0.0, 0.0, 0.001)])
+        signoff = [("DRC", 0, "Magic", "")]
+        return entrypoint.site_page.summary_cards(
+            numbers, physical, power, signoff, self.summary() if coverage else None)
+
+    def test_the_cards_come_three_to_a_row_with_coverage_first_in_the_third(self):
+        html = self.cards({"setup": (0.9, 0), "hold": (0.1, 0)})
+        labels = re.findall(r'<div class="label">([^<]*)</div>', html)
+        self.assertEqual(labels, ["die", "core utilization", "instances", "clock", "timing, worst slack",
+                                  "code coverage", "total power", "signoff"])
+
+    def test_the_timing_card_has_setup_and_hold_each_coloured_by_its_sign(self):
+        html = self.cards({"setup": (0.92, 0), "hold": (-0.05, 1)})
+        stats = re.findall(r'<div class="stat (good|bad)"><div class="value">([^<]*)</div>'
+                           r'<div class="detail">([^<]*)</div>', html)
+        self.assertEqual(stats, [("good", "+0.92 ns", "setup &middot; 0 violations"),
+                                 ("bad", "-0.05 ns", "hold &middot; 1 violation")])
+        self.assertIn('<div class="kpi timing">', html)
+
+    def test_a_missing_slack_leaves_the_other_and_neither_leaves_no_card(self):
+        only_hold = self.cards({"hold": (0.1, 0)})
+        self.assertEqual(re.findall(r'<div class="detail">(setup|hold) &middot;', only_hold), ["hold"])
+        neither = self.cards({})
+        self.assertNotIn("timing, worst slack", neither)
+        self.assertNotIn("kpi timing", neither)
+
+    def test_no_coverage_data_leaves_two_cards_in_the_last_row(self):
+        html = self.cards({"setup": (0.9, 0), "hold": (0.1, 0)}, coverage=False)
+        labels = re.findall(r'<div class="label">([^<]*)</div>', html)
+        self.assertEqual(labels[-2:], ["total power", "signoff"])
+        self.assertNotIn("code coverage", labels)
+
+    # --- the command ---------------------------------------------------------
+
+    CONFIG = {"DESIGN_NAME": "top", "VERILOG_FILES": ["src/top.v"], "COCOTB_TESTS": ["test/test_top.py"],
+              "LINTER_DISABLE_WARNINGS": ["WIDTHEXPAND"]}
+
+    def project(self):
+        for path in ("src/top.v", "test/test_top.py"):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "w").write("x")
+
+    def fake(self, build_rc=0, writes_dat=True, sim_rc=0, calls=None):
+        """subprocess.run as the image would answer it, recording each call."""
+        def run(cmd, *args, **kwargs):
+            if calls is not None:
+                calls.append((cmd, kwargs))
+            out = MagicMock(returncode=0, stdout="", stderr="")
+            if cmd[0] == "cocotb-config":
+                out.stdout = "/x/makefiles" if "--makefiles" in cmd else "/x"
+            elif cmd[0] == "make" and cmd[-1].endswith("Vtop"):
+                out.returncode, out.stderr = build_rc, "%Error: broken design"
+            elif cmd[0] == "make":
+                out.returncode = sim_rc
+                if writes_dat:
+                    shutil.copy(self.fixture("run-a.dat"), os.path.join(kwargs["cwd"], "coverage.dat"))
+                    with open(kwargs["env"]["COCOTB_RESULTS_FILE"], "w") as f:
+                        f.write(self.COCOTB_XML)
+            elif cmd[:2] == ["verilator_coverage", "--write"]:
+                shutil.copy(cmd[3], cmd[2])
+            return out
+        return run
+
+    def coverage(self, config=None, **fake):
+        out = io.StringIO()
+        with patch("entrypoint.subprocess.run", self.fake(**fake)), contextlib.redirect_stdout(out):
+            entrypoint.cmd_coverage(MagicMock(files=None, if_configured=False), config or self.CONFIG)
+        return out.getvalue()
+
+    def test_failing_tests_still_give_coverage_and_the_command_succeeds(self):
+        self.project()
+        os.makedirs("build")
+        open("build/cocotb-results.xml", "w").write("the Icarus verdict")
+        output = self.coverage()
+        summary = json.load(open("build/coverage/summary.json"))
+        self.assertEqual(summary["tests"], {"total": 2, "passed": 1})
+        self.assertEqual(summary["seed"], "1789965785")
+        self.assertEqual(summary["types"]["line"]["hit"], 3)
+        self.assertIn("decided by `cocotb` on Icarus", output)
+        # The Icarus verdict is another file and stays what it was.
+        self.assertEqual(open("build/cocotb-results.xml").read(), "the Icarus verdict")
+        self.assertTrue(os.path.exists("build/coverage/results.xml"))
+        self.assertTrue(os.path.exists("build/coverage/coverage.dat"))
+        self.assertFalse(os.path.exists("build/coverage/work"))
+
+    def test_the_build_runs_the_cocotb_tests_on_verilator_with_the_waivers(self):
+        self.project()
+        calls = []
+        self.coverage(calls=calls)
+        env = next(kw["env"] for cmd, kw in calls if cmd[0] == "make")
+        self.assertEqual(env["SIM"], "verilator")
+        self.assertEqual(env["MODULE"], "test_top")
+        self.assertEqual(env["TOPLEVEL"], "top")
+        self.assertEqual(env["COMPILE_ARGS"], "--coverage -Wno-WIDTHEXPAND")
+        self.assertTrue(env["VERILOG_SOURCES"].endswith("src/top.v") and os.path.isabs(env["VERILOG_SOURCES"]))
+        self.assertTrue(env["COCOTB_RESULTS_FILE"].endswith("build/coverage/results.xml"))
+
+    def test_a_design_verilator_cannot_build_fails_the_command(self):
+        self.project()
+        with self.assertRaises(SystemExit) as cm:
+            self.coverage(build_rc=2)
+        self.assertEqual(cm.exception.code, 1)
+        self.assertFalse(os.path.exists("build/coverage/summary.json"))
+
+    def test_a_run_that_wrote_no_coverage_fails_the_command(self):
+        self.project()
+        with self.assertRaises(SystemExit) as cm:
+            self.coverage(writes_dat=False, sim_rc=1)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_no_tests_is_skipped_for_all_and_an_error_by_name(self):
+        config = {"DESIGN_NAME": "top", "VERILOG_FILES": ["src/top.v"], "TEST_FILES": ["test/tb.v"]}
+        self.project()
+        open("test/tb.v", "w").write("x")
+        with patch("entrypoint.subprocess.run", side_effect=AssertionError("must not run")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                entrypoint.cmd_coverage(MagicMock(files=None, if_configured=True), config)
+            self.assertIn("coverage skipped: COCOTB_TESTS is not set", out.getvalue())
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+                entrypoint.cmd_coverage(MagicMock(files=None, if_configured=False), config)
+
+    def test_each_run_starts_from_an_empty_directory(self):
+        self.project()
+        os.makedirs("build/coverage")
+        open("build/coverage/stale.dat", "w").write("old")
+        self.coverage()
+        self.assertFalse(os.path.exists("build/coverage/stale.dat"))
 
 if __name__ == '__main__':
     unittest.main()
