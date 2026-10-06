@@ -1686,7 +1686,7 @@ class TestEntrypoint(unittest.TestCase):
             page = self._run_site(with_slew)
             timing = page[page.index('<section id="timing">'):page.index('<section id="area">')]
             self.assertIn("<h3>Slew, capacitance and fanout limits</h3>", timing)
-            self.assertIn('<tr><td>max&nbsp;slew</td><td class="num FAIL">11</td><td class="src">'
+            self.assertIn('<tr><td>max&nbsp;slew</td><td class="num WARN">11</td><td class="src">'
                           "<code>max_ss_100C_1v60</code>, <code>nom_ss_100C_1v60</code></td></tr>", timing)
             self.assertIn('<tr><td>max&nbsp;capacitance</td><td class="num PASS">0</td><td class="src">none</td></tr>', timing)
             self.assertIn('<tr><td>max&nbsp;fanout</td><td class="num PASS">0</td>', timing)
