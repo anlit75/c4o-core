@@ -84,13 +84,14 @@ th { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: upp
      letter-spacing: .05em; }
 td > th, tr > th[scope] { font-size: inherit; }
 td.num, th.num { text-align: right; }
-td.num, td.PASS, td.FAIL, td.SKIP { white-space: nowrap; }
+td.num, td.PASS, td.FAIL, td.SKIP, td.WARN { white-space: nowrap; }
 td.FAIL { font-weight: 600; } td.PASS { font-weight: 500; }
 td.PASS::before { content: "\u2713"; margin-right: 6px; }
 td.FAIL::before { content: "\u2715"; margin-right: 6px; }
+td.WARN { font-weight: 600; } td.WARN::before { content: "!"; margin-right: 6px; }
 table.tests th:not(:first-child), table.tests td:not(:first-child) { width: 96px; }
 tr.total td { font-weight: 650; border-top: 2px solid var(--fg); }
-.PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP { color: var(--skip); }
+.PASS { color: var(--pass); } .FAIL { color: var(--fail); } .SKIP, .WARN { color: var(--skip); }
 td.src { overflow-wrap: anywhere; }
 td.bar, th.bar { width: 120px; padding-right: 0; }
 td.bar span { display: block; height: 8px; border-radius: 4px; background: var(--accent); }
@@ -491,9 +492,10 @@ def timing_section(physical):
     if drv:
         esc = html.escape
         out += ("<h3>Slew, capacitance and fanout limits</h3>"
-                "<p>Violations of the cell library's limits after routing. The flow does not stop on them.</p>"
+                "<p>Design rule violations after routing, against the limits in the run's constraints. "
+                "They are warnings: the flow does not stop on them, and the timing verdict above leaves them out.</p>"
                 '<div class="scroll"><table><tr><th>limit</th><th class="num">violations</th><th>corners</th></tr>'
-                + "".join(f'<tr><td>{esc(label).replace(" ", "&nbsp;")}</td><td class="num {"FAIL" if n else "PASS"}">{n:,}</td>'
+                + "".join(f'<tr><td>{esc(label).replace(" ", "&nbsp;")}</td><td class="num {"WARN" if n else "PASS"}">{n:,}</td>'
                           f'<td class="src">{", ".join(f"<code>{esc(c)}</code>" for c in corners) or "none"}</td></tr>'
                           for label, n, corners in drv)
                 + "</table></div>")
