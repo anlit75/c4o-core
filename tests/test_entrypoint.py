@@ -2018,6 +2018,14 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    def test_the_layout_keeps_its_shape_up_to_a_height_cap(self):
+        # The render is 1000 px wide and as tall as the die makes it. Squeezed
+        # into a square it shrank, and uncapped a tall die pushes the page down.
+        css = entrypoint.site_page.CSS
+        self.assertNotIn("aspect-ratio: 1", css)
+        self.assertIn(".hero-art img { display: block; width: 100%; height: auto; "
+                      "max-height: min(70vh, 560px); object-fit: contain; }", css)
+
     def test_site_without_a_gds_has_no_gds_link(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
@@ -3821,6 +3829,33 @@ class TestRegress(unittest.TestCase):
         self.assertIn('href="#regression"', page)
         # After Tests, before anything physical.
         self.assertLess(page.index('id="tests-0"'), page.index('id="regression"'))
+
+    def test_each_module_row_lists_its_tests_and_counts_its_seeds(self):
+        # The Tests section names functions, the list names modules: the row
+        # ties them by listing what each module ran, from its results files.
+        os.makedirs("build/regress")
+        with open("build/regress/summary.json", "w") as f:
+            json.dump(self.SUMMARY, f)
+        two = ('<testsuites><testsuite><testcase name="t_one" sim_time_ns="1"/>'
+               '<testcase name="t_two" sim_time_ns="1"/></testsuite></testsuites>')
+        for seed in (1, 2):
+            with open(f"build/regress/test_a-{seed}.xml", "w") as f:
+                f.write(two)
+        # test_b.f's runs left no results file, as a crashed run does.
+        page = self.site()
+        section = page[page.index('<section id="regression">'):]
+        section = section[:section.index("</section>")]
+        self.assertIn('<th>module and its tests</th><th class="num">seeds</th>'
+                      '<th class="num">runs passed</th>', section)
+        self.assertIn('<tr><td><code>test_<wbr>a</code><ul class="tests-in">'
+                      "<li><code>t_<wbr>one</code></li><li><code>t_<wbr>two</code></li></ul></td>"
+                      '<td class="num">2</td><td class="num PASS">2/2</td></tr>', section)
+        # Each name once, though two runs reported it.
+        self.assertEqual(section.count("t_<wbr>one"), 1)
+        # No results file: the row stands without a list, and still counts.
+        self.assertIn('<tr><td><code>test_<wbr>b.f</code></td>'
+                      '<td class="num">2</td><td class="num FAIL">0/2</td></tr>', section)
+        self.assertNotIn("Each test in the list", section)
 
     def test_the_page_is_the_same_without_a_summary(self):
         plain = self.site()
