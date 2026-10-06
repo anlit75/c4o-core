@@ -208,11 +208,11 @@ class TestEntrypoint(unittest.TestCase):
     @patch('entrypoint.run_command')
     @patch('entrypoint.load_config')
     @patch('entrypoint.ensure_build_dir')
-    def test_lint_waives_nothing_when_the_config_is_silent(self, mock_ensure, mock_load, mock_run):
-        # LibreLane defaults this key to DECLFILENAME and EOFNEWLINE. Neither
-        # fires in verilator 5.020 unless asked for, so copying that default
-        # would add flags that change nothing -- and would quietly widen what
-        # `lint` lets through if a later verilator changed its mind.
+    def test_lint_runs_with_librelanes_flags_and_default_waivers(self, mock_ensure, mock_load, mock_run):
+        # make lint and LibreLane's lint step must report the same warnings.
+        # LibreLane runs -Wall without failing on a warning, waives
+        # DECLFILENAME and EOFNEWLINE unless the config names its own list,
+        # and makes LATCH and MULTIDRIVEN errors.
         mock_load.return_value = self.config
 
         cwd = os.getcwd()
@@ -224,7 +224,38 @@ class TestEntrypoint(unittest.TestCase):
             entrypoint.cmd_lint(args, self.config)
 
             call_args = mock_run.call_args[0][0]
-            self.assertFalse([arg for arg in call_args if arg.startswith("-Wno-")])
+            for flag in ("--Wall", "--Wno-fatal", "-Wno-DECLFILENAME", "-Wno-EOFNEWLINE",
+                         "--Werror-LATCH", "--Werror-MULTIDRIVEN"):
+                self.assertIn(flag, call_args)
+            self.assertEqual(call_args[call_args.index("--top-module") + 1], "top")
+
+        finally:
+            os.chdir(cwd)
+
+    @patch('entrypoint.run_command')
+    @patch('entrypoint.load_config')
+    @patch('entrypoint.ensure_build_dir')
+    def test_lint_does_not_turn_a_waived_code_back_into_an_error(self, mock_ensure, mock_load, mock_run):
+        # -Werror-LATCH after -Wno-LATCH would bring the warning back. A config
+        # that waives LATCH (third-party RTL) or turns the error off gets
+        # neither error flag for it.
+        config = dict(self.config, LINTER_DISABLE_WARNINGS=["LATCH"], LINTER_ERROR_ON_MULTIDRIVEN=False)
+        mock_load.return_value = config
+
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            args = MagicMock()
+            args.files = None
+
+            entrypoint.cmd_lint(args, config)
+
+            call_args = mock_run.call_args[0][0]
+            self.assertIn("-Wno-LATCH", call_args)
+            self.assertNotIn("--Werror-LATCH", call_args)
+            self.assertNotIn("--Werror-MULTIDRIVEN", call_args)
+            # The config named its own list, so LibreLane's default is not added.
+            self.assertNotIn("-Wno-DECLFILENAME", call_args)
 
         finally:
             os.chdir(cwd)
@@ -1610,8 +1641,8 @@ class TestEntrypoint(unittest.TestCase):
             os.chdir(cwd)
 
     def test_site_leaves_out_what_a_reviewer_does_not_read(self):
-        # No worst path, no electrical-rule rows, no schematic, block diagram
-        # or waveform, even with all of their files and keys present.
+        # No worst path, no schematic, block diagram or waveform, even with
+        # all of their files and keys present.
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
@@ -1629,13 +1660,40 @@ class TestEntrypoint(unittest.TestCase):
             with open("runs/blinky_run/final/metrics.json", "w") as f:
                 json.dump(metrics, f)
             page = self._site({"DESIGN_NAME": "blinky", "//WAVE_SIGNALS": ["blinky.count"]})
-            for gone in ("Worst setup path", "Full OpenSTA report", "Electrical rules", "max fanout",
-                         "max transition", "max capacitance", "Block diagram", "Waveform",
+            for gone in ("Worst setup path", "Full OpenSTA report", "Electrical rules",
+                         "max transition", "Block diagram", "Waveform",
                          "WAVE_SIGNALS", "Schematic", "schematic.svg", "wave.svg", "blocks/"):
                 self.assertNotIn(gone, page)
             self.assertFalse(os.path.exists("build/site/blocks"))
             self.assertFalse(os.path.exists("build/site/schematic.svg"))
             self.assertFalse(os.path.exists("build/site/wave.svg"))
+        finally:
+            os.chdir(cwd)
+
+    def test_site_counts_slew_cap_and_fanout_violations_and_names_the_corners(self):
+        # The flow does not stop on these, so the page is where a reader sees
+        # them. The per-corner keys name where each limit is broken.
+        cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        try:
+            def with_slew(metrics):
+                metrics["design__max_slew_violation__count"] = 11
+                metrics["design__max_slew_violation__count__corner:nom_ss_100C_1v60"] = 11
+                metrics["design__max_slew_violation__count__corner:max_ss_100C_1v60"] = 11
+                metrics["design__max_slew_violation__count__corner:nom_tt_025C_1v80"] = 0
+                metrics["design__max_cap_violation__count"] = 0
+                metrics["design__max_fanout_violation__count"] = 0
+            page = self._run_site(with_slew)
+            timing = page[page.index('<section id="timing">'):page.index('<section id="area">')]
+            self.assertIn("<h3>Slew, capacitance and fanout limits</h3>", timing)
+            self.assertIn('<tr><td>max slew</td><td class="num FAIL">11</td><td class="src">'
+                          "<code>max_ss_100C_1v60</code>, <code>nom_ss_100C_1v60</code></td></tr>", timing)
+            self.assertIn('<tr><td>max capacitance</td><td class="num PASS">0</td><td class="src">none</td></tr>', timing)
+            self.assertIn('<tr><td>max fanout</td><td class="num PASS">0</td>', timing)
+            rows = dict(entrypoint.report_rows(json.load(open("runs/blinky_run/final/metrics.json")),
+                                               "runs/blinky_run/final/metrics.json"))
+            self.assertEqual(rows["limit violations"],
+                             "11 max slew, 0 max capacitance, 0 max fanout  (max_ss_100C_1v60, nom_ss_100C_1v60)")
         finally:
             os.chdir(cwd)
 

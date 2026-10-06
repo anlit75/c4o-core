@@ -1084,7 +1084,7 @@ jobs:
               exit 1
             fi
           done
-          for gone in Waveform "Block diagram" Schematic "Worst setup path" "max fanout"; do
+          for gone in Waveform "Block diagram" Schematic "Worst setup path"; do
             if grep -qF "$gone" "$page"; then
               echo "::error::The page still has '$gone'."
               exit 1

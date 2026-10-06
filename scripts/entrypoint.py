@@ -172,9 +172,8 @@ def disable_warnings(config):
     there, which is what keeps one config file honest across both tools.
     LibreLane writes the codes into a .vlt file as `lint_off -rule <CODE>`;
     -Wno-<CODE> is the same instruction without the temporary file. It is left
-    with no default on purpose: LibreLane defaults it to DECLFILENAME and
-    EOFNEWLINE, and neither of those fires in verilator 5.020 unless asked for,
-    so copying the default would only add flags that change nothing.
+    with no default here: `lint` adds LibreLane's default (lint_flags), and
+    `coverage` builds without -Wall, where those codes do not fire.
     """
     codes = config_get(config, "LINTER_DISABLE_WARNINGS", [])
     if isinstance(codes, str):
@@ -187,12 +186,38 @@ def disable_warnings(config):
         sys.exit(1)
     return [f"-Wno-{code}" for code in codes]
 
+# LibreLane's default for LINTER_DISABLE_WARNINGS. Both codes are -Wall
+# warnings, so `lint` needs the default now that it runs with -Wall.
+LINTER_DEFAULT_WAIVERS = ["DECLFILENAME", "EOFNEWLINE"]
+
+def lint_flags(config):
+    """
+    The flags of LibreLane's Verilator.Lint step, so `make lint` and the flow
+    report the same warnings: -Wall, warnings that do not fail, the waivers of
+    LINTER_DISABLE_WARNINGS (LibreLane's default when the key is absent), and
+    LATCH and MULTIDRIVEN as errors unless LINTER_ERROR_ON_LATCH or
+    LINTER_ERROR_ON_MULTIDRIVEN is false. A waived code is not made an error
+    again: LibreLane waives through a .vlt file, which wins, and -Werror-<CODE>
+    after -Wno-<CODE> would turn the warning back on.
+    """
+    if config_get(config, "LINTER_DISABLE_WARNINGS") is None:
+        config = dict(config, LINTER_DISABLE_WARNINGS=LINTER_DEFAULT_WAIVERS)
+    waived = disable_warnings(config)
+    flags = ["--Wall", "--Wno-fatal"] + waived
+    for code, key in (("LATCH", "LINTER_ERROR_ON_LATCH"), ("MULTIDRIVEN", "LINTER_ERROR_ON_MULTIDRIVEN")):
+        if config_get(config, key, True) and f"-Wno-{code}" not in waived:
+            flags.append(f"--Werror-{code}")
+    top = config_get(config, "DESIGN_NAME")
+    if top:
+        flags += ["--top-module", top]
+    return flags
+
 def cmd_lint(args, config):
     # Lint only checks RTL
     files = get_files(args, config, key="VERILOG_FILES")
     cmd = ["verilator", "--lint-only"]
 
-    cmd += disable_warnings(config)
+    cmd += lint_flags(config)
 
     # Add include directories
     for inc in get_include_dirs(config):
@@ -1678,6 +1703,12 @@ def report_rows(metrics, path):
             violations = metrics.get(violation_key, "?")
             rows.append((label, f"{slack:+.2f} ns  ({violations} violations)"))
 
+    drv = drv_violations(metrics)
+    if drv:
+        counts = ", ".join(f"{n} {label}" for label, n, _ in drv)
+        corners = sorted({c for _, _, cs in drv for c in cs})
+        rows.append(("limit violations", counts + (f"  ({', '.join(corners)})" if corners else "")))
+
     # The default corner's power.rpt when the run left one: the bare
     # power__total names no corner, and in a real 3.0.14 run it is
     # max_ff_n40C_1v95's, not the default corner's.
@@ -1831,6 +1862,27 @@ def run_details(metrics_path, metrics, config):
         details["cells"] = cells
     return details
 
+# Violations of the cell library's limits after routing. The bare key is the
+# worst over every corner; each corner has its own key with a suffix.
+DRV_METRICS = (("max slew", "design__max_slew_violation__count"),
+               ("max capacitance", "design__max_cap_violation__count"),
+               ("max fanout", "design__max_fanout_violation__count"))
+
+def drv_violations(metrics):
+    """
+    (limit, violations, corners with a violation) for each limit the run
+    reported, in DRV_METRICS order. The flow does not fail on these, so the
+    report and the page are where they show.
+    """
+    rows = []
+    for label, metric in DRV_METRICS:
+        if metrics.get(metric) is None:
+            continue
+        prefix = f"{metric}__corner:"
+        corners = sorted(k[len(prefix):] for k, v in metrics.items() if k.startswith(prefix) and v)
+        rows.append((label, metrics[metric], corners))
+    return rows
+
 def physical_details(metrics):
     """What a physical designer reads first, for the page; absent keys left out."""
     get = metrics.get
@@ -1850,6 +1902,9 @@ def physical_details(metrics):
     for key in ("setup", "hold"):
         if get(f"timing__{key}__ws") is not None:
             out[key] = (get(f"timing__{key}__ws"), get(f"timing__{key}_vio__count"))
+    drv = drv_violations(metrics)
+    if drv:
+        out["drv"] = drv
     return out
 
 def cmd_site(args, config):

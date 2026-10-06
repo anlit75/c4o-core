@@ -485,6 +485,17 @@ def timing_section(physical):
            '<th class="num">violations</th><th class="num">reg-to-reg</th></tr>'
            + rows + "</table></div>")
 
+    drv = physical.get("drv") or []
+    if drv:
+        esc = html.escape
+        out += ("<h3>Slew, capacitance and fanout limits</h3>"
+                "<p>Violations of the cell library's limits after routing. The flow does not stop on them.</p>"
+                '<div class="scroll"><table><tr><th>limit</th><th class="num">violations</th><th>corners</th></tr>'
+                + "".join(f'<tr><td>{esc(label)}</td><td class="num {"FAIL" if n else "PASS"}">{n:,}</td>'
+                          f'<td class="src">{", ".join(f"<code>{esc(c)}</code>" for c in corners) or "none"}</td></tr>'
+                          for label, n, corners in drv)
+                + "</table></div>")
+
     constraints = physical.get("constraints") or {}
     if constraints:
         period = constraints.get("clock_period", (None,))[0]
