@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import timezone
 from xml.etree import ElementTree
 
 import yaml
@@ -1907,13 +1908,111 @@ def physical_details(metrics):
         out["drv"] = drv
     return out
 
+# The files the page offers, with the section each belongs to. Each is copied
+# only when it exists. The two summary.json are renamed so that they do not
+# collide next to the page.
+SITE_FILES = [
+    ("tests", "build/cocotb-results.xml", "cocotb-results.xml"),
+    ("tests", "build/cocotb-gl-results.xml", "cocotb-gl-results.xml"),
+    ("regression", os.path.join(REGRESS_DIR, "summary.json"), "regress-summary.json"),
+    ("coverage", os.path.join(COVERAGE_DIR, "summary.json"), "coverage-summary.json"),
+]
+
+# Every earlier run's numbers, in the order they were published. `report` fetches
+# it from the live page before `site` runs (see actions/report).
+HISTORY_FILE = "build/history.json"
+
+def read_history(path=HISTORY_FILE):
+    """
+    The earlier rows of history.json, or [] when there is no file. The file is
+    something an earlier run published, so one that is not a JSON list of
+    objects is an error here and not a page that quietly starts over.
+    """
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path) as f:
+            rows = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        log_error(f"Could not read {path}: {e}")
+        sys.exit(1)
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        log_error(f"Could not read {path}: it is not a list of objects.")
+        sys.exit(1)
+    return rows
+
+def c4o_version():
+    """
+    The c4o-core release, from version.txt at the root of the checkout or of
+    /opt/c4o-core, or None. Found from this file, not from the working directory,
+    which is the user's design.
+    """
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    try:
+        with open(os.path.join(root, "version.txt")) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+def history_row(env, details, cocotb_runs, coverage, regression):
+    """
+    This run's numbers as one row of history.json, the same numbers the page
+    shows. A number the run did not produce is None, which a chart draws as a
+    gap. The names are the file's format: a later image reads rows an earlier
+    one wrote.
+    """
+    physical = details.get("physical") or {}
+    area = details.get("area") or {}
+    cells = details.get("cells")
+    power = details.get("power")
+    count = lambda title: next(((sum(v == "PASS" for _, v, _ in cases), len(cases))
+                                for t, _, cases in cocotb_runs if t == title), (None, None))
+    runs = (regression or {}).get("runs")
+    percent = lambda kind: (((coverage or {}).get("types") or {}).get(kind) or {}).get("percent")
+    row = {
+        "sha": env.get("GITHUB_SHA"),
+        "built": site_page.build_time(env).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "c4o_version": c4o_version(),
+        "clock_period": (physical.get("constraints") or {}).get("clock_period", (None,))[0],
+        "regress_passed": sum(run["verdict"] == "pass" for run in runs) if runs else None,
+        "regress_total": len(runs) if runs else None,
+        "cov_block": percent("line"), "cov_branch": percent("branch"), "cov_toggle": percent("toggle"),
+        "setup_ws": physical.get("setup", (None,))[0], "hold_ws": physical.get("hold", (None,))[0],
+        "area_ff": area.get("flip_flops"), "area_logic": area.get("logic"), "area_routed": area.get("routed"),
+        "inst_synth": physical.get("synthesized"),
+        "inst_routed": sum(n for _, n, _ in cells) if cells else None,
+        # The default corner's total, which is what the Power section shows.
+        "power_w": next((r[4] for r in power[1] if r[0] == "Total"), None) if power else None,
+        "ir_drop_v": physical.get("ir_worst"),
+        "ir_drop_pct": site_page.ir_drop_share(physical),
+    }
+    row["rtl_passed"], row["rtl_total"] = count("cocotb, RTL")
+    row["gl_passed"], row["gl_total"] = count("cocotb, gate level")
+    return row
+
+def merge_history(rows, row):
+    """
+    The rows with this run's added at the end. A row with the same commit is
+    replaced where it stands: a re-run of the same commit is not a second
+    commit.
+    """
+    same = [i for i, old in enumerate(rows) if old.get("sha") == row["sha"]]
+    if not same:
+        return rows + [row]
+    merged = list(rows)
+    merged[same[0]] = row
+    for i in reversed(same[1:]):
+        del merged[i]
+    return merged
+
 def cmd_site(args, config):
     """
     Writes build/site/index.html: the cocotb verdicts, code coverage, the timing
     verdict and the constraints behind it, area and instances, power and signoff, with the
     layout render beside the title. Each part is included when the file behind
     it exists, so it works after `make cocotb` alone as well as after the full
-    flow.
+    flow. Each section also offers the files behind it, and gets a History fold
+    from build/history.json, to which a run on GitHub Actions adds its own row.
 
     It reports; it does not judge. A failed test is shown as failed and the
     command still succeeds -- the command that ran the test is the gate.
@@ -1923,6 +2022,7 @@ def cmd_site(args, config):
     os.makedirs(SITE_DIR)
 
     numbers, layout, details = [], None, {}
+    files = []  # (section, name next to the page) of each file copied
     found = [path for pattern in METRICS_GLOBS for path in glob.glob(pattern)]
     if found:
         path = max(found, key=os.path.getmtime)
@@ -1955,6 +2055,15 @@ def cmd_site(args, config):
             pdk = config_get(config, "PDK", "sky130A")
             details["gds"] = (name, pdk if pdk in GDS_VIEWER_PDKS else None,
                               os.path.getsize(gds))
+        # The files of this run and no other: the netlist and the constraints
+        # sit at the same <run>/final/ as the metrics.json the numbers come from.
+        files.append(("summary", path, "metrics.json"))
+        final_dir = os.path.dirname(os.path.abspath(path))
+        if os.path.basename(final_dir) == "final":
+            for section, pattern in (("timing", "sdc/*.sdc"), ("area", "nl/*.nl.v")):
+                found_file = sorted(glob.glob(os.path.join(final_dir, pattern)))
+                if found_file:
+                    files.append((section, found_file[0], os.path.basename(found_file[0])))
 
     cocotb_runs = []
     for title, results in COCOTB_RESULTS:
@@ -1966,6 +2075,8 @@ def cmd_site(args, config):
             log_error(f"Could not read {results}: {e}")
             sys.exit(1)
         cocotb_runs.append((title, seed, cases))
+
+    files += [(section, src, name) for section, src, name in SITE_FILES if os.path.exists(src)]
 
     # From `make coverage`. Left out when it was not run, like every other part.
     coverage = None
@@ -2010,12 +2121,30 @@ def cmd_site(args, config):
         )
         sys.exit(1)
 
+    # The rows of the earlier runs, and this run's only on GitHub Actions: a
+    # local `make site` is not a commit and must not leave a row behind.
+    history = read_history()
+    if os.environ.get("GITHUB_SHA"):
+        history = merge_history(history, history_row(os.environ, details, cocotb_runs, coverage, regression))
+    if history:
+        with open(os.path.join(SITE_DIR, "history.json"), "w") as f:
+            json.dump(history, f, separators=(",", ":"))
+        files.append(("summary", os.path.join(SITE_DIR, "history.json"), "history.json"))
+
+    offered = []
+    for section, src, name in files:
+        dest = os.path.join(SITE_DIR, name)
+        if os.path.abspath(src) != os.path.abspath(dest):
+            shutil.copy(src, dest)
+        offered.append((section, name, os.path.getsize(dest)))
+
     design = config_get(config, "DESIGN_NAME", "design")
     index = os.path.join(SITE_DIR, "index.html")
     with open(index, "w") as f:
         f.write(site_page.render(design, numbers, layout, cocotb_runs, os.environ,
                                  description=config_get(config, "DESCRIPTION", None),
-                                 coverage=coverage, regression=regression, **details))
+                                 coverage=coverage, regression=regression,
+                                 history=history, files=offered, **details))
     log_info(f"Wrote {index}")
 
 def cmd_pdk(args, config):

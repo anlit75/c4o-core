@@ -31,7 +31,7 @@ The actions are steps in your job. They use your workspace, so a step of your ow
 | `setup` | Starts the LibreLane image pull in the background. Checks that the Makefile and `devcontainer.json` name the same c4o-core image. Pulls that image. Restores the Sky130 PDK from the cache. Checks that the Dev Container user exists in the image. |
 | `checks` | `make lint`, `make sim` when `config.yaml` has `"//TEST_FILES"`, `make cocotb` when it has `"//COCOTB_TESTS"`, `make regress` when it has `"//REGRESSION"`, `make synth`, `make schematic`. Fails when `config.yaml` has neither test key. Keeps the cocotb output in `build/cocotb-rtl.log` and the regression output in `build/regress.log`. Puts the regression table on the run summary. |
 | `gds` | Waits for the LibreLane image. `make gds`. Fails if there is no GDS in `build/` or no layout render in `runs/`. |
-| `report` | The gate-level simulation. With `"//GATE_TESTS"`, it runs `make gatesim`, but not on a pull request. Without it and with `"//COCOTB_TESTS"`, it runs the Python tests on the gates on every event. See below. Puts the signoff numbers on the run summary. `make site`, and checks the sections of the page. Runs `make coverage` when `sections` lists Coverage and the image has that target. On a push or a manual run on `main`, with Pages set to GitHub Actions, uploads the page for a deploy job. |
+| `report` | The gate-level simulation. With `"//GATE_TESTS"`, it runs `make gatesim`, but not on a pull request. Without it and with `"//COCOTB_TESTS"`, it runs the Python tests on the gates on every event. See below. Puts the signoff numbers on the run summary. `make site`, and checks the sections of the page. Runs `make coverage` when `sections` lists Coverage and the image has that target. On a push or a manual run on `main`, with Pages set to GitHub Actions, fetches the history of earlier runs from the live page, then uploads the new page for a deploy job. |
 | `upload` | Uploads the schematic, the layout render, and `build/` with `runs/`. On a `v*` tag, attaches the GDS to the release. Call it with `if: always()`. |
 
 ## The Python tests on the gates
@@ -68,6 +68,10 @@ To ask for coverage, and to require the section, list it in `sections`:
 ## Publishing the page
 
 The `report` action asks about Pages on a push to `main`. It asks on a manual run of the workflow on `main` too. A manual run on `main` therefore publishes the page again. Use it after a new c4o-core release to refresh the page without a commit. A manual run on another branch does not publish.
+
+When the page will be published, the action fetches `history.json` from the live page into `build/history.json` before it builds the new page. `make site` adds a row for this commit and publishes the file with the page. See [One page to share](commands.md#one-page-to-share-site) for the rows and the charts.
+
+A 404 is a notice, because the history then starts with this run. Any other answer fails the step. Two pushes close together can lose a row, because Pages serves a cached copy. A run that fails publishes nothing, so its commit has no row. An image from before the history existed publishes no `history.json`, so the next run starts the history again.
 
 ## What the actions need from your repository
 

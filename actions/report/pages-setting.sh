@@ -9,6 +9,8 @@ case "$code" in
     build_type=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('build_type'))" "$answer")
     if [ "$build_type" = workflow ]; then
       echo "publish=true" >> "$GITHUB_OUTPUT"
+      # Where the page is live, for the step that fetches its history.json.
+      python3 -c "import json, sys; print('url=' + (json.load(open(sys.argv[1])).get('html_url') or ''))" "$answer" >> "$GITHUB_OUTPUT"
     else
       echo "::notice::GitHub Pages publishes from a branch here (build_type: $build_type), so the results page was not published. Settings > Pages > Source: GitHub Actions publishes it."
     fi ;;
