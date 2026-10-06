@@ -1072,7 +1072,7 @@ jobs:
           # and signoff last. The tests sections between the summary and
           # coverage are one or two, so they are left out of the list.
           ids=$(grep -o '<section id="[a-z0-9-]*"' "$page" | sed 's/.*id="//; s/"//' | grep -v '^tests' | tr '\n' ' ')
-          [ "$ids" = "summary coverage timing area power signoff " ] || { echo "::error::sections are '$ids'"; exit 1; }
+          [ "$ids" = "summary regression coverage timing area power signoff " ] || { echo "::error::sections are '$ids'"; exit 1; }
           # The summary holds the numbers a reader asks first. A card whose
           # data the real run has is named, so the section cannot lose it
           # unnoticed.
