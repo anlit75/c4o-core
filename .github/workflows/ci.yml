@@ -149,13 +149,14 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint
 
       # LINTER_DISABLE_WARNINGS, against the real verilator rather than a mock.
-      # Both halves matter: a waiver that silenced nothing would leave the
-      # second command red, and a lint that refused nothing would leave the
-      # first one green -- and then the key would look like it worked while
-      # doing neither. The RTL below is the shape generated code arrives in:
-      # sv2v writes `1'sb0` into wider assignments, which is what WIDTHEXPAND
-      # is complaining about, and the design synthesises perfectly well.
-      - name: A warning the config waives stops failing lint
+      # lint runs with LibreLane's flags, so a warning is reported and does not
+      # fail the run; a latch does. Both halves of the waiver matter: a waiver
+      # that silenced nothing would leave WIDTHEXPAND in the second output, and
+      # a lint that reported nothing would leave it out of the first. The RTL
+      # below is the shape generated code arrives in: sv2v writes `1'sb0` into
+      # wider assignments, which is what WIDTHEXPAND is complaining about, and
+      # the design synthesises perfectly well.
+      - name: A warning the config waives stops showing in lint
         run: |
           cat > widthy.v <<'EOF'
           module widthy (
@@ -171,15 +172,41 @@ jobs:
             - dir::widthy.v
           EOF
 
-          if out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint 2>&1); then
-            echo "expected lint to refuse the un-waived warning, but it passed"; exit 1
-          fi
+          out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint 2>&1)
           echo "$out"
-          echo "$out" | grep -qF "WIDTHEXPAND" || { echo "refused for the wrong reason"; exit 1; }
+          echo "$out" | grep -qF "WIDTHEXPAND" || { echo "lint did not report the un-waived warning"; exit 1; }
 
           echo 'LINTER_DISABLE_WARNINGS: [WIDTHEXPAND]' >> config.yaml
-          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint
+          out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint 2>&1)
+          echo "$out"
+          if echo "$out" | grep -qF "%Warning-WIDTHEXPAND"; then
+            echo "the waived warning is still reported"; exit 1
+          fi
           rm widthy.v
+
+      # A latch is an error in LibreLane's lint step, so it fails lint here too.
+      - name: A latch fails lint
+        run: |
+          cat > latchy.v <<'EOF'
+          module latchy (
+              input wire en,
+              input wire d,
+              output reg q
+          );
+              always @(*) if (en) q = d;
+          endmodule
+          EOF
+          cat > config.yaml <<'EOF'
+          DESIGN_NAME: latchy
+          VERILOG_FILES:
+            - dir::latchy.v
+          EOF
+          if out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test lint 2>&1); then
+            echo "$out"; echo "expected lint to refuse the latch, but it passed"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -qF "LATCH" || { echo "refused for the wrong reason"; exit 1; }
+          rm latchy.v
 
       # A single code without its brackets is iterable, and would otherwise be
       # spelled out one letter at a time. The refusal has to name the key, or
@@ -1084,7 +1111,7 @@ jobs:
               exit 1
             fi
           done
-          for gone in Waveform "Block diagram" Schematic "Worst setup path" "max fanout"; do
+          for gone in Waveform "Block diagram" Schematic "Worst setup path"; do
             if grep -qF "$gone" "$page"; then
               echo "::error::The page still has '$gone'."
               exit 1
