@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.23.0](https://github.com/anlit75/c4o-core/compare/v2.22.3...v2.23.0) (2026-10-06)
+
+
+### Features
+
+* chart each section's history and offer its files on the results page ([#91](https://github.com/anlit75/c4o-core/issues/91)) ([f43336f](https://github.com/anlit75/c4o-core/commit/f43336f53a4102c587d1bab5ea5fc58837c40e74))
+
 ## [2.22.3](https://github.com/anlit75/c4o-core/compare/v2.22.2...v2.22.3) (2026-10-06)
 
 
