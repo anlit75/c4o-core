@@ -1651,7 +1651,7 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn('<td>setup</td><td class="num PASS">+4.70 ns</td><td class="num">0</td>'
                           '<td class="num">+5.10 ns</td>', timing)
             self.assertIn('<td>hold</td><td class="num PASS">+0.11 ns</td><td class="num">0</td>'
-                          '<td class="num">&mdash;</td>', timing)
+                          '<td class="num">n/a</td>', timing)
             # The run's own values, each with where it came from. CLOCK_PERIOD
             # is in the test's config, the other four are the flow's defaults.
             for row in ("<td>clock period</td><td>10 ns (100 MHz)</td><td>flow default</td>",
@@ -3155,13 +3155,13 @@ class TestCoverage(unittest.TestCase):
         types["branch"] = {"hit": 0, "total": 0, "percent": None}
         card = entrypoint.site_page.coverage_card(self.summary(types=types))
         self.assertEqual(re.findall(r'<div class="value">([^<]*)</div><div class="detail">([^<]*)</div>', card),
-                         [("40.0%", "Block"), ("&mdash;", "Branch"), ("12.5%", "Toggle"), ("100.0%", "User cover")])
+                         [("40.0%", "Block"), ("n/a", "Branch"), ("12.5%", "Toggle"), ("100.0%", "User cover")])
 
     def test_a_kind_with_nothing_to_cover_shows_a_dash_and_not_zero(self):
         types = self.summary()["types"]
         types["branch"] = {"hit": 0, "total": 0, "percent": None}
         page = self.page(self.summary(types=types))
-        self.assertIn('<td>Branch</td><td class="num">0 / 0</td><td class="num">&mdash;</td>', page)
+        self.assertIn('<td>Branch</td><td class="num">0 / 0</td><td class="num">n/a</td>', page)
         self.assertNotIn("Branch 0.0%", page)
 
     def test_coverage_comes_after_the_tests_and_before_timing(self):
@@ -3535,7 +3535,7 @@ class TestRegress(unittest.TestCase):
         with patch("entrypoint.log_error") as log:
             runs, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
-        self.assertIn("Cannot read the test list tb/regression.yaml", log.call_args[0][0])
+        self.assertIn("Could not read the test list tb/regression.yaml", log.call_args[0][0])
         run_command.assert_not_called()
 
     def test_every_problem_is_reported_not_only_the_first(self):

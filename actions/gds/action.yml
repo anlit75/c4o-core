@@ -1,12 +1,13 @@
 name: c4o-core gds
 description: >
-  The physical flow: waits for the LibreLane image, runs `make gds`, and checks
-  that it left a GDS in build/ and a layout render under runs/.
+  The physical flow. It waits for the LibreLane image and runs `make gds`. Then
+  it checks that `make gds` left a GDS in build/ and a layout render under
+  runs/.
 runs:
   using: composite
   steps:
     # A second pull of the same image waits for the one the setup action
-    # started, and does the pull itself if that one failed -- so a failed
+    # started. It does the pull itself if that one failed. So a failed
     # background pull is an error here, not a silent retry inside `make gds`.
     - name: The LibreLane image is here
       shell: bash

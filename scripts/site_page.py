@@ -439,7 +439,7 @@ def merged_tests(cocotb_runs):
                               for h, (_, seed, _) in zip(heads, cocotb_runs) if seed)
     seeds = f"<p>Seeds: {seeds}. Each seed reruns its run exactly.</p>" if seeds else ""
     def cell(verdict):
-        return f'<td class="{verdict}">{verdict}</td>' if verdict else "<td>&mdash;</td>"
+        return f'<td class="{verdict}">{verdict}</td>' if verdict else "<td>n/a</td>"
     return (f"<h2>Tests: {score}</h2><p>The same cocotb tests, on the RTL and on the "
             f"synthesized netlist with the PDK cell models.</p>{seeds}"
             '<div class="scroll"><table class="tests"><tr><th>test</th>'
@@ -472,7 +472,7 @@ def timing_section(physical):
         r2r = physical.get("r2r_" + name)
         return (f'<tr><td>{name}</td><td class="num {"PASS" if ws >= 0 else "FAIL"}">{slack_text(ws)}</td>'
                 f'<td class="num">{count(vio)}</td>'
-                f'<td class="num">{slack_text(r2r) if r2r is not None else "&mdash;"}</td></tr>')
+                f'<td class="num">{slack_text(r2r) if r2r is not None else "n/a"}</td></tr>')
     rows = "".join(row(name, ws, vio) for name, (ws, vio) in checks)
     out = (f'<h2>Timing</h2><p class="{"PASS" if met else "FAIL"}"><strong>'
            f'{"Timing is met: no setup or hold slack is negative." if met else "Timing is not met."}'
@@ -557,7 +557,7 @@ def coverage_card(coverage):
     """
     types = coverage.get("types", {})
     stats = "".join(
-        f'<div class="stat"><div class="value">{coverage_percent(types[name]) or "&mdash;"}</div>'
+        f'<div class="stat"><div class="value">{coverage_percent(types[name]) or "n/a"}</div>'
         f'<div class="detail">{COVERAGE_LABELS[name]}</div></div>'
         for name in COVERAGE_LABELS if name in types)
     return f'<div class="kpi coverage"><div class="label">code coverage</div><div class="stats">{stats}</div></div>'
@@ -591,7 +591,7 @@ def coverage_section(coverage, cocotb_runs=(), regression=None):
     rows = "".join(
         f"<tr><td>{COVERAGE_LABELS[name]}</td>"
         f'<td class="num">{entry["hit"]:,} / {entry["total"]:,}</td>'
-        f'<td class="num">{coverage_percent(entry) or "&mdash;"}</td>'
+        f'<td class="num">{coverage_percent(entry) or "n/a"}</td>'
         '<td class="bar"><span class="track"><span style="width:'
         f'{entry["percent"] or 0:.0f}%"></span></span></td></tr>'
         for name, entry in ((n, types[n]) for n in COVERAGE_LABELS if n in types))
@@ -625,7 +625,7 @@ def coverage_section(coverage, cocotb_runs=(), regression=None):
     modules = coverage.get("modules") or []
     if modules:
         shown = [n for n in COVERAGE_LABELS if n in types]
-        cell = lambda t, n: f'<td class="num">{coverage_percent(t.get(n)) or "&mdash;"}</td>'
+        cell = lambda t, n: f'<td class="num">{coverage_percent(t.get(n)) or "n/a"}</td>'
         out += (f'<details class="coverage-modules"><summary>Coverage by module ({len(modules)})</summary>'
                 '<div class="scroll"><table><tr><th>module</th>'
                 + "".join(f'<th class="num">{COVERAGE_LABELS[n].lower()}</th>' for n in shown) + "</tr>"

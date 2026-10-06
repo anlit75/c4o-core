@@ -49,7 +49,9 @@ The `report` action runs the Python tests on the netlist, as `make gatesim` does
 
 The `report` action runs `make coverage` only when you list Coverage in `sections`. A new c4o-core release alone changes nothing in your CI. A design that lint accepts can still fail the Verilator build, so you ask for the run.
 
-The run follows the Python tests, on every event. It uses the base seed of the regression when `build/regress/summary.json` exists, and the seed of the RTL run otherwise. A `SEED` you set wins over both. With `"//REGRESSION"`, it measures the runs of the list and merges them. It skips when `config.yaml` has no `"//COCOTB_TESTS"`. An image from before 2.21 has no `coverage` target. The step then prints a notice and the run stays green. The results page has no Coverage section in that case.
+The run follows the Python tests, on every event. It uses the base seed of the regression when `build/regress/summary.json` exists, and the seed of the RTL run otherwise. A `SEED` you set wins over both.
+
+With `"//REGRESSION"`, it measures the runs of the list and merges them. It skips when `config.yaml` has no `"//COCOTB_TESTS"`. An image from before 2.21 has no `coverage` target. The step then prints a notice and the run stays green. The results page has no Coverage section in that case.
 
 A failing `make coverage` fails the step. That means Verilator could not build the design. The `upload` action keeps `build/coverage/` with the rest of `build/`.
 
@@ -91,6 +93,6 @@ The `report` action asks about Pages on a push to `main`. It asks on a manual ru
 
 `@v2` is a branch. Each release of c4o-core 2.x moves it forward to that release. Thus a caller on `@v2` gets each fix and each new step of 2.x.
 
-A change to an action changes the CI of each caller at the same time. If you do not want that, use a release tag, for example `@v2.16.0`. You then get no fix until you change the tag.
+A change to an action changes the CI of each caller at the same time. If you do not want that, use a release tag, for example `@v2.<minor>.<patch>`. You then get no fix until you change the tag.
 
 The actions and the image have different versions in a caller. The action version is the ref after `@`. The image version is in your Makefile. A 2.x action is written to work with a 2.x image. If one does not, that is a bug in the action.

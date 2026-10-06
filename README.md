@@ -47,7 +47,7 @@ The Python entrypoint of the engine has these commands:
 | `synth` | Runs logic synthesis with Yosys on `VERILOG_FILES` only. Writes `build/synthesis.json`. The script is fixed: see [docs/commands.md](docs/commands.md#synth-and-systemverilog-in-every-command). |
 | `schematic` | Draws the circuit as `build/schematic.svg`. It shows the RTL as written, not the synthesised netlist. |
 | `pdk` | Installs and enables the Sky130 PDK with Ciel, into `$PDK_ROOT`. Without `$PDK_ROOT`, it uses `./pdks`. |
-| `check` | Validates the configuration for the physical design flow, values included. It makes no layout: LibreLane does that. `gds` is an alias. |
+| `check` | Checks the configuration for the physical design flow, values included. It makes no layout: LibreLane does that. `gds` is an alias. |
 | `report` | Prints a summary of the last LibreLane run: area, timing, power and the signoff result. |
 | `site` | Writes `build/site/`, one results page for GitHub Pages. The page shows the tests, timing, area, power and signoff of what was run before it. |
 
@@ -65,7 +65,7 @@ Simulation is not a part of LibreLane, so LibreLane has no variable for testbenc
 
 The LibreLane prefix `dir::` makes a path relative to the design directory. It works on all keys.
 
-**Globs work on the `//` keys, not on `VERILOG_FILES`.** This engine expands globs on all keys. But `VERILOG_FILES` belongs to LibreLane, which validates each entry as a literal path and does not expand `**`. A configuration with `dir::src/**/*.v` thus passes lint, simulation and synthesis here, and then fails in the physical flow:
+**Globs work on the `//` keys, not on `VERILOG_FILES`.** This engine expands globs on all keys. But `VERILOG_FILES` belongs to LibreLane, which checks each entry as a literal path and does not expand `**`. A configuration with `dir::src/**/*.v` thus passes lint, simulation and synthesis here, and then fails in the physical flow:
 
 ```console
 ERROR  Path provided for variable 'VERILOG_FILES[0]' is invalid:

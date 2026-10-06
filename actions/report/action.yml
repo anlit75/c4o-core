@@ -2,13 +2,13 @@ name: c4o-core report
 description: >
   After `make gds`: the gate-level simulation, the signoff numbers on the run's
   summary, and the results page. The simulation is the Verilog testbench of
-  //GATE_TESTS (not on pull requests), else the cocotb tests of //COCOTB_TESTS
-  (on every event, with a check that the gates ran the tests the RTL ran).
-  Neither key means no gate-level simulation. Then, when the caller
-  lists Coverage in `sections` and the image has the target, it measures code
-  coverage with `make coverage`. On a push to main, or a
-  manual run on main, it also asks whether GitHub Pages is set to publish from
-  Actions and, if so, uploads the page for a deploy job.
+  //GATE_TESTS (not on pull requests). Without that key, it is the cocotb tests
+  of //COCOTB_TESTS (on every event, with a check that the gates ran the tests
+  the RTL ran). Neither key means no gate-level simulation. Then, when the
+  caller lists Coverage in `sections` and the image has the target, it measures
+  code coverage with `make coverage`. On a push to main, or a manual run on
+  main, it also asks whether GitHub Pages is set to publish from Actions. If
+  so, it uploads the page for a deploy job.
 inputs:
   sections:
     description: >
@@ -18,7 +18,7 @@ inputs:
     required: false
     default: ''
   gatesim-minutes:
-    description: The gate-level simulation is stopped after this many minutes.
+    description: The action stops the gate-level simulation after this many minutes.
     required: false
     default: '15'
 outputs:
@@ -38,13 +38,13 @@ runs:
         MINUTES: ${{ inputs.gatesim-minutes }}
       run: |
         if ! grep -q '^"//GATE_TESTS":' config.yaml; then
-          echo "config.yaml has no //GATE_TESTS -- no gate-level testbench to run."
+          echo "config.yaml has no //GATE_TESTS, so there is no gate-level testbench to run."
           exit 0
         fi
         timeout "${MINUTES}m" make gatesim
 
-    # The same Python tests as the RTL run, on the gates. No `if:` on the event:
-    # the tests are the ones that already run on a pull request, and the point
+    # The same Python tests as the RTL run, on the gates. No `if:` on the event.
+    # The tests are the ones that already run on a pull request. The point
     # of running them again is to catch a change that breaks only the gates.
     # `make gatesim` runs these same tests when //GATE_TESTS is absent, so this
     # step runs exactly when the one above does not.
@@ -54,11 +54,11 @@ runs:
         MINUTES: ${{ inputs.gatesim-minutes }}
       run: |
         if grep -q '^"//GATE_TESTS":' config.yaml; then
-          echo "config.yaml has //GATE_TESTS -- the Verilog testbench is the gate-level run."
+          echo "config.yaml has //GATE_TESTS, so the Verilog testbench is the gate-level run."
           exit 0
         fi
         if ! grep -q '^"//COCOTB_TESTS":' config.yaml; then
-          echo "config.yaml has neither //GATE_TESTS nor //COCOTB_TESTS -- no gate-level simulation to run."
+          echo "config.yaml has neither //GATE_TESTS nor //COCOTB_TESTS, so there is no gate-level simulation to run."
           exit 0
         fi
         mkdir -p build
@@ -71,7 +71,7 @@ runs:
     # The cocotb tests again on Verilator, for the coverage numbers. Only when
     # the caller lists Coverage in `sections`, so that a release changes no
     # caller's CI. Every event: it takes seconds. An image older than 2.21 has
-    # no such target, and a caller on @v2 can still be on one, so that is a
+    # no such target. A caller on @v2 can still be on one. So that is a
     # notice and not a red run. A build that fails is red: it was asked for.
     - name: Code coverage
       shell: bash
@@ -91,12 +91,13 @@ runs:
         EXTRA_SECTIONS: ${{ inputs.sections }}
       run: bash "$GITHUB_ACTION_PATH/results-page.sh"
 
-    # Only main is published. A push does it, and so does a manual run: a new
+    # Only main is published. A push does it, and so does a manual run. A new
     # c4o-core release changes the page, and a manual run on main refreshes it
-    # without a commit. A manual run on another branch does not publish. Only
-    # when the repository has Pages set to "GitHub Actions". A copy of the
-    # template starts with Pages off, and turning it on is a setting no
-    # workflow token can change -- so off is a notice, not a red run. An answer
+    # without a commit. A manual run on another branch does not publish.
+    #
+    # Only when the repository has Pages set to "GitHub Actions". A copy of the
+    # template starts with Pages off. Turning it on is a setting that no
+    # workflow token can change. So off is a notice, not a red run. An answer
     # that is neither yes nor no fails.
     - name: Is GitHub Pages set to publish from Actions?
       id: pages

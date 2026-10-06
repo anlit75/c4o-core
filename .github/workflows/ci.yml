@@ -1107,7 +1107,7 @@ jobs:
                   sys.exit(f"::error::{kind} hit {t['hit']} of {t['total']}")
               if t["total"] and t["percent"] != round(t["hit"] * 100 / t["total"], 1):
                   sys.exit(f"::error::{kind} percent {t['percent']} is not {t['hit']}/{t['total']}")
-              share = "&mdash;" if t["percent"] is None else f"{t['percent']:.1f}%"
+              share = "n/a" if t["percent"] is None else f"{t['percent']:.1f}%"
               row = f'<td>{label}</td><td class="num">{t["hit"]:,} / {t["total"]:,}</td><td class="num">{share}</td>'
               if row not in page:
                   sys.exit(f"::error::the page has no row {row}")
@@ -1143,7 +1143,7 @@ jobs:
           got = re.findall(r'<div class="stat"><div class="value">([^<]*)</div><div class="detail">([^<]*)</div></div>', card[1])
           expect = []
           for kind, label in (("line", "Block"), ("branch", "Branch"), ("toggle", "Toggle")):
-              share = "&mdash;" if types[kind]["percent"] is None else f"{types[kind]['percent']:.1f}%"
+              share = "n/a" if types[kind]["percent"] is None else f"{types[kind]['percent']:.1f}%"
               expect.append((share, label))
           if got != expect or card[1].count('class="stat"') != 3 or "block." in card[0]:
               sys.exit(f"::error::the code coverage card is {got}, expected {expect}")
