@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.22.2](https://github.com/anlit75/c4o-core/compare/v2.22.1...v2.22.2) (2026-10-06)
+
+
+### Fixes
+
+* list each regression module's tests and seeds, and fit the layout image ([#85](https://github.com/anlit75/c4o-core/issues/85)) ([5e0cd5b](https://github.com/anlit75/c4o-core/commit/5e0cd5bb28c640b9c3df666e7ba1dd1411b2706c))
+* show slew, cap and fanout violations, and lint with LibreLane's flags ([#87](https://github.com/anlit75/c4o-core/issues/87)) ([ae22851](https://github.com/anlit75/c4o-core/commit/ae2285129c89405c3f2376458ee3b95ee11fcce9))
+
 ## [2.22.1](https://github.com/anlit75/c4o-core/compare/v2.22.0...v2.22.1) (2026-10-06)
 
 
