@@ -5,7 +5,7 @@ The `Makefile` of a repository made from the [ChipForAll](https://github.com/anl
 ## What the Makefile of a repository contains
 
 ```make
-C4O_IMAGE := ghcr.io/anlit75/c4o-core:2.17
+C4O_IMAGE := ghcr.io/anlit75/c4o-core:2.<minor>
 LIBRELANE_IMAGE := ghcr.io/librelane/librelane:3.0.14
 
 # ... the text of stub.mk, unchanged ...

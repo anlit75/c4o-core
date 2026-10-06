@@ -93,6 +93,6 @@ The `report` action asks about Pages on a push to `main`. It asks on a manual ru
 
 `@v2` is a branch. Each release of c4o-core 2.x moves it forward to that release. Thus a caller on `@v2` gets each fix and each new step of 2.x.
 
-A change to an action changes the CI of each caller at the same time. If you do not want that, use a release tag, for example `@v2.16.0`. You then get no fix until you change the tag.
+A change to an action changes the CI of each caller at the same time. If you do not want that, use a release tag, for example `@v2.<minor>.<patch>`. You then get no fix until you change the tag.
 
 The actions and the image have different versions in a caller. The action version is the ref after `@`. The image version is in your Makefile. A 2.x action is written to work with a 2.x image. If one does not, that is a bug in the action.

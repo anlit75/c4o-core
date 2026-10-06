@@ -4,7 +4,7 @@ What each command does beyond the one-line table in the [README](../README.md#-c
 
 ## synth, and SystemVerilog in every command
 
-**`synth` runs one fixed Yosys script**, and no variable replaces it: the reads, then `synth -top <DESIGN_NAME>`, then `write_json`. Nothing hands Yosys a liberty file. So the output is its own generic cells, not the PDK's: `$_DFF_PP0_`, `$_OR_`, `$_XOR_`. One design has 94 of them, and `report` later counts 198 standard cells for it. So this command answers "does it synthesise, and roughly how much logic". That question is worth a one-word command. The command is not a source of area or timing. Those come from the physical flow, which synthesises again against the real library.
+**`synth` runs one fixed Yosys script**, and no variable replaces it: the reads, then `synth -top <DESIGN_NAME>`, then `write_json`. Nothing hands Yosys a liberty file. So the output is its own generic cells, not the PDK's: `$_DFF_PP0_`, `$_OR_`, `$_XOR_`. In one run of blinky, there are 94 of them, and `report` later counts 198 standard cells for it. So this command answers "does it synthesise, and roughly how much logic". That question is worth a one-word command. The command is not a source of area or timing. Those come from the physical flow, which synthesises again against the real library.
 
 Anything else is Yosys' own interface: your own passes, your own reports, a script you wrote to explain line by line. Open a shell in this image and run `yosys` there.
 
@@ -268,7 +268,7 @@ count as one.
 ## Reading a finished run
 
 LibreLane computes area, timing, power and much else, then writes all of it to a
-single 300-key `metrics.json` that nobody opens. `report` pulls out the handful
+single `metrics.json` with hundreds of keys that nobody opens. `report` pulls out the handful
 that answer *is my design any good*:
 
 ```console

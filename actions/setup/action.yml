@@ -19,8 +19,8 @@ outputs:
 runs:
   using: composite
   steps:
-    # The LibreLane image is 1.5GB and its pull is the longest single thing a
-    # pull request waits for. Nothing it needs comes from the steps before
+    # The LibreLane image is the largest download, and its pull is the longest
+    # single thing a pull request waits for. Nothing it needs comes from the steps before
     # `make gds`, so it starts here and runs under them. The gds action waits.
     - name: Start pulling the LibreLane image
       shell: bash
