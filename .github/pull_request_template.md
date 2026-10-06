@@ -1,9 +1,9 @@
 ## Problem
 
 <!--
-What is wrong today, and how you know it. Paste the evidence -- the failing
-command, the log line, the wrong output -- rather than describing it.
-If this is not fixing anything, say what it adds and why now.
+What is wrong today, and how you know it. Paste the evidence (the failing
+command, the log line, the wrong output) rather than describing it.
+If this is not fixing anything, say what it adds. Say why now.
 -->
 
 ## What changes
@@ -14,7 +14,7 @@ If this is not fixing anything, say what it adds and why now.
 
 <!--
 What you actually ran, and what came back. "Should work" is not verification.
-If something could not be checked here, say so plainly and say why.
+If something could not be checked here, say so plainly. Say why.
 An unverified claim is fine if it has a label that says so. An unverified claim with no label is not fine.
 -->
 

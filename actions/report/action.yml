@@ -38,7 +38,7 @@ runs:
         MINUTES: ${{ inputs.gatesim-minutes }}
       run: |
         if ! grep -q '^"//GATE_TESTS":' config.yaml; then
-          echo "config.yaml has no //GATE_TESTS -- no gate-level testbench to run."
+          echo "config.yaml has no //GATE_TESTS, so there is no gate-level testbench to run."
           exit 0
         fi
         timeout "${MINUTES}m" make gatesim
@@ -54,11 +54,11 @@ runs:
         MINUTES: ${{ inputs.gatesim-minutes }}
       run: |
         if grep -q '^"//GATE_TESTS":' config.yaml; then
-          echo "config.yaml has //GATE_TESTS -- the Verilog testbench is the gate-level run."
+          echo "config.yaml has //GATE_TESTS, so the Verilog testbench is the gate-level run."
           exit 0
         fi
         if ! grep -q '^"//COCOTB_TESTS":' config.yaml; then
-          echo "config.yaml has neither //GATE_TESTS nor //COCOTB_TESTS -- no gate-level simulation to run."
+          echo "config.yaml has neither //GATE_TESTS nor //COCOTB_TESTS, so there is no gate-level simulation to run."
           exit 0
         fi
         mkdir -p build
