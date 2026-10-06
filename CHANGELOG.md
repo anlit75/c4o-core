@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.22.3](https://github.com/anlit75/c4o-core/compare/v2.22.2...v2.22.3) (2026-10-06)
+
+
+### Fixes
+
+* keep units, limit names and layout verdicts from wrapping apart ([#88](https://github.com/anlit75/c4o-core/issues/88)) ([58b4b1a](https://github.com/anlit75/c4o-core/commit/58b4b1a8d7d6625ac79436c687db9547d5d8bd7b))
+* show limit violations as warnings, not failures ([#90](https://github.com/anlit75/c4o-core/issues/90)) ([24a1c1d](https://github.com/anlit75/c4o-core/commit/24a1c1d833e6f9813450bd47499ce6d73d9016fa))
+
 ## [2.22.2](https://github.com/anlit75/c4o-core/compare/v2.22.1...v2.22.2) (2026-10-06)
 
 
