@@ -1709,11 +1709,12 @@ class TestEntrypoint(unittest.TestCase):
         os.chdir(self.test_dir)
         try:
             page = self._run_site()
-            self.assertIn("<p>Static IR drop, worst: 12 mV, 0.68% of 1.80 V.</p>", page)
-            self.assertIn("ir__drop__worst", page)
-            signoff = page[page.index('<section id="signoff">'):]
-            self.assertIn("IR drop", signoff)
-            self.assertNotIn("IR drop", page[:page.index('<section id="signoff">')])
+            # An estimate beside the power numbers, not a signoff check.
+            power = page[page.index('<section id="power">'):page.index('<section id="signoff">')]
+            self.assertIn("<p>Static IR drop, worst: 12 mV, 0.68% of 1.80 V, "
+                          "from OpenROAD (<code>ir__drop__worst</code>).</p>", power)
+            self.assertNotIn("Static IR drop", page[page.index('<section id="signoff">'):])
+            self.assertNotIn("pass or fail", page)
         finally:
             os.chdir(cwd)
 
@@ -1724,7 +1725,7 @@ class TestEntrypoint(unittest.TestCase):
         os.chdir(self.test_dir)
         try:
             page = self._run_site(tiny)
-            self.assertIn("Static IR drop, worst: 0.052 mV, 0.0029% of 1.80 V.", page)
+            self.assertIn("Static IR drop, worst: 0.052 mV, 0.0029% of 1.80 V, from OpenROAD", page)
         finally:
             os.chdir(cwd)
 
@@ -1755,7 +1756,7 @@ class TestEntrypoint(unittest.TestCase):
             with open(path, "w") as f:
                 json.dump(run_config, f)
             page = self._site()
-            self.assertIn("<p>Static IR drop, worst: 12 mV.</p>", page)
+            self.assertIn("<p>Static IR drop, worst: 12 mV, from OpenROAD", page)
             self.assertNotRegex(page, r"\d% of \d")
         finally:
             os.chdir(cwd)
@@ -2297,7 +2298,9 @@ class TestEntrypoint(unittest.TestCase):
             shutil.copytree(self.RUN_FIXTURE, "runs")
             os.remove("runs/blinky_run/55-openroad-stapostpnr/nom_tt_025C_1v80/power.rpt")
             page = self._site()
-            self.assertNotIn("<h2>Power</h2>", page)
+            # No table; the IR drop line keeps a Power section of its own.
+            self.assertNotIn('<table class="power">', page)
+            self.assertIn("Static IR drop, worst:", page[page.index('<section id="power">'):])
             self.assertIn('<div class="label">total power</div><div class="value">0.290 mW</div>'
                           '<div class="detail">corner not named</div>', page)
         finally:

@@ -508,10 +508,24 @@ def timing_section(physical):
                 + "</table></div></details>")
     return out
 
-def signoff_section(signoff, physical):
+def ir_drop_line(physical):
     """
-    The physical verification rows, then static IR drop when the run reported
-    it. DRC is one row for the two tools; antenna says it is not part of them.
+    Static IR drop as one line for the Power section, or "" when the run did
+    not report it. It is an estimate beside the power numbers, not a check:
+    LibreLane sets no limit for it.
+    """
+    ir = physical.get("ir_worst")
+    if ir is None:
+        return ""
+    volts = corner_volts(physical.get("corner"))
+    share = f", {significant(ir / volts * 100)}% of {volts:.2f} V" if volts else ""
+    return (f"<p>Static IR drop, worst: {significant(ir * 1000)} mV{share}, "
+            "from OpenROAD (<code>ir__drop__worst</code>).</p>")
+
+def signoff_section(signoff):
+    """
+    The physical verification rows. DRC is one row for the two tools; antenna
+    says it is not part of them.
     """
     esc = html.escape
     rows = ""
@@ -527,17 +541,6 @@ def signoff_section(signoff, physical):
            '<div class="scroll"><table><tr><th>check</th><th class="num">errors</th><th>result</th></tr>'
            + rows + "</table></div>"
            "<p>Not analysed: electromigration, crosstalk and dynamic IR drop.</p>")
-    ir = physical.get("ir_worst")
-    if ir is not None:
-        mv = f"{significant(ir * 1000)} mV"
-        volts = corner_volts(physical.get("corner"))
-        share = f", {significant(ir / volts * 100)}% of {volts:.2f} V" if volts else ""
-        out += (f"<p>Static IR drop, worst: {mv}{share}.</p>"
-                '<p class="hint">From OpenROAD (<code>ir__drop__worst</code>). LibreLane sets no limit for it, '
-                "so it is not a pass or fail."
-                + (f" The supply is the voltage of the default corner, <code>{esc(physical['corner'])}</code>."
-                   if volts else "")
-                + "</p>")
     return out
 
 COVERAGE_LABELS = {"line": "Block", "branch": "Branch", "toggle": "Toggle", "user": "User cover"}
@@ -853,10 +856,12 @@ def render(design, numbers, layout, cocotb_runs, env,
                 + ("" if group == "Total" else
                    f'<span class="track"><span style="width:{t / total:.0%}"></span></span>')
                 + "</td></tr>"
-                for group, i, sw, lk, t in rows) + "</table></div>")
+                for group, i, sw, lk, t in rows) + "</table></div>" + ir_drop_line(physical))
+    elif ir_drop_line(physical):
+        add("power", "Power", "<h2>Power</h2>" + ir_drop_line(physical))
 
     if signoff:
-        add("signoff", "Signoff", signoff_section(signoff, physical))
+        add("signoff", "Signoff", signoff_section(signoff))
 
     # Only on GitHub Actions, where these say which commit the page shows.
     # When the page was built, always: a published page stays up until the
