@@ -43,6 +43,7 @@ h1 { margin: 4px 0 8px; font-size: 40px; line-height: 1.15; overflow-wrap: anywh
 .chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .chip.PASS { background: var(--pass-bg); } .chip.FAIL { background: var(--fail-bg); }
 .chip.SKIP { background: var(--skip-bg); }
+.chips + .chips { margin-top: 8px; }
 nav { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line); }
 nav .wrap { display: flex; gap: 4px; overflow-x: auto; padding-top: 8px; padding-bottom: 8px; }
 nav a { flex: none; padding: 4px 10px; border-radius: 6px; color: var(--muted); font-size: 14px; }
@@ -408,8 +409,9 @@ def corner_words(corner):
     if not m:
         return None
     rc, process, minus, temp, volts, frac = m.groups()
-    return (f"{RC[rc]} wire RC, {PROCESS[process]} transistors, {'-' if minus else ''}{int(temp)} &deg;C, "
-            f"{volts}.{frac} V")
+    # A unit never starts a line on its own: the space before it does not break.
+    return (f"{RC[rc]} wire RC, {PROCESS[process]} transistors, {'-' if minus else ''}{int(temp)}&nbsp;&deg;C, "
+            f"{volts}.{frac}&nbsp;V")
 
 def run_name(title):
     """"cocotb, RTL" -> "RTL", "cocotb, gate level" -> "gates": a column head."""
@@ -491,7 +493,7 @@ def timing_section(physical):
         out += ("<h3>Slew, capacitance and fanout limits</h3>"
                 "<p>Violations of the cell library's limits after routing. The flow does not stop on them.</p>"
                 '<div class="scroll"><table><tr><th>limit</th><th class="num">violations</th><th>corners</th></tr>'
-                + "".join(f'<tr><td>{esc(label)}</td><td class="num {"FAIL" if n else "PASS"}">{n:,}</td>'
+                + "".join(f'<tr><td>{esc(label).replace(" ", "&nbsp;")}</td><td class="num {"FAIL" if n else "PASS"}">{n:,}</td>'
                           f'<td class="src">{", ".join(f"<code>{esc(c)}</code>" for c in corners) or "none"}</td></tr>'
                           for label, n, corners in drv)
                 + "</table></div>")
@@ -802,13 +804,16 @@ def render(design, numbers, layout, cocotb_runs, env,
     # Setup and hold both: a negative hold slack is a chip that fails on
     # silicon at any clock speed, so "Timing met" on setup alone would be a
     # wrong verdict, not a partial one.
+    # The layout's verdicts get a row of their own, under the tests', so a
+    # wide screen does not split them over two rows.
+    layout_chips = []
     slacks = [physical[k][0] for k in ("setup", "hold") if k in physical]
     if slacks:
-        chips.append(("FAIL", "Timing missed") if any(s < 0 for s in slacks)
+        layout_chips.append(("FAIL", "Timing missed") if any(s < 0 for s in slacks)
                      else ("PASS", "Timing met"))
     if signoff:
         errors = sum(item[1] for item in signoff)
-        chips.append(("FAIL", f"Signoff: {errors} errors") if errors
+        layout_chips.append(("FAIL", f"Signoff: {errors} errors") if errors
                      else ("PASS", "Signoff clean"))
 
     if len(cocotb_runs) > 1:
@@ -964,9 +969,9 @@ def render(design, numbers, layout, cocotb_runs, env,
         + byline
         + (f'<p class="lede">{esc(description)}</p>' if description else "")
         + f"{source}"
-        + ('<div class="chips">' + "".join(
-            f'<span class="chip {state}">{esc(text)}</span>' for state, text in chips)
-           + "</div>" if chips else "")
+        + "".join('<div class="chips">' + "".join(
+            f'<span class="chip {state}">{esc(text)}</span>' for state, text in row)
+            + "</div>" for row in (chips, layout_chips) if row)
         + actions
         # Locally, before the flow has run, the page is the tests only; say what is missing and what adds it, or it reads as all there is.
         + ("" if layout or signoff else '<p class="hint">The layout, signoff checks, timing, area and '

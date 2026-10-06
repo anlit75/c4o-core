@@ -1686,10 +1686,10 @@ class TestEntrypoint(unittest.TestCase):
             page = self._run_site(with_slew)
             timing = page[page.index('<section id="timing">'):page.index('<section id="area">')]
             self.assertIn("<h3>Slew, capacitance and fanout limits</h3>", timing)
-            self.assertIn('<tr><td>max slew</td><td class="num FAIL">11</td><td class="src">'
+            self.assertIn('<tr><td>max&nbsp;slew</td><td class="num FAIL">11</td><td class="src">'
                           "<code>max_ss_100C_1v60</code>, <code>nom_ss_100C_1v60</code></td></tr>", timing)
-            self.assertIn('<tr><td>max capacitance</td><td class="num PASS">0</td><td class="src">none</td></tr>', timing)
-            self.assertIn('<tr><td>max fanout</td><td class="num PASS">0</td>', timing)
+            self.assertIn('<tr><td>max&nbsp;capacitance</td><td class="num PASS">0</td><td class="src">none</td></tr>', timing)
+            self.assertIn('<tr><td>max&nbsp;fanout</td><td class="num PASS">0</td>', timing)
             rows = dict(entrypoint.report_rows(json.load(open("runs/blinky_run/final/metrics.json")),
                                                "runs/blinky_run/final/metrics.json"))
             self.assertEqual(rows["limit violations"],
@@ -2031,7 +2031,7 @@ class TestEntrypoint(unittest.TestCase):
             power = page[page.index('<section id="power">'):page.index('<section id="signoff">')]
             self.assertIn("<code>nom_tt_025C_1v80</code>", power)
             self.assertIn("1.80 V", power)
-            self.assertIn("1.80 V), clock 100 MHz.", power)
+            self.assertIn("1.80&nbsp;V), clock 100 MHz.", power)
             self.assertIn("OpenSTA's default, 0.1 toggles per clock on data nets", power)
             self.assertIn("not taken from simulation", power)
         finally:
@@ -2757,8 +2757,8 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn(">247.9<", power)
             # The corner in words, as the Power section writes it.
             self.assertEqual(cards["total power"][1],
-                             "typical wire RC, typical transistors, 25 \u00b0C, 1.80 V")
-            self.assertIn("(typical wire RC, typical transistors, 25 &deg;C, 1.80 V)", power)
+                             "typical wire RC, typical transistors, 25\u00a0\u00b0C, 1.80\u00a0V")
+            self.assertIn("(typical wire RC, typical transistors, 25&nbsp;&deg;C, 1.80&nbsp;V)", power)
             self.assertNotIn("nom_tt_025C_1v80", self._section_text(page, "summary"))
             # Instances: the area section's heading, routed first.
             self.assertEqual(cards["instances"], ("198", "after routing, 110 after synthesis"))
@@ -2931,10 +2931,10 @@ class TestEntrypoint(unittest.TestCase):
 
     def test_corner_words_write_the_temperature_as_a_number(self):
         words = entrypoint.site_page.corner_words
-        self.assertIn(", 25 &deg;C, 1.80 V", words("nom_tt_025C_1v80"))
-        self.assertIn(", -40 &deg;C, 1.95 V", words("max_ff_n40C_1v95"))
-        self.assertIn(", 100 &deg;C, 1.60 V", words("max_ss_100C_1v60"))
-        self.assertIn(", 0 &deg;C,", words("nom_tt_000C_1v80"))
+        self.assertIn(", 25&nbsp;&deg;C, 1.80&nbsp;V", words("nom_tt_025C_1v80"))
+        self.assertIn(", -40&nbsp;&deg;C, 1.95&nbsp;V", words("max_ff_n40C_1v95"))
+        self.assertIn(", 100&nbsp;&deg;C, 1.60&nbsp;V", words("max_ss_100C_1v60"))
+        self.assertIn(", 0&nbsp;&deg;C,", words("nom_tt_000C_1v80"))
         self.assertNotIn("025", words("nom_tt_025C_1v80"))
         self.assertIsNone(words("nonsense"))
 
@@ -2944,7 +2944,7 @@ class TestEntrypoint(unittest.TestCase):
         try:
             power = self._section_text(self._run_site(), "power")
             self.assertIn("<strong>0.248 mW in total</strong> at corner <code>nom_tt_025C_1v80</code> "
-                          "(typical wire RC, typical transistors, 25 &deg;C, 1.80 V), clock 100 MHz.", power)
+                          "(typical wire RC, typical transistors, 25&nbsp;&deg;C, 1.80&nbsp;V), clock 100 MHz.", power)
             self.assertIn("The table is in &micro;W.", power)
             self.assertNotIn("025 &deg;C", power)
             self.assertNotIn(";", re.sub(r"&[a-z]+;", "", re.sub(r"<[^>]*>", "", power)))
@@ -3027,6 +3027,10 @@ class TestEntrypoint(unittest.TestCase):
             page = self._run_site()
             chips = re.findall(r'<span class="chip [A-Z]+">([^<]*)</span>', page)
             self.assertEqual(chips, ["1/2 on RTL", "1/2 on gates", "Timing met", "Signoff clean"])
+            # The layout's two verdicts share a row of their own.
+            rows = [re.findall(r'<span class="chip [A-Z]+">([^<]*)</span>', row)
+                    for row in re.findall(r'<div class="chips">(.*?)</div>', page)]
+            self.assertEqual(rows, [["1/2 on RTL", "1/2 on gates"], ["Timing met", "Signoff clean"]])
         finally:
             os.chdir(cwd)
 
