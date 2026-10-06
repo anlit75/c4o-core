@@ -105,6 +105,7 @@ td.bar .track { background: var(--line); }
                      margin-right: 6px; background: var(--c); }
 .legend .of { color: var(--muted); }
 h3 { margin: 16px 0 0; font-size: 16px; }
+ul.tests-in { margin: 4px 0 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .btn, .actions a[download] { display: inline-block; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px;
        background: var(--card); color: var(--fg); font-weight: 600; font-size: 14px; }
@@ -125,7 +126,9 @@ header.has-art .hero { grid-template-columns: minmax(0, 1fr) minmax(280px, 400px
 .hero-art a { display: block; background: #fff; padding: 12px; border-radius: 14px;
               border: 1px solid var(--line);
               box-shadow: 0 1px 2px rgb(0 0 0 / .06), 0 24px 48px -24px rgb(0 0 0 / .35); }
-.hero-art img { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; }
+/* As wide as the frame, as tall as the die makes it, up to a cap: a tall die
+   would otherwise push the rest of the page down a screen or more. */
+.hero-art img { display: block; width: 100%; height: auto; max-height: min(70vh, 560px); object-fit: contain; }
 .hero-art figcaption { margin-top: 8px; font-size: 13px; color: var(--muted); text-align: center;
                        font-variant-numeric: tabular-nums; }
 nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
@@ -637,23 +640,39 @@ def coverage_section(coverage, cocotb_runs=(), regression=None):
 
 def regression_section(regression):
     """
-    The regress run of build/regress/summary.json: runs passed out of runs for
-    each test, and for each failed seed the command that replays it.
+    The regress run of build/regress/summary.json: a row per module of the
+    list, with the tests it holds under it, its number of seeds and its runs
+    passed, and for each failed seed the command that replays it.
+
+    The Tests section names test functions and the list names modules. Listing
+    each module's tests is what ties the two tables together, and the seeds
+    column is why one module counts 5 runs and another 1.
+
+    regression -- the summary, plus "tests": {entry: [test names]} as
+                  entrypoint read them from each run's results file
     """
     esc = html.escape
     runs = regression.get("runs") or []
+    tests = regression.get("tests") or {}
     counts = {}
     for run in runs:
         row = counts.setdefault(run["entry"], [0, 0])
         row[1] += 1
         row[0] += run["verdict"] == "pass"
     passed = sum(done for done, _ in counts.values())
+    def held(entry):
+        names = tests.get(entry) or []
+        return ('<ul class="tests-in">' + "".join(f"<li><code>{test_name(n)}</code></li>" for n in names)
+                + "</ul>" if names else "")
     out = (f"<h2>Regression: {passed}/{len(runs)} runs passed</h2>"
-           "<p>Each test in the list, run once per seed.</p>"
+           "<p>Each row is a module of the test list, run once for each of its seeds. "
+           "Under it are the tests it holds.</p>"
            f"<p>Base seed <code>{esc(str(regression.get('seed')))}</code>. "
            f"<code>make regress SEED={esc(str(regression.get('seed')))}</code> reruns the list with the same seeds.</p>"
-           '<div class="scroll"><table><tr><th>test</th><th class="num">passed</th></tr>'
-           + "".join(f'<tr><td><code>{test_name(entry)}</code></td>'
+           '<div class="scroll"><table><tr><th>module and its tests</th><th class="num">seeds</th>'
+           '<th class="num">runs passed</th></tr>'
+           + "".join(f'<tr><td><code>{test_name(entry)}</code>{held(entry)}</td>'
+                     f'<td class="num">{total}</td>'
                      f'<td class="num {"PASS" if done == total else "FAIL"}">{done}/{total}</td></tr>'
                      for entry, (done, total) in counts.items())
            + "</table></div>")

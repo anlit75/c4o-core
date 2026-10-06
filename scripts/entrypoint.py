@@ -1933,6 +1933,20 @@ def cmd_site(args, config):
         except (OSError, json.JSONDecodeError) as e:
             log_error(f"Could not read {regress_path}: {e}")
             sys.exit(1)
+        # The tests each entry holds, from the results file of each of its
+        # runs, so the page can tie a module of the list to the tests in Tests.
+        # A run with no readable results file adds no name: its verdict is
+        # already a fail in the summary.
+        tests = {}
+        for run in regression.get("runs") or []:
+            names = tests.setdefault(run["entry"], [])
+            path = os.path.join(REGRESS_DIR, f"{run['entry']}-{run['seed']}.xml")
+            try:
+                _, cases = site_page.cocotb_cases(path)
+            except (OSError, ElementTree.ParseError):
+                continue
+            names += [name for name, _, _ in cases if name not in names]
+        regression["tests"] = tests
 
     if not (numbers or layout or cocotb_runs or details or coverage or regression):
         log_error(
