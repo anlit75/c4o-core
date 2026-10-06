@@ -38,7 +38,7 @@ The Python entrypoint of the engine has these commands:
 
 | Command | Description |
 |---|---|
-| `lint` | Runs the Verilator lint checks on `VERILOG_FILES` with the flags of LibreLane's lint step, so both report the same warnings. |
+| `lint` | Runs the Verilator lint checks on `VERILOG_FILES` with the flags of LibreLane's lint step, so both report the same warnings. A warning does not fail it. A latch or a signal with more than one driver does. |
 | `sim` | Compiles `VERILOG_FILES` and `TEST_FILES` with Icarus Verilog and runs the simulation. |
 | `cocotb` | Runs cocotb tests on `VERILOG_FILES` and `COCOTB_TESTS`. The tests are Python coroutines that drive the RTL. `--netlist` runs the same tests on the synthesised gates. `WAVES=1` also writes `build/<DESIGN_NAME>.vcd`. |
 | `regress` | Runs the tests of the `//REGRESSION` list over many seeds. Prints the command that replays each failed run. Writes `build/regress/`. |
