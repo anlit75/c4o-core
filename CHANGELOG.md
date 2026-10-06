@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.22.1](https://github.com/anlit75/c4o-core/compare/v2.22.0...v2.22.1) (2026-10-06)
+
+
+### Fixes
+
+* apply STE writing rules and show n/a for a missing value on the page ([#84](https://github.com/anlit75/c4o-core/issues/84)) ([6adcc15](https://github.com/anlit75/c4o-core/commit/6adcc15648ec2e8741b39ca2af5de980de9100d7))
+* tighten the result page wording ([#82](https://github.com/anlit75/c4o-core/issues/82)) ([785f87f](https://github.com/anlit75/c4o-core/commit/785f87f1e4217c2c578943bd249a608764645b2c))
+
 ## [2.22.0](https://github.com/anlit75/c4o-core/compare/v2.21.0...v2.22.0) (2026-10-05)
 
 
