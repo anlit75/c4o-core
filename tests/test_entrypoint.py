@@ -1543,20 +1543,19 @@ class TestEntrypoint(unittest.TestCase):
                 self.assertIn(f"<td>{check}</td>", page)
             # Antenna stays its own row and says why it is not inside DRC.
             self.assertIn("antenna <span", page)
-            self.assertIn("checked by OpenROAD in this flow, not inside DRC", page)
+            self.assertIn("checked by OpenROAD, not by DRC", page)
             # Utilization is of the core, not the die beside it.
             self.assertIn('<div class="label">core utilization</div><div class="value">57.1%</div>'
                           '<div class="detail">of a 58.4 \u00d7 57.1 \u00b5m core</div>', page)
             self.assertIn("46 well taps", page)
             self.assertIn("35 timing-repair buffers, 26 of them for hold", page)
-            self.assertIn("timing repair also resizes instances", page)
             # stat.json: 1366.3104 total, 683.1552 of it sequential -- this
             # design splits exactly in half. Routing's 1906.8 contains both, so
             # the third part is the difference, not a third peer.
             self.assertIn("flip-flops 683.2 &micro;m&sup2;", page)
             self.assertIn("logic 683.2 &micro;m&sup2;", page)
-            self.assertIn("added by place and route 540.5 &micro;m&sup2;", page)
-            self.assertIn("grew it 40% to 1,906.8 &micro;m&sup2;", page)
+            self.assertIn("added or resized by place and route 540.5 &micro;m&sup2;", page)
+            self.assertIn("grew it by 40% to 1,906.8 &micro;m&sup2;", page)
             # Instances: stat.json's 110 after synthesis come first, then the
             # 198 after routing. 57 logic + 26 sequential + 27 inverters from
             # synthesis; 46 taps + 35 timing-repair + 7 clock buffers added.
@@ -1969,7 +1968,7 @@ class TestEntrypoint(unittest.TestCase):
             power = page[page.index('<section id="power">'):page.index('<section id="signoff">')]
             self.assertIn("<code>nom_tt_025C_1v80</code>", power)
             self.assertIn("1.80 V", power)
-            self.assertIn("Clock 100 MHz, from a period of 10 ns.", power)
+            self.assertIn("1.80 V), clock 100 MHz.", power)
             self.assertIn("OpenSTA's default, 0.1 toggles per clock on data nets", power)
             self.assertIn("not taken from simulation", power)
         finally:
@@ -2677,7 +2676,7 @@ class TestEntrypoint(unittest.TestCase):
             # Clock: the constraint row, as MHz first.
             self.assertEqual(cards["clock"], ("100 MHz", "10 ns period"))
             self.assertIn("<td>clock period</td><td>10 ns (100 MHz)</td>", timing)
-            self.assertIn("Clock 100 MHz, from a period of 10 ns.", power)
+            self.assertIn(", clock 100 MHz.", power)
             # Power: the headline of the power section, and the table's Total row.
             mw = cards["total power"][0]
             self.assertEqual(mw, "0.248 mW")
@@ -2872,16 +2871,13 @@ class TestEntrypoint(unittest.TestCase):
         try:
             power = self._section_text(self._run_site(), "power")
             self.assertIn("<strong>0.248 mW in total</strong> at corner <code>nom_tt_025C_1v80</code> "
-                          "(typical wire RC, typical transistors, 25 &deg;C, 1.80 V).", power)
+                          "(typical wire RC, typical transistors, 25 &deg;C, 1.80 V), clock 100 MHz.", power)
             self.assertIn("The table is in &micro;W.", power)
             self.assertNotIn("025 &deg;C", power)
             self.assertNotIn(";", re.sub(r"&[a-z]+;", "", re.sub(r"<[^>]*>", "", power)))
-            # The columns the phone hides are named in a note shown only there.
-            self.assertIn('<p class="hint narrow-only">On a narrow screen the table hides '
-                          "the internal, switching and leakage columns.</p>", power)
-            self.assertRegex(entrypoint.site_page.CSS,
-                             re.compile(r"@media \(max-width: 600px\).*?\.narrow-only \{ display: block; \}", re.S))
-            self.assertIn(".narrow-only { display: none; }", entrypoint.site_page.CSS)
+            # The page does not describe its own layout.
+            self.assertNotIn("narrow", power)
+            self.assertNotIn("Dynamic is", power)
         finally:
             os.chdir(cwd)
 
@@ -2996,10 +2992,11 @@ class TestEntrypoint(unittest.TestCase):
             with patch.dict(os.environ, env):
                 page = self._site()
             footer = page[page.index("<footer"):page.index("</footer>")]
-            self.assertIn('Source: <a href="https://github.com/o/r">o/r</a>. ', footer)
+            # The source is the View source button; the footer does not repeat it.
+            self.assertNotIn("Source:", footer)
             self.assertIn('Made with <a href="https://github.com/anlit75/ChipForAll">ChipForAll</a>, '
                           "an open-source chip design flow. "
-                          'This page is generated by <a href="https://github.com/anlit75/c4o-core">c4o-core</a>.', footer)
+                          '<a href="https://github.com/anlit75/c4o-core">c4o-core</a> generated this page.', footer)
             self.assertNotIn("<code>site</code>", footer)
             self.assertNotIn("EDA", footer)
         finally:
@@ -3112,13 +3109,13 @@ class TestCoverage(unittest.TestCase):
 
     def test_the_section_says_what_it_is_not_and_what_it_leaves_out(self):
         page = self.page(self.summary())
-        self.assertIn("The Tests section above decides pass and fail.", page)
-        self.assertIn("Not measured: expression coverage and FSM coverage.", page)
+        self.assertIn("so this run does not decide pass or fail. The Tests section does.", page)
+        self.assertIn("Not measured: expression and FSM coverage.", page)
         self.assertNotIn("experimental", page)
         self.assertNotIn("sv2v", page)
         self.assertNotIn("generated <code>.v", page)
         self.assertNotIn("Line/block", page)
-        self.assertIn("These are the files in <code>VERILOG_FILES</code>.", page)
+        self.assertIn("Files measured, from <code>VERILOG_FILES</code>: ", page)
 
     def test_the_page_says_which_seed_the_coverage_run_used(self):
         runs = [("cocotb, RTL", "1789965785", [("t", "PASS", 1.0)])]
@@ -3336,8 +3333,9 @@ class TestCoverage(unittest.TestCase):
     def test_the_page_says_the_coverage_is_merged_and_whether_the_base_seeds_match(self):
         merged = self.summary(seed=31, runs=5)
         same = self.page(merged, regression={"seed": 31, "runs": [{"entry": "t", "seed": 1, "verdict": "pass"}]})
-        self.assertIn("Merged over 5 regression runs, from base seed <code>31</code>. "
-                      "It is the base seed of the Regression section.", same)
+        # The same base seed is named once, in Regression.
+        self.assertIn("Merged over the 5 runs of Regression.", same)
+        self.assertNotIn("<code>31</code>", same[same.index('<section id="coverage">'):])
         other = self.page(merged, regression={"seed": 32, "runs": [{"entry": "t", "seed": 1, "verdict": "pass"}]})
         self.assertIn("It is not the base seed of the Regression section.", other)
         alone = self.page(self.summary(seed="1789965785"))
