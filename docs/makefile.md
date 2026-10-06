@@ -82,7 +82,9 @@ A bare `make` runs `all`, also when one of your targets is above the include.
 
 `make regress` runs the test list that `"//REGRESSION"` names, each entry over its seeds. `make all` does not run it, and it fails without the key. `make regress SEED=<n>` reruns the whole list with the same seeds. `make cocotb SEED=<n> TEST=<entry>` replays one run. See [commands.md](commands.md#many-seeds-regress).
 
-`make coverage` runs the Python tests of `"//COCOTB_TESTS"` again on Verilator and writes `build/coverage/`. `make all` does not run it. It does not decide whether the tests pass. `make cocotb` decides that. `make coverage SEED=<n>` sets the seed. With `"//REGRESSION"` it runs the list of `make regress` and merges the runs. See [commands.md](commands.md#code-coverage-coverage).
+`make coverage` runs the Python tests of `"//COCOTB_TESTS"` again on Verilator and writes `build/coverage/`. `make all` does not run it. It does not decide whether the tests pass. `make cocotb` decides that.
+
+`make coverage SEED=<n>` sets the seed. With `"//REGRESSION"` it runs the list of `make regress` and merges the runs. See [commands.md](commands.md#code-coverage-coverage).
 
 `make gatesim` runs the Verilog testbench of `"//GATE_TESTS"`. Without that key, it runs the Python tests of `"//COCOTB_TESTS"` on the netlist. With neither key it fails. `make gatesim SEED=<n>` sets the seed in the same way as `make cocotb SEED=<n>`.
 

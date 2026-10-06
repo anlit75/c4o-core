@@ -49,7 +49,9 @@ The `report` action runs the Python tests on the netlist, as `make gatesim` does
 
 The `report` action runs `make coverage` only when you list Coverage in `sections`. A new c4o-core release alone changes nothing in your CI. A design that lint accepts can still fail the Verilator build, so you ask for the run.
 
-The run follows the Python tests, on every event. It uses the base seed of the regression when `build/regress/summary.json` exists, and the seed of the RTL run otherwise. A `SEED` you set wins over both. With `"//REGRESSION"`, it measures the runs of the list and merges them. It skips when `config.yaml` has no `"//COCOTB_TESTS"`. An image from before 2.21 has no `coverage` target. The step then prints a notice and the run stays green. The results page has no Coverage section in that case.
+The run follows the Python tests, on every event. It uses the base seed of the regression when `build/regress/summary.json` exists, and the seed of the RTL run otherwise. A `SEED` you set wins over both.
+
+With `"//REGRESSION"`, it measures the runs of the list and merges them. It skips when `config.yaml` has no `"//COCOTB_TESTS"`. An image from before 2.21 has no `coverage` target. The step then prints a notice and the run stays green. The results page has no Coverage section in that case.
 
 A failing `make coverage` fails the step. That means Verilator could not build the design. The `upload` action keeps `build/coverage/` with the rest of `build/`.
 

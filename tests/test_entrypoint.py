@@ -3535,7 +3535,7 @@ class TestRegress(unittest.TestCase):
         with patch("entrypoint.log_error") as log:
             runs, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
-        self.assertIn("Cannot read the test list tb/regression.yaml", log.call_args[0][0])
+        self.assertIn("Could not read the test list tb/regression.yaml", log.call_args[0][0])
         run_command.assert_not_called()
 
     def test_every_problem_is_reported_not_only_the_first(self):

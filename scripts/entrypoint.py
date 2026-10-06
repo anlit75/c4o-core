@@ -504,8 +504,8 @@ def compile_cocotb(args, config, toplevel, vvp_file, netlist=None):
         # 10(ns)" -- which names neither the cause nor the file. `make sim`
         # never shows it: the Verilog testbench carries its own `timescale.
         if not any("`timescale" in read_text(f) for f in sources):
-            log_warn("None of VERILOG_FILES declares a `timescale, so the simulator runs at "
-                     "1 s precision and a cocotb Clock in ns fails with \"Unable to "
+            log_warn("None of VERILOG_FILES declares a `timescale. So the simulator runs at "
+                     "1 s precision, and a cocotb Clock in ns fails with \"Unable to "
                      "accurately represent\". Put `timescale 1ns/1ps on the first line "
                      "of your RTL.")
     run_command(compile_cmd)
@@ -833,7 +833,7 @@ def cmd_coverage(args, config):
 def check_cocotb_results(path):
     """Exits non-zero if the run recorded a failure. vvp will not."""
     if not os.path.exists(path):
-        log_error(f"cocotb wrote no results to {path}; treating that as a failure.")
+        log_error(f"cocotb wrote no results to {path}. The run counts that as a failure.")
         sys.exit(1)
     try:
         cases = ElementTree.parse(path).getroot().iter("testcase")
@@ -869,7 +869,7 @@ def load_regression(config, test_files):
         with open(path) as f:
             entries = yaml.safe_load(f)
     except OSError as e:
-        log_error(f"Cannot read the test list {path}: {e.strerror or e}")
+        log_error(f"Could not read the test list {path}: {e.strerror or e}")
         sys.exit(1)
     except yaml.YAMLError as e:
         log_error(f"Failed to parse {path}: {e}")
@@ -1278,7 +1278,7 @@ def cmd_check(args, config):
     # that nothing was built, or "make gds" reads as a finished layout. Worded
     # to hold both run alone and as the step before LibreLane in a template's
     # `make gds`, where "no layout was produced" read like a failure.
-    log_info("This step builds no layout; LibreLane does that.")
+    log_info("This step builds no layout. LibreLane does that.")
 
 # LibreLane writes each timing metric once per corner and again with no
 # '__corner:' suffix. The bare key already holds the worst value across every
@@ -1711,7 +1711,7 @@ def read_metrics(path):
         with open(path) as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError) as e:
-        log_error(f"Failed to read {path}: {e}")
+        log_error(f"Could not read {path}: {e}")
         sys.exit(1)
 
 def cmd_report(args, config):

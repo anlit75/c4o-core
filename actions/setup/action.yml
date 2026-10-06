@@ -1,11 +1,11 @@
 name: c4o-core setup
 description: >
   Everything the flow needs before it starts: the c4o-core image the caller's
-  Makefile names, the Sky130 PDK that image installs (from the cache when it is
-  there), and the LibreLane image, whose pull is started in the background.
-  Also checks the two things every repository made from the ChipForAll template
-  still carries: that the image pins agree, and that the Dev Container's user
-  exists in its image.
+  Makefile names, the Sky130 PDK that image installs, and the LibreLane image.
+  The PDK comes from the cache when it is there. The LibreLane pull starts in
+  the background. Also checks that the image pins agree, and that the Dev
+  Container's user exists in its image. Every repository made from the
+  ChipForAll template still carries both.
 outputs:
   image:
     description: The c4o-core image the caller's Makefile names.
@@ -36,8 +36,8 @@ runs:
       run: bash "$GITHUB_ACTION_PATH/pull-image.sh"
 
     # Keyed on the PDK version the image installs, read out of the image. A key
-    # that does not name the version is restored and then not used once the
-    # image moves to another PDK, and a hit on it means the new one is never
+    # that does not name the version is restored, and then not used once the
+    # image moves to another PDK. A hit on it means the new one is never
     # saved. No restore-keys, for the same reason.
     - name: Which PDK version does this c4o-core install?
       id: pdk
