@@ -100,7 +100,7 @@ for gone in Power "Signoff checks"; do
 done
 # A page of this image's own sections, and a page of the 2.18 image's: both
 # pass, since the script demands nothing a 2.x image may not have.
-printf '<h2>Timing</h2><h2>Area and instances</h2><h2>Power</h2><h2>Signoff checks</h2><a href="/commit/abc123">' \
+printf '<h2>Timing</h2><h2>Area and Instances</h2><h2>Power</h2><h2>Signoff checks</h2><a href="/commit/abc123">' \
   > "$work/build/site/index.html"
 expect 0 "results page: the sections of a newer image" results ''
 printf '<h2>Signoff checks</h2><h2>Worst setup path</h2><h2>Area</h2><h2>Power</h2><h2>Waveform</h2><a href="/commit/abc123">' \
@@ -312,6 +312,98 @@ else
 fi
 rm "$work/build/regress/summary.json"
 expect 1 "regress summary: no summary file is an error, not an empty section" regress_summary
+
+# --- report/action.yml: the order of the steps that carry the history -----------
+# The page is built after the Pages answer and the fetch, or the build has no
+# build/history.json to add its row to. The fetch runs only when the answer was yes.
+step_order() {  # step_order <step name before> <step name after>: exit 0 when it comes first
+  python3 - "$actions/report/action.yml" "$1" "$2" <<'PY'
+import sys, yaml
+names = [s["name"] for s in yaml.safe_load(open(sys.argv[1]))["runs"]["steps"]]
+sys.exit(0 if names.index(sys.argv[2]) < names.index(sys.argv[3]) else 1)
+PY
+}
+expect 0 "history: Pages answers before the fetch" step_order "Is GitHub Pages set to publish from Actions?" "Fetch the history of earlier runs"
+expect 0 "history: the fetch comes before the page is built" step_order "Fetch the history of earlier runs" "Build the results page"
+expect 0 "history: the page is built before it is uploaded" step_order "Build the results page" "Upload the results page"
+expect 1 "history: the page is not built before the Pages step" step_order "Build the results page" "Is GitHub Pages set to publish from Actions?"
+fetch_condition() {
+  python3 - "$actions/report/action.yml" <<'PY'
+import sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["runs"]["steps"]
+fetch = next(s for s in steps if s["name"] == "Fetch the history of earlier runs")
+pages = next(s for s in steps if s.get("id") == "pages")
+assert fetch["if"] == "steps.pages.outputs.publish == 'true'", fetch["if"]
+assert "steps.pages.outputs.url" in fetch["env"]["PAGES_URL"]
+assert "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'" in pages["if"]
+PY
+}
+expect 0 "history: the fetch runs when Pages said publish, and the Pages step keeps its condition" fetch_condition
+no_required_sections() {
+  python3 - "$actions/report/action.yml" <<'PY'
+import sys, yaml
+inputs = yaml.safe_load(open(sys.argv[1]))["inputs"]
+assert not inputs["sections"].get("required"), "sections must stay optional"
+assert "History" not in inputs["sections"]["default"]
+PY
+}
+expect 0 "history: no new required section for the report action" no_required_sections
+
+# --- report/pages-setting.sh: the address of the page --------------------------
+reset
+mkdir -p "$work/bin"
+cat > "$work/bin/curl" <<'SH'
+#!/bin/sh
+out=
+while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
+printf '%s' "$STUB_BODY" > "$out"
+printf '%s' "$STUB_CODE"
+SH
+chmod +x "$work/bin/curl"
+pages_answer() {  # pages_answer <http code> <body>
+  : > "$work/github-output"
+  (cd "$work" && PATH="$work/bin:$PATH" STUB_CODE="$1" STUB_BODY="$2" RUNNER_TEMP="$work" GH_TOKEN=x \
+    GITHUB_API_URL=https://api.example GITHUB_REPOSITORY=o/r GITHUB_OUTPUT="$work/github-output" \
+    bash "$actions/report/pages-setting.sh")
+}
+output_has() {  # output_has <line>
+  grep -qxF -- "$1" "$work/github-output"
+}
+expect 0 "pages setting: a workflow build says publish" pages_answer 200 '{"build_type": "workflow", "html_url": "https://o.github.io/r/"}'
+expect 0 "pages setting: ... and gives the address of the page" output_has "url=https://o.github.io/r/"
+expect 0 "pages setting: ... and publish=true" output_has "publish=true"
+expect 0 "pages setting: a branch build is a notice" pages_answer 200 '{"build_type": "legacy", "html_url": "https://o.github.io/r/"}'
+expect 1 "pages setting: ... that does not publish" output_has "publish=true"
+expect 1 "pages setting: ... and gives no address" output_has "url=https://o.github.io/r/"
+
+# --- report/history-fetch.sh ---------------------------------------------------
+# Against a real HTTP server, since the script is the way it calls curl: -L, the
+# retry, and the code it reads.
+reset
+mkdir -p "$work/site/r" "$work/build"
+printf '[{"sha": "abc"}]' > "$work/site/r/history.json"
+port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+(cd "$work/site" && exec python3 -m http.server "$port" --bind 127.0.0.1 >/dev/null 2>&1) &
+server=$!
+trap 'kill "$server" 2>/dev/null; rm -rf "$work"' EXIT
+for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$port/" && break; sleep 0.1; done
+fetch() {  # fetch <page url>
+  (cd "$work" && rm -f build/history.json && PAGES_URL="$1" RUNNER_TEMP="$work" bash "$actions/report/history-fetch.sh")
+}
+expect 0 "history fetch: a page with a history.json" fetch "http://127.0.0.1:$port/r/"
+[ "$(cat "$work/build/history.json" 2>/dev/null)" = '[{"sha": "abc"}]' ] && echo "ok    history fetch: ... saved as build/history.json" \
+  || { echo "FAIL  history fetch: build/history.json is not the file served"; failures=$((failures + 1)); }
+grep -q -- '--retry 3' "$actions/report/history-fetch.sh" && echo "ok    history fetch: asks with --retry 3" \
+  || { echo "FAIL  history fetch: curl is not called with --retry 3"; failures=$((failures + 1)); }
+expect 0 "history fetch: ... and an address with no slash at the end" fetch "http://127.0.0.1:$port/r"
+refuses_text "history fetch: no history.json yet is a notice, not a failure" 0 "::notice::" fetch "http://127.0.0.1:$port/missing/"
+refuses_text "history fetch: ... that says the history starts with this run" 0 "starts with this run" fetch "http://127.0.0.1:$port/missing/"
+[ ! -e "$work/build/history.json" ] && echo "ok    history fetch: ... and saves nothing" \
+  || { echo "FAIL  history fetch: a 404 left a build/history.json"; failures=$((failures + 1)); }
+kill "$server"; wait "$server" 2>/dev/null
+refuses_text "history fetch: a server that does not answer is an error" 1 "::error::" fetch "http://127.0.0.1:$port/r/"
+refuses_text "history fetch: ... that names the code" 1 "returned HTTP 000" fetch "http://127.0.0.1:$port/r/"
+refuses_text "history fetch: no address is an error" 1 "::error::" fetch ""
 
 # --- scripts/move-major-branch.sh --------------------------------------------
 # Against a bare repository standing in for origin. Two commits, a then b.

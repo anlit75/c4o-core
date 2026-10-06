@@ -8,6 +8,7 @@ import unittest
 import tempfile
 import shutil
 import calendar
+import html
 from unittest.mock import patch, MagicMock
 
 # Add scripts/ to path
@@ -1844,7 +1845,7 @@ class TestEntrypoint(unittest.TestCase):
         try:
             page = self._run_site()
             area = page[page.index('<section id="area">'):page.index('<section id="power">')]
-            self.assertIn("<h2>Area and instances</h2>", area)
+            self.assertIn("<h2>Area and Instances</h2>", area)
             self.assertIn("110 after synthesis, 198 after routing", area)
             self.assertNotIn("cell", area)
             # Without synthesis's stat.json the page only has the routed count.
@@ -1856,6 +1857,378 @@ class TestEntrypoint(unittest.TestCase):
             self.assertNotIn("after synthesis", page)
         finally:
             os.chdir(cwd)
+
+    # --- history and files: what each section ends with ---
+
+    HIST_ENV = {"GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "Some/repo",
+                "GITHUB_SHA": "9b2e3e3abcdef"}
+
+    def _history_site(self, rows=None, env=None, edit=None):
+        """The fixture run, built with `rows` as build/history.json and `env` set."""
+        os.chdir(self.test_dir)
+        self.addCleanup(os.chdir, self.cwd_before)
+        if rows is not None:
+            os.makedirs("build", exist_ok=True)
+            with open("build/history.json", "w") as f:
+                json.dump(rows, f)
+        with patch.dict(os.environ, env or {}):
+            return self._run_site(edit)
+
+    def _rows(self, n=6, **fields):
+        """n rows as an earlier run would have written them, with the clock and the version each changing once."""
+        return [dict({"sha": f"{i:07x}0000", "c4o_version": "2.21.0" if i < 4 else "2.22.0",
+                      "clock_period": 20.0 if i < 3 else 10.0,
+                      "rtl_passed": 3, "rtl_total": 3, "gl_passed": 3, "gl_total": 3,
+                      "regress_passed": 6, "regress_total": 6,
+                      "cov_block": 70.0 + i, "cov_branch": 60.0 + i, "cov_toggle": 50.0 + i,
+                      "setup_ws": 4.0 + i / 10, "hold_ws": 0.1, "area_ff": 680.0, "area_logic": 680.0 + i,
+                      "area_routed": 1900.0, "inst_synth": 110, "inst_routed": 198,
+                      "power_w": 0.000248, "ir_drop_v": 0.0123, "ir_drop_pct": 0.68}, **fields)
+                for i in range(n)]
+
+    def _section(self, page, name):
+        return re.search(rf'<section id="{name}">.*?</section>', page, re.S).group(0)
+
+    def test_site_adds_this_runs_row_on_actions_and_none_locally(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site()
+        # A local `make site` is not a commit: no row, no file, no fold.
+        self.assertFalse(os.path.exists("build/site/history.json"))
+        self.assertNotIn("hist-fold", page)
+        shutil.rmtree("runs")
+        shutil.rmtree("build/site")
+        with patch.dict(os.environ, self.HIST_ENV, clear=False), \
+                patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1790000000"}):
+            self._run_site()
+        with open("build/site/history.json") as f:
+            (row,) = json.load(f)
+        self.assertEqual(row["sha"], "9b2e3e3abcdef")
+        self.assertEqual(row["built"], "2026-09-21T14:13:20Z")
+        with open(os.path.join(os.path.dirname(entrypoint.__file__), "..", "version.txt")) as f:
+            self.assertEqual(row["c4o_version"], f.read().strip())
+        # The numbers the sections show, from the fixture run.
+        self.assertEqual(row["clock_period"], 10.0)
+        self.assertAlmostEqual(row["setup_ws"], 4.70, places=2)
+        self.assertEqual((row["inst_synth"], row["inst_routed"]), (110, 198))
+        self.assertAlmostEqual(row["area_ff"], 683.1552)
+        self.assertAlmostEqual(row["area_routed"], 1906.8, places=1)
+        self.assertAlmostEqual(row["power_w"] * 1e3, 0.2479, places=3)
+        self.assertAlmostEqual(row["ir_drop_v"], 0.0123)
+        self.assertAlmostEqual(row["ir_drop_pct"], 0.6833, places=3)
+        # What was not run is null, not zero.
+        for key in ("rtl_passed", "rtl_total", "gl_total", "regress_total", "cov_block"):
+            self.assertIsNone(row[key], key)
+
+    def test_site_takes_the_tests_the_regression_and_the_coverage_into_the_row(self):
+        self.cwd_before = os.getcwd()
+        os.chdir(self.test_dir)
+        self.addCleanup(os.chdir, self.cwd_before)
+        os.makedirs("build/coverage")
+        os.makedirs("build/regress")
+        with open("build/cocotb-results.xml", "w") as f:
+            f.write(self.COCOTB_XML)
+        with open("build/regress/summary.json", "w") as f:
+            json.dump({"seed": 1, "runs": [{"entry": "a", "seed": 1, "verdict": "pass"},
+                                           {"entry": "a", "seed": 2, "verdict": "fail"}]}, f)
+        with open("build/coverage/summary.json", "w") as f:
+            json.dump({"types": {"line": {"hit": 3, "total": 5, "percent": 60.0},
+                                 "toggle": {"hit": 1, "total": 4, "percent": 25.0}}}, f)
+        with patch.dict(os.environ, self.HIST_ENV):
+            self._site({"DESIGN_NAME": "top"})
+        with open("build/site/history.json") as f:
+            (row,) = json.load(f)
+        self.assertEqual((row["rtl_passed"], row["rtl_total"]), (1, 2))
+        self.assertEqual((row["gl_passed"], row["gl_total"]), (None, None))
+        self.assertEqual((row["regress_passed"], row["regress_total"]), (1, 2))
+        self.assertEqual((row["cov_block"], row["cov_branch"], row["cov_toggle"]), (60.0, None, 25.0))
+
+    def test_site_replaces_the_row_of_the_same_commit_where_it_stands(self):
+        self.cwd_before = os.getcwd()
+        rows = self._rows(3)
+        rows[1]["sha"] = "9b2e3e3abcdef"
+        rows[1]["setup_ws"] = -9.0
+        self._history_site(rows, self.HIST_ENV)
+        with open("build/site/history.json") as f:
+            merged = json.load(f)
+        self.assertEqual([r["sha"] for r in merged], [rows[0]["sha"], "9b2e3e3abcdef", rows[2]["sha"]])
+        self.assertNotEqual(merged[1]["setup_ws"], -9.0)
+        # A new commit goes last.
+        shutil.rmtree("runs")
+        with patch.dict(os.environ, dict(self.HIST_ENV, GITHUB_SHA="aaaaaaa")):
+            self._run_site()
+        with open("build/site/history.json") as f:
+            self.assertEqual([r["sha"] for r in json.load(f)][-2:], [rows[2]["sha"], "aaaaaaa"])
+
+    def test_site_shows_and_copies_the_history_when_it_adds_no_row(self):
+        self.cwd_before = os.getcwd()
+        rows = self._rows(4)
+        page = self._history_site(rows)
+        with open("build/site/history.json") as f:
+            self.assertEqual(json.load(f), rows)
+        self.assertIn("History (4 commits)", page)
+        self.assertIn('<a href="history.json" download>history.json</a>', self._section(page, "summary"))
+
+    def test_site_refuses_a_history_that_is_not_a_list_of_objects(self):
+        self.cwd_before = os.getcwd()
+        os.chdir(self.test_dir)
+        self.addCleanup(os.chdir, self.cwd_before)
+        for text in ("not json", '{"sha": "a"}', "[1, 2]", "null"):
+            with self.subTest(text=text):
+                shutil.rmtree("runs", ignore_errors=True)
+                os.makedirs("build", exist_ok=True)
+                with open("build/history.json", "w") as f:
+                    f.write(text)
+                with self.assertRaises(SystemExit) as raised, contextlib.redirect_stdout(io.StringIO()) as err:
+                    shutil.copytree(self.RUN_FIXTURE, "runs")
+                    entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "blinky"})
+                self.assertEqual(raised.exception.code, 1)
+                self.assertIn("build/history.json", err.getvalue())
+
+    def test_a_section_has_a_history_fold_only_when_a_row_has_a_value_for_it(self):
+        self.cwd_before = os.getcwd()
+        rows = self._rows(5)
+        for row in rows:  # a history of runs before there was coverage or power
+            for key in ("cov_block", "cov_branch", "cov_toggle", "power_w", "ir_drop_pct", "ir_drop_v"):
+                row[key] = None
+        page = self._history_site(rows)
+        self.assertIn("History (5 commits)", self._section(page, "timing"))
+        self.assertIn("History (5 commits)", self._section(page, "area"))
+        self.assertNotIn("History", self._section(page, "power"))
+        # Summary and Signoff chart nothing.
+        self.assertNotIn("History", self._section(page, "summary"))
+        self.assertNotIn("History", self._section(page, "signoff"))
+        self.assertEqual(page.count('<details class="hist-fold">'), 2)
+
+    def test_a_history_fold_is_collapsed_and_the_last_thing_in_its_section(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site(self._rows(5))
+        timing = self._section(page, "timing")
+        self.assertTrue(timing.index("Constraints the run used") < timing.index("<details class=\"hist-fold\">"))
+        self.assertTrue(timing.endswith("</div></details></section>"))
+        self.assertNotIn("<details open", page)
+        self.assertEqual(page.count("<svg"), 2 + 2 + 2)  # timing, area and instances, power
+        self.assertEqual(self._section(page, "area").count("<svg"), 2)
+
+    def test_a_chart_of_one_point_draws_without_dividing_by_zero(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site(self._rows(1))
+        self.assertIn("History (1 commit)", page)
+        timing = self._section(page, "timing")
+        # Centred in the 320 wide box between its 40 left and 8 right margins.
+        self.assertIn('cx="176.0"', timing)
+        self.assertNotIn("nan", page.lower().replace("finance", ""))
+        self.assertNotIn("inf", re.sub(r"info|infinit", "", page.lower()).replace("inferred", ""))
+        # Flat series too: every value the same.
+        flat = self._rows(4, setup_ws=1.0, hold_ws=1.0)
+        shutil.rmtree("runs")
+        shutil.rmtree("build/site")
+        page = self._history_site(flat)
+        self.assertNotIn("nan", self._section(page, "timing").lower())
+
+    def test_a_marker_labels_where_the_clock_or_the_version_changes(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site(self._rows(6))
+        timing = self._section(page, "timing")
+        # Rows 3 (clock 20 -> 10 ns) and 4 (2.21.0 -> 2.22.0): one dotted line each, in each chart.
+        self.assertEqual(timing.count('class="mark"'), 4)
+        self.assertEqual(timing.count(">10 ns</text>"), 2)
+        self.assertEqual(timing.count(">2.22.0</text>"), 2)
+        # None where nothing differs.
+        flat = self._rows(4, c4o_version="2.22.0", clock_period=10.0)
+        shutil.rmtree("runs")
+        shutil.rmtree("build/site")
+        self.assertNotIn('class="mark"', self._history_site(flat))
+
+    def test_the_unit_of_a_chart_keeps_its_case_in_a_title_set_in_capitals(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site(self._rows(3))
+        labels = re.findall(r'<div class="label">(.*?)</div>', page[page.index("hist-fold"):])
+        units = [re.search(r'<span class="unit">(.*?)</span>', label).group(1) for label in labels if "unit" in label]
+        self.assertEqual([html.unescape(u) for u in units],
+                         ["(ns)", "(ns)", "(µm²)", "(mW)", "(% of supply)"])
+        self.assertTrue(all(t in "".join(labels) for t in ("µm²", "mW", "ns", "%")))
+        # The unit is not inside the text the capitals reach, and the rule turns them off.
+        self.assertRegex(entrypoint.site_page.CSS, r"\.hist \.label \.unit \{[^}]*text-transform: none")
+        for label in labels:
+            self.assertRegex(label, r'^[^<]*( <span class="unit">\([^<]*\)</span>)?$')
+
+    def test_the_stacked_layers_wear_the_colours_of_the_bars(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site(self._rows(4))
+        area = self._section(page, "area")
+        fold = area[area.index("hist-fold"):]
+        for cls in ("seg-ff", "seg-logic", "seg-flow", "seg-synthesis"):
+            self.assertIn(f'<polygon points', fold)
+            self.assertRegex(fold, rf'class="{cls}"')
+            self.assertIn(f".hist svg .{cls}", entrypoint.site_page.CSS)
+        self.assertNotIn("opacity", fold)
+        self.assertNotRegex(entrypoint.site_page.CSS.split("/* History")[1], r"opacity")
+        # Hover on a commit: every layer and the total.
+        self.assertIn("0000000: flip-flops 680.0 µm²; combinational logic 680.0 µm²; "
+                      "added or resized by place and route 540.0 µm² (total 1,900.0 µm²)", fold)
+        self.assertIn("0000000: from synthesis 110; added by the flow 88 (total 198)", fold)
+
+    def test_the_power_charts_say_zero_as_0_and_the_ir_drop_as_the_page_does(self):
+        self.cwd_before = os.getcwd()
+        rows = self._rows(3, power_w=0.0, ir_drop_pct=0.0, ir_drop_v=0.0)
+        rows[2].update(ir_drop_pct=0.0029, power_w=0.000248)
+        page = self._history_site(rows)
+        power = self._section(page, "power")
+        self.assertIn("<title>0000000: 0%</title>", power)
+        self.assertIn("<title>0000002: 0.0029%</title>", power)
+        self.assertIn("<title>0000000: 0.000 mW</title>", power)
+        self.assertIn("<title>0000002: 0.248 mW</title>", power)
+        self.assertNotIn("0.0000%", power)
+
+    def test_the_ir_drop_share_is_null_when_the_corner_names_no_supply(self):
+        self.cwd_before = os.getcwd()
+        os.chdir(self.test_dir)
+        self.addCleanup(os.chdir, self.cwd_before)
+        shutil.copytree(self.RUN_FIXTURE, "runs")
+        path = "runs/blinky_run/55-openroad-stapostpnr/config.json"
+        with open(path) as f:
+            run_config = json.load(f)
+        run_config["DEFAULT_CORNER"] = "typical"
+        with open(path, "w") as f:
+            json.dump(run_config, f)
+        with patch.dict(os.environ, self.HIST_ENV):
+            self._site()
+        with open("build/site/history.json") as f:
+            (row,) = json.load(f)
+        self.assertIsNone(row["ir_drop_pct"])
+        self.assertAlmostEqual(row["ir_drop_v"], 0.0123)
+
+    def test_the_slack_charts_mark_zero_in_the_fail_colour(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site(self._rows(4, setup_ws=-0.5, hold_ws=2.0))
+        timing = self._section(page, "timing")
+        self.assertEqual(timing.count('class="zero"'), 2)
+        self.assertRegex(entrypoint.site_page.CSS, r"\.hist svg \.zero \{[^}]*stroke: var\(--fail\)")
+        self.assertNotIn('class="zero"', self._section(page, "area"))
+
+    def test_the_history_is_escaped_and_a_stray_value_is_a_gap(self):
+        self.cwd_before = os.getcwd()
+        rows = self._rows(3)
+        rows[0]["sha"] = "<script>alert(1)</script>"
+        rows[1]["setup_ws"] = "fast"
+        rows[1]["c4o_version"] = "<b>"
+        rows[2]["hold_ws"] = True
+        page = self._history_site(rows)
+        self.assertNotIn("<script", page)
+        self.assertNotIn("<b>", page)
+        self.assertIn("&lt;script", page)
+
+    def test_the_coverage_tests_and_regression_charts_use_the_pages_own_names(self):
+        self.cwd_before = os.getcwd()
+        os.chdir(self.test_dir)
+        self.addCleanup(os.chdir, self.cwd_before)
+        os.makedirs("build/coverage")
+        os.makedirs("build/regress")
+        with open("build/cocotb-results.xml", "w") as f:
+            f.write(self.COCOTB_XML)
+        with open("build/cocotb-gl-results.xml", "w") as f:
+            f.write(self.COCOTB_XML)
+        with open("build/regress/summary.json", "w") as f:
+            json.dump({"seed": 1, "runs": [{"entry": "a", "seed": 1, "verdict": "pass"}]}, f)
+        with open("build/coverage/summary.json", "w") as f:
+            json.dump(self.summary_for_history(), f)
+        with open("build/history.json", "w") as f:
+            json.dump(self._rows(4), f)
+        page = self._site({"DESIGN_NAME": "top"})
+        coverage = self._section(page, "coverage")
+        self.assertIn('<li style="--c: var(--accent)">Block</li>', coverage)
+        self.assertIn('<li style="--c: var(--skip)">Branch</li>', coverage)
+        self.assertIn('<li style="--c: var(--accent2)">Toggle</li>', coverage)
+        self.assertNotIn(">line<", coverage.lower().split("history")[1])
+        self.assertEqual(coverage.count("<svg"), 1)
+        self.assertIn("RTL passed", self._section(page, "tests"))
+        self.assertIn("Gate level passed", self._section(page, "tests"))
+        self.assertIn("Runs passed", self._section(page, "regression"))
+
+    def summary_for_history(self):
+        return {"types": {"line": {"hit": 3, "total": 5, "percent": 60.0}}, "modules": [], "runs": 0}
+
+    def test_each_section_ends_with_the_files_it_offers(self):
+        self.cwd_before = os.getcwd()
+        os.chdir(self.test_dir)
+        self.addCleanup(os.chdir, self.cwd_before)
+        shutil.copytree(self.RUN_FIXTURE, "runs")
+        final = "runs/blinky_run/final"
+        for sub, name, text in (("nl", "blinky.nl.v", "module blinky; endmodule\n"), ("sdc", "blinky.sdc", "create_clock\n")):
+            os.makedirs(os.path.join(final, sub))
+            with open(os.path.join(final, sub, name), "w") as f:
+                f.write(text)
+        os.makedirs("build/coverage")
+        os.makedirs("build/regress")
+        for path, text in (("build/cocotb-results.xml", self.COCOTB_XML), ("build/cocotb-gl-results.xml", self.COCOTB_XML),
+                           ("build/coverage/summary.json", '{"types": {}}'),
+                           ("build/regress/summary.json", '{"seed": 1, "runs": [{"entry": "a", "seed": 1, "verdict": "pass"}]}')):
+            with open(path, "w") as f:
+                f.write(text)
+        page = self._site()
+        def files(section):
+            return re.findall(r'<a href="([^"]+)" download>', self._section(page, section))
+        self.assertEqual(files("summary"), ["metrics.json"])
+        self.assertEqual(files("tests"), ["cocotb-results.xml", "cocotb-gl-results.xml"])
+        self.assertEqual(files("regression"), ["regress-summary.json"])
+        self.assertEqual(files("coverage"), ["coverage-summary.json"])
+        self.assertEqual(files("timing"), ["blinky.sdc"])
+        self.assertEqual(files("area"), ["blinky.nl.v"])
+        self.assertEqual(files("power"), [])
+        self.assertEqual(files("signoff"), [])
+        for name in ("metrics.json", "cocotb-results.xml", "regress-summary.json", "coverage-summary.json",
+                     "blinky.sdc", "blinky.nl.v"):
+            self.assertTrue(os.path.exists(os.path.join("build/site", name)), name)
+        self.assertFalse(os.path.exists("build/site/summary.json"))
+        # The line is the muted note, the size beside each name.
+        self.assertIn('<p class="note files">Files: <a href="blinky.sdc" download>blinky.sdc</a> '
+                      '<span class="of">13 B</span></p>', self._section(page, "timing"))
+        # The copy is the file of the run, byte for byte.
+        with open("build/site/blinky.nl.v") as f:
+            self.assertEqual(f.read(), "module blinky; endmodule\n")
+
+    def test_a_section_offers_no_file_that_does_not_exist(self):
+        self.cwd_before = os.getcwd()
+        os.chdir(self.test_dir)
+        self.addCleanup(os.chdir, self.cwd_before)
+        shutil.copytree(self.RUN_FIXTURE, "runs")
+        page = self._site()
+        self.assertNotIn("Files:", self._section(page, "timing"))
+        self.assertNotIn("Files:", self._section(page, "area"))
+        self.assertEqual(page.count("Files:"), 1)  # metrics.json under Summary only
+
+    def test_the_netlist_and_the_constraints_are_of_the_run_the_metrics_are(self):
+        self.cwd_before = os.getcwd()
+        os.chdir(self.test_dir)
+        self.addCleanup(os.chdir, self.cwd_before)
+        shutil.copytree(self.RUN_FIXTURE, "runs")
+        old = "runs/old_run/final"
+        os.makedirs(old + "/nl")
+        os.makedirs(old + "/sdc")
+        open(old + "/nl/old.nl.v", "w").close()
+        open(old + "/sdc/old.sdc", "w").close()
+        os.utime(old + "/nl/old.nl.v", (1, 1))
+        page = self._site()  # blinky_run's metrics is the newest; old_run has none
+        self.assertNotIn("old.nl.v", page)
+        self.assertNotIn("old.sdc", page)
+        # A metrics.json that does not sit at <run>/final/ has no run to take them from.
+        shutil.rmtree("build/site")
+        os.makedirs("runs/other")
+        shutil.copy("runs/blinky_run/final/metrics.json", "runs/other/metrics.json")
+        os.makedirs("runs/other/nl")
+        open("runs/other/nl/blinky.nl.v", "w").close()
+        with patch.object(entrypoint, "METRICS_GLOBS", ["runs/other/metrics.json"]):
+            page = self._site()
+        self.assertNotIn("blinky.nl.v", page)
+        self.assertFalse(os.path.exists("build/site/blinky.nl.v"))
+        self.assertIn('<a href="metrics.json" download>', page)
+
+    def test_the_area_section_is_called_area_and_instances_with_capitals(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site()
+        self.assertIn("<h2>Area and Instances</h2>", page)
+        self.assertIn('<a href="#area">Area and Instances</a>', page)
+        self.assertNotIn("Area and instances", page)
 
     # --- drive strength: the _N of the cell name, after synthesis and after routing ---
 
@@ -2326,8 +2699,10 @@ class TestEntrypoint(unittest.TestCase):
             self.assertIn('<a class="btn" href="https://github.com/Some/repo">View source</a>', page)
             # The schematic is a file of `make schematic`, not part of the page.
             self.assertNotIn("Schematic", page)
-            # Only the constraints and the drive strength fold away.
-            self.assertEqual(page.count("<details"), 2)
+            # Only the constraints and the drive strength fold away, besides the
+            # History folds that this commit's row gives timing, area and power.
+            self.assertEqual(page.count("<details"), 2 + page.count('<details class="hist-fold"'))
+            self.assertEqual(page.count('<details class="hist-fold"'), 3)
         finally:
             os.chdir(cwd)
 

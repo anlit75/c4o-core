@@ -8,6 +8,7 @@ markup. Nothing here touches the filesystem except to parse the XML it is
 handed.
 """
 import html
+import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -154,6 +155,31 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
   th { letter-spacing: .02em; font-size: 11px; } th, td { padding-right: 8px; }
   td.bar, th.bar { width: 60px; } }
 @media (max-width: 360px) { .kpi.coverage .stat .value { font-size: 17px; } }
+/* History: small charts, two to a row. A lone chart fills one column, as wide as one of two. */
+.hist { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.hist .kpi { grid-column: auto; }
+@media (max-width: 760px) { .hist { grid-template-columns: 1fr; } }
+.hist .legend { margin: 4px 0 0; font-size: 13px; }
+/* The title is in capitals; a unit is not: capitals turn the micro sign into MM and mW into MW. */
+.hist .label .unit { text-transform: none; letter-spacing: 0; }
+.hist svg { display: block; width: 100%; height: auto; margin-top: 6px; overflow: visible; }
+.hist svg .ax, .hist svg .mk { font: 10px system-ui, sans-serif; fill: var(--muted); }
+.hist svg .base { stroke: var(--line); }
+.hist svg .zero { stroke: var(--fail); stroke-dasharray: 3 3; }
+.hist svg .mark { stroke: var(--muted); stroke-dasharray: 2 3; }
+.hist svg polyline { fill: none; stroke-width: 1.8; }
+.hist svg polyline.s1 { stroke: var(--accent); } .hist svg circle.s1 { fill: var(--accent); }
+.hist svg polyline.s2 { stroke: var(--skip); } .hist svg circle.s2 { fill: var(--skip); }
+.hist svg polyline.s3 { stroke: var(--muted); stroke-dasharray: 4 3; } .hist svg circle.s3 { fill: var(--muted); }
+.hist svg polyline.s4 { stroke: var(--pass); } .hist svg circle.s4 { fill: var(--pass); }
+.hist svg polyline.s5 { stroke: var(--accent2); } .hist svg circle.s5 { fill: var(--accent2); }
+/* The layers wear the bars' colours, with a thin gap in the card's colour. */
+.hist svg .seg-ff, .hist svg .seg-synthesis { fill: var(--accent); }
+.hist svg .seg-logic { fill: var(--accent2); } .hist svg .seg-flow { fill: var(--muted); }
+.hist svg polygon, .hist svg rect.seg-ff, .hist svg rect.seg-logic, .hist svg rect.seg-flow,
+.hist svg rect.seg-synthesis { stroke: var(--card); stroke-width: .6; }
+.hist svg rect.hit { fill: transparent; }
+.files .of { font-variant-numeric: tabular-nums; }
 """
 
 def cocotb_cases(path):
@@ -526,6 +552,15 @@ def timing_section(physical):
                 + "</table></div></details>")
     return out
 
+def ir_drop_share(physical):
+    """
+    The worst static IR drop as a percentage of the corner's supply, or None
+    when the run reported none or its corner names no voltage. The Power
+    section's line and the History chart both read it from here.
+    """
+    ir, volts = physical.get("ir_worst"), corner_volts(physical.get("corner"))
+    return ir / volts * 100 if ir is not None and volts else None
+
 def ir_drop_line(physical):
     """
     Static IR drop as one line for the Power section, or "" when the run did
@@ -536,7 +571,7 @@ def ir_drop_line(physical):
     if ir is None:
         return ""
     volts = corner_volts(physical.get("corner"))
-    share = f", {significant(ir / volts * 100)}% of {volts:.2f} V" if volts else ""
+    share = f", {significant(ir_drop_share(physical))}% of {volts:.2f} V" if volts else ""
     return (f"<p>Static IR drop, worst: {significant(ir * 1000)} mV{share}, "
             "from OpenROAD (<code>ir__drop__worst</code>).</p>")
 
@@ -741,10 +776,315 @@ def summary_cards(numbers, physical, power, signoff, coverage=None):
     cards = [c for c in cards if c]
     return f'<h2>Summary</h2><div class="kpis">{"".join(cards)}</div>' if cards else ""
 
+# The History fold at the end of a section. Charts are inline SVG built here,
+# with no script and no library: the page is a static file on GitHub Pages and
+# should still read when it is saved or printed.
+HIST_W, HIST_H, HIST_LEFT, HIST_RIGHT, HIST_TOP, HIST_BOTTOM = 320, 120, 40, 8, 16, 18
+
+def hist_num(row, key):
+    """
+    A row's value as a float, or None. The file came from an earlier run of
+    some c4o-core version, so a missing key, a null or a stray string is a gap
+    in the chart and never an error.
+    """
+    value = row.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+def hist_column(rows, key, scale=1):
+    """One value per row, None where the row has none."""
+    return [None if hist_num(row, key) is None else hist_num(row, key) * scale for row in rows]
+
+def hist_sha(row):
+    """The short commit name a chart prints."""
+    return str(row.get("sha") or "?")[:7]
+
+def hist_scale(columns, floor=None, ceil=None, include_zero=False):
+    """
+    Where a value lands in a chart of one or more columns, as
+    (first, last, x, y, low tick, high tick), or None when no column has a
+    value. `first` and `last` are the first and last row that has one: a chart
+    does not leave empty space for the commits from before its data began.
+
+    floor, ceil  -- a bound the axis must end at, such as 0 and 100 for a share
+    include_zero -- the axis must reach 0, as a slack chart's does, for the line
+                    that marks a failing slack
+    """
+    seen = [i for col in columns for i, v in enumerate(col) if v is not None]
+    if not seen:
+        return None
+    first, last = min(seen), max(seen)
+    values = [v for col in columns for v in col if v is not None]
+    low, high = min(values), max(values)
+    if include_zero:
+        low, high = min(low, 0), max(high, 0)
+    low = low if floor is None else floor
+    high = high if ceil is None else ceil
+    # A flat series has no range to pad: give it one, so nothing divides by zero.
+    pad = (high - low) * 0.08 or abs(high) * 0.1 or 1
+    bottom = low if floor is not None else low - pad
+    top = high if ceil is not None else high + pad
+    inner_w, inner_h = HIST_W - HIST_LEFT - HIST_RIGHT, HIST_H - HIST_TOP - HIST_BOTTOM
+    # One point has no span to spread over: it sits in the middle.
+    x = lambda i: HIST_LEFT + inner_w * ((i - first) / (last - first) if last > first else 0.5)
+    y = lambda v: HIST_TOP + inner_h * (top - v) / (top - bottom)
+    return first, last, x, y, low, high
+
+def hist_markers(rows, first, last):
+    """
+    (row index, label) where the clock period or the c4o-core version differs
+    from the row before: the numbers can move there with no change to the
+    design. Two changes on one commit share one label.
+    """
+    out = []
+    for i in range(max(first, 1), last + 1):
+        tags = []
+        before, now = hist_num(rows[i - 1], "clock_period"), hist_num(rows[i], "clock_period")
+        if before is not None and now is not None and before != now:
+            tags.append(f"{now:g} ns")
+        before, now = rows[i - 1].get("c4o_version"), rows[i].get("c4o_version")
+        if isinstance(before, str) and isinstance(now, str) and before != now:
+            tags.append(now)
+        if tags:
+            out.append((i, " · ".join(tags)))
+    return out
+
+def hist_frame(rows, scale, ticks, label):
+    """
+    What every chart shares: the SVG tag, the two axis values, the baseline,
+    the commit markers and the oldest and newest commit under it.
+
+    ticks -- (low, high) axis texts
+    """
+    first, last, x, y, low, high = scale
+    out = [f'<svg viewBox="0 0 {HIST_W} {HIST_H}" role="img" aria-label="{html.escape(label)} by commit">']
+    # One text when both ends read the same, as a flat series does.
+    for value, text in ((low, ticks[0]), (high, ticks[1])) if ticks[0] != ticks[1] else ((low, ticks[0]),):
+        out.append(f'<text x="{HIST_LEFT - 6}" y="{y(value) + 4:.1f}" text-anchor="end" class="ax">{html.escape(text)}</text>')
+    base = HIST_H - HIST_BOTTOM
+    out.append(f'<line x1="{HIST_LEFT}" y1="{base}" x2="{HIST_W - HIST_RIGHT}" y2="{base}" class="base"/>')
+    for i, tag in hist_markers(rows, first, last):
+        # The label runs to the right of its line, or to the left near the edge.
+        near_end = x(i) > HIST_W * 0.7
+        anchor = ' text-anchor="end"' if near_end else ""
+        out.append(f'<line x1="{x(i):.1f}" y1="{HIST_TOP - 4}" x2="{x(i):.1f}" y2="{base}" class="mark"/>'
+                   f'<text x="{x(i) + (-3 if near_end else 3):.1f}" y="{HIST_TOP - 6}"{anchor} '
+                   f'class="mk">{html.escape(tag)}</text>')
+    return out
+
+def hist_ends(rows, scale):
+    """The oldest and newest commit of a chart, under its x axis."""
+    first, last, x, _, _, _ = scale
+    if first == last:
+        return (f'<text x="{x(first):.1f}" y="{HIST_H - 4}" text-anchor="middle" class="ax">'
+                f'{html.escape(hist_sha(rows[first]))}</text>')
+    return (f'<text x="{HIST_LEFT}" y="{HIST_H - 4}" class="ax">{html.escape(hist_sha(rows[first]))}</text>'
+            f'<text x="{HIST_W - HIST_RIGHT}" y="{HIST_H - 4}" text-anchor="end" class="ax">'
+            f'{html.escape(hist_sha(rows[last]))}</text>')
+
+def hist_runs(column):
+    """The stretches of consecutive rows that have a value, as lists of indices."""
+    runs, run = [], []
+    for i, value in enumerate(column):
+        if value is None:
+            runs, run = (runs + [run] if run else runs), []
+        else:
+            run.append(i)
+    return runs + [run] if run else runs
+
+def hist_line_chart(rows, series, hover, axis, label, floor=None, ceil=None, zero_line=False):
+    """
+    One chart of lines over the commits, or None when no row has a value.
+
+    series -- (css class, name, values per row) per line
+    hover  -- a value as the section prints it, with its unit
+    axis   -- a value as an axis end reads, without the unit
+    """
+    scale = hist_scale([values for _, _, values in series], floor, ceil, zero_line)
+    if scale is None:
+        return None
+    _, _, x, y, low, high = scale
+    out = hist_frame(rows, scale, (axis(low), axis(high)), label)
+    if zero_line:
+        out.append(f'<line x1="{HIST_LEFT}" y1="{y(0):.1f}" x2="{HIST_W - HIST_RIGHT}" y2="{y(0):.1f}" class="zero"/>')
+    for cls, name, values in series:
+        # A commit with no value breaks the line: it was not zero.
+        for run in hist_runs(values):
+            if len(run) > 1:
+                points = " ".join(f"{x(i):.1f},{y(values[i]):.1f}" for i in run)
+                out.append(f'<polyline points="{points}" class="{cls}"/>')
+        for i, v in enumerate(values):
+            if v is not None:
+                said = f"{name} {hover(v)}" if len(series) > 1 else hover(v)
+                out.append(f'<circle cx="{x(i):.1f}" cy="{y(v):.1f}" r="2.2" class="{cls}">'
+                           f'<title>{html.escape(hist_sha(rows[i]))}: {html.escape(said)}</title></circle>')
+    out.append(hist_ends(rows, scale) + "</svg>")
+    return "".join(out)
+
+def hist_stack_chart(rows, layers, hover, axis, label):
+    """
+    One chart of layers stacked over the commits, drawn in the colours of the
+    bars above it, or None when no row has every layer. Hovering a commit
+    names every layer and the total.
+
+    layers -- (css class, name, values per row) per layer, the first at the bottom
+    """
+    count = len(rows)
+    whole = [all(values[i] is not None for _, _, values in layers) for i in range(count)]
+    totals = [sum(values[i] for _, _, values in layers) if whole[i] else None for i in range(count)]
+    scale = hist_scale([totals], floor=0)
+    if scale is None:
+        return None
+    first, last, x, y, low, high = scale
+    out = hist_frame(rows, scale, (axis(low), axis(high)), label)
+    below = [0.0] * count
+    for cls, _, values in layers:
+        above = [None if totals[i] is None else below[i] + values[i] for i in range(count)]
+        for run in hist_runs(above):
+            if len(run) > 1:
+                edge = [f"{x(i):.1f},{y(above[i]):.1f}" for i in run]
+                edge += [f"{x(i):.1f},{y(below[i]):.1f}" for i in reversed(run)]
+                out.append(f'<polygon points="{" ".join(edge)}" class="{cls}"/>')
+            else:
+                i = run[0]  # a lone commit is a column, since it has no neighbour to join
+                out.append(f'<rect x="{x(i) - 3:.1f}" y="{y(above[i]):.1f}" width="6" '
+                           f'height="{y(below[i]) - y(above[i]):.1f}" class="{cls}"/>')
+        below = [b if a is None else a for a, b in zip(above, below)]
+    width = max(2.0, min(8.0, (HIST_W - HIST_LEFT - HIST_RIGHT) / max(last - first, 1)))
+    for i in range(count):
+        if totals[i] is not None:
+            parts = "; ".join(f"{name} {hover(values[i])}" for _, name, values in layers)
+            out.append(f'<rect x="{x(i) - width / 2:.1f}" y="{HIST_TOP}" width="{width:.1f}" '
+                       f'height="{HIST_H - HIST_TOP - HIST_BOTTOM}" class="hit"><title>'
+                       f'{html.escape(hist_sha(rows[i]))}: {html.escape(parts)} (total {html.escape(hover(totals[i]))})'
+                       "</title></rect>")
+    out.append(hist_ends(rows, scale) + "</svg>")
+    return "".join(out)
+
+def hist_card(title, unit, items, svg):
+    """
+    One chart under its title. The unit is its own element: the title is set in
+    capitals and `um^2` in capitals reads as a different unit (MM, MW).
+
+    items -- (colour variable, text) per legend entry, or none for a single line
+    """
+    unit = f' <span class="unit">({html.escape(unit)})</span>' if unit else ""
+    return (f'<div class="kpi"><div class="label">{html.escape(title)}{unit}</div>'
+            + (legend(items) if items else "") + svg + "</div>")
+
+def mw_text(value):
+    """A power in mW as 'power' prints it: 0.248 mW."""
+    return f"{value:.3f} mW"
+
+def plain(value):
+    """An axis end: no unit, and 0 for zero. 5.6, 15, -0.05."""
+    return f"{round(value, 2):g}"
+
+def history_cards(section, rows):
+    """
+    The charts of a section's History fold, as markup, one per measure the
+    section shows. A chart none of the rows has a value for is left out, and a
+    section with none has no fold.
+    """
+    col = lambda key, scale=1: hist_column(rows, key, scale)
+    count = lambda v: f"{v:,.0f}"
+    area = lambda v: f"{v:,.1f} µm²"
+    cards = []
+    def add(title, unit, items, svg):
+        if svg:
+            cards.append(hist_card(title, unit, items, svg))
+    def passed(title, label, total, ok):
+        add(title, "", [("pass", "passed"), ("muted", "total")],
+            hist_line_chart(rows, [("s3", "total", col(total)), ("s4", "passed", col(ok))],
+                            count, count, label, floor=0))
+    if section == "tests":
+        passed("RTL passed", "RTL tests", "rtl_total", "rtl_passed")
+        passed("Gate level passed", "Gate-level tests", "gl_total", "gl_passed")
+    elif section == "regression":
+        passed("Runs passed", "Regression runs", "regress_total", "regress_passed")
+    elif section == "coverage":
+        add("Coverage", "%", [("accent", COVERAGE_LABELS["line"]), ("skip", COVERAGE_LABELS["branch"]),
+                              ("accent2", COVERAGE_LABELS["toggle"])],
+            hist_line_chart(rows, [("s1", COVERAGE_LABELS["line"], col("cov_block")),
+                                   ("s2", COVERAGE_LABELS["branch"], col("cov_branch")),
+                                   ("s5", COVERAGE_LABELS["toggle"], col("cov_toggle"))],
+                            lambda v: f"{v:.1f}%", lambda v: f"{v:.0f}", "Code coverage", floor=0, ceil=100))
+    elif section == "timing":
+        for title, key in (("Setup WS", "setup_ws"), ("Hold WS", "hold_ws")):
+            add(title, "ns", None,
+                hist_line_chart(rows, [("s1", title, col(key))], slack_text, plain, title, zero_line=True))
+    elif section == "area":
+        ff, logic, routed_area = col("area_ff"), col("area_logic"), col("area_routed")
+        # What place and route added, as the bar above works it out: the part
+        # of the routed area that synthesis did not produce, and none when
+        # there is no routed area to compare with.
+        added = [None if f is None or l is None else r - f - l if r is not None and r >= f + l else 0.0
+                 for f, l, r in zip(ff, logic, routed_area)]
+        layers = [("seg-ff", "flip-flops", ff), ("seg-logic", "combinational logic", logic),
+                  ("seg-flow", "added or resized by place and route", added)]
+        # A run with no routed area has the first two only, as the bar has.
+        layers = [layer for layer in layers if any(v is not None for v in layer[2])]
+        shown = {"seg-ff": ("accent", "flip-flops"), "seg-logic": ("accent2", "combinational logic"),
+                 "seg-flow": ("muted", "added by place and route")}
+        add("Area", "µm²", [shown[cls] for cls, _, _ in layers],
+            hist_stack_chart(rows, layers, area, count, "Instance area") if len(layers) > 1 else None)
+        synth, routed_count = col("inst_synth"), col("inst_routed")
+        flow = [None if r is None or s is None or r < s else r - s for s, r in zip(synth, routed_count)]
+        add("Instances", "", [("accent", "from synthesis"), ("muted", "added by the flow")],
+            hist_stack_chart(rows, [("seg-synthesis", "from synthesis", synth), ("seg-flow", "added by the flow", flow)],
+                             count, count, "Instances"))
+    elif section == "power":
+        add("Total power", "mW", None,
+            hist_line_chart(rows, [("s1", "Total power", col("power_w", 1e3))], mw_text,
+                            lambda v: f"{v:.3f}" if v else "0", "Total power", floor=0))
+        add("Static IR drop, worst", "% of supply", None,
+            hist_line_chart(rows, [("s1", "IR drop", col("ir_drop_pct"))], lambda v: f"{significant(v)}%",
+                            significant, "Static IR drop", floor=0))
+    return cards
+
+def history_fold(section, rows):
+    """
+    The collapsed History fold at the end of a section, or "" when the section
+    has no chart or there are no rows. The count is every row of the file: a
+    chart that began later leaves out the commits before its data.
+    """
+    cards = history_cards(section, rows) if rows else []
+    if not cards:
+        return ""
+    return (f'<details class="hist-fold"><summary>History ({len(rows)} commit{"" if len(rows) == 1 else "s"})</summary>'
+            f'<div class="hist">{"".join(cards)}</div></details>')
+
+def files_line(files):
+    """
+    'Files: name size · name size' under a section, each a download, or ""
+    when the section has none.
+
+    files -- (name, bytes) per file, the name being the one next to the page
+    """
+    if not files:
+        return ""
+    esc = html.escape
+    return ('<p class="note files">Files: ' + " &middot; ".join(
+        f'<a href="{esc(name)}" download>{esc(name)}</a> <span class="of">{human_size(size)}</span>'
+        for name, size in files) + "</p>")
+
+# Taiwan time, a fixed offset: no DST, and no tz database in the image.
+TAIPEI = timezone(timedelta(hours=8))
+
+def build_time(env):
+    """
+    When the page was built, as an aware datetime. SOURCE_DATE_EPOCH, when set,
+    pins it (reproducible builds, tests). The page and the history row it adds
+    to history.json read the same clock.
+    """
+    epoch = env.get("SOURCE_DATE_EPOCH")
+    return datetime.fromtimestamp(int(epoch), timezone.utc) if epoch else datetime.now(timezone.utc)
+
 def render(design, numbers, layout, cocotb_runs, env,
            signoff=(), area=None, power=None, gds=None,
            description=None, cells=(), physical=None, drive=(), coverage=None,
-           regression=None):
+           regression=None, history=(), files=()):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -772,6 +1112,10 @@ def render(design, numbers, layout, cocotb_runs, env,
     coverage     -- build/coverage/summary.json as a dict (types, modules, files,
                     uncovered), or None
     regression   -- build/regress/summary.json as a dict (seed, runs), or None
+    history      -- the rows of history.json, oldest first, as entrypoint.history_row
+                    writes them. A section with a value in any row gets a fold
+    files        -- (section anchor, name next to the page, bytes) per file a section
+                    offers; the anchor is the section's id without a number
 
     The page is laid out to be shared, as a portfolio piece: the layout first,
     then the verdicts (tests, timing and its constraints), then what the chip
@@ -858,7 +1202,7 @@ def render(design, numbers, layout, cocotb_runs, env,
         library_line = (f"<p>Standard cell library <code>{esc(library)}</code>"
                         + (", single threshold voltage" if library.startswith("sky130_fd_sc_") else "")
                         + ".</p>" if library else "")
-        add("area", "Area and instances", "<h2>Area and instances</h2>" + library_line
+        add("area", "Area and Instances", "<h2>Area and Instances</h2>" + library_line
             + makeup(area or {}, cells, physical.get("synthesized"))
             + drive_table(drive))
 
@@ -904,11 +1248,7 @@ def render(design, numbers, layout, cocotb_runs, env,
     # When the page was built, always: a published page stays up until the
     # next one replaces it, so a reader needs to know how old it is.
     # SOURCE_DATE_EPOCH, when set, pins it (reproducible builds, tests).
-    epoch = env.get("SOURCE_DATE_EPOCH")
-    # Taiwan time, a fixed offset: no DST, and no tz database in the image.
-    taipei = timezone(timedelta(hours=8))
-    built = (datetime.fromtimestamp(int(epoch), taipei) if epoch
-             else datetime.now(taipei))
+    built = build_time(env).astimezone(TAIPEI)
     meta = [f"Built {built:%Y-%m-%d %H:%M} (UTC+8)"]
     server, repo = env.get("GITHUB_SERVER_URL"), env.get("GITHUB_REPOSITORY")
     sha, run = env.get("GITHUB_SHA"), env.get("GITHUB_RUN_ID")
@@ -952,6 +1292,12 @@ def render(design, numbers, layout, cocotb_runs, env,
         owner, name = repo.split("/", 1)
         og += (f'<meta property="og:image" content="https://{esc(owner.lower())}.github.io/'
                f'{esc(name)}/{esc(layout)}"><meta name="twitter:card" content="summary">')
+
+    # The end of a section: its History fold, then the files it offers.
+    for index, (anchor, label, markup) in enumerate(parts):
+        base = anchor.split("-")[0]
+        parts[index] = (anchor, label, markup + history_fold(base, list(history))
+                        + files_line([(name, size) for sect, name, size in files if sect == base]))
 
     order = ["layout", "summary", "tests", "regression", "coverage", "timing", "area", "power", "signoff"]
     parts.sort(key=lambda p: order.index(p[0].split("-")[0]) if p[0].split("-")[0] in order

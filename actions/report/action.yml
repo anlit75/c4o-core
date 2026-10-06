@@ -8,7 +8,8 @@ description: >
   caller lists Coverage in `sections` and the image has the target, it measures
   code coverage with `make coverage`. On a push to main, or a manual run on
   main, it also asks whether GitHub Pages is set to publish from Actions. If
-  so, it uploads the page for a deploy job.
+  so, it fetches the history of earlier runs from the live page before the
+  page is built, and uploads the page for a deploy job.
 inputs:
   sections:
     description: >
@@ -85,15 +86,12 @@ runs:
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/signoff-summary.sh"
 
-    - name: Build the results page
-      shell: bash
-      env:
-        EXTRA_SECTIONS: ${{ inputs.sections }}
-      run: bash "$GITHUB_ACTION_PATH/results-page.sh"
-
     # Only main is published. A push does it, and so does a manual run. A new
     # c4o-core release changes the page, and a manual run on main refreshes it
     # without a commit. A manual run on another branch does not publish.
+    #
+    # Before the page is built: whether it will be published decides whether
+    # the build fetches the history it adds a row to.
     #
     # Only when the repository has Pages set to "GitHub Actions". A copy of the
     # template starts with Pages off. Turning it on is a setting that no
@@ -106,6 +104,23 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: bash "$GITHUB_ACTION_PATH/pages-setting.sh"
+
+    # The earlier runs' rows, from the page that is live now: the deploy replaces
+    # the whole site, so nothing else has them. Only when the step above said the
+    # page will be published, since only then is there a page to carry them on.
+    # A first run has none, which is a notice, not a red run.
+    - name: Fetch the history of earlier runs
+      if: steps.pages.outputs.publish == 'true'
+      shell: bash
+      env:
+        PAGES_URL: ${{ steps.pages.outputs.url }}
+      run: bash "$GITHUB_ACTION_PATH/history-fetch.sh"
+
+    - name: Build the results page
+      shell: bash
+      env:
+        EXTRA_SECTIONS: ${{ inputs.sections }}
+      run: bash "$GITHUB_ACTION_PATH/results-page.sh"
 
     - name: Upload the results page
       if: steps.pages.outputs.publish == 'true'
