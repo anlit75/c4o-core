@@ -441,7 +441,7 @@ def merged_tests(cocotb_runs):
     def cell(verdict):
         return f'<td class="{verdict}">{verdict}</td>' if verdict else "<td>&mdash;</td>"
     return (f"<h2>Tests: {score}</h2><p>The same cocotb tests, on the RTL and on the "
-            f"gate-level netlist.</p>{seeds}"
+            f"synthesized netlist with the PDK cell models.</p>{seeds}"
             '<div class="scroll"><table class="tests"><tr><th>test</th>'
             + "".join(f"<th>{esc(h)}</th>" for h in heads) + "</tr>" + "".join(
                 f"<tr><td><code>{test_name(name)}</code></td>"
@@ -517,14 +517,16 @@ def signoff_section(signoff, physical):
     rows = ""
     for check, count, tools, failed in signoff:
         result = "FAIL" if count else "PASS"
-        note = {"DRC": tools and f"{tools}", "antenna": "checked by OpenROAD, not by DRC"}.get(check, "")
+        note = {"DRC": tools and f"{tools}", "antenna": "checked by OpenROAD, not by DRC",
+                "XOR": "Magic GDS against KLayout GDS"}.get(check, "")
         errors = f"{count} ({esc(failed)})" if failed else str(count)
         rows += (f'<tr><td>{esc(check)}'
                  + (f' <span class="hint">{esc(note)}</span>' if note else "")
                  + f'</td><td class="num">{errors}</td><td class="{result}">{result}</td></tr>')
     out = ("<h2>Signoff checks</h2><p>The DRC row adds the errors of both tools.</p>"
            '<div class="scroll"><table><tr><th>check</th><th class="num">errors</th><th>result</th></tr>'
-           + rows + "</table></div>")
+           + rows + "</table></div>"
+           "<p>Not analysed: electromigration, crosstalk and dynamic IR drop.</p>")
     ir = physical.get("ir_worst")
     if ir is not None:
         mv = f"{significant(ir * 1000)} mV"
@@ -535,7 +537,7 @@ def signoff_section(signoff, physical):
                 "so it is not a pass or fail."
                 + (f" The supply is the voltage of the default corner, <code>{esc(physical['corner'])}</code>."
                    if volts else "")
-                + " Not analysed: electromigration, crosstalk and dynamic IR drop.</p>")
+                + "</p>")
     return out
 
 COVERAGE_LABELS = {"line": "Block", "branch": "Branch", "toggle": "Toggle", "user": "User cover"}
@@ -590,7 +592,6 @@ def coverage_section(coverage, cocotb_runs=(), regression=None):
         '<td class="bar"><span class="track"><span style="width:'
         f'{entry["percent"] or 0:.0f}%"></span></span></td></tr>'
         for name, entry in ((n, types[n]) for n in COVERAGE_LABELS if n in types))
-    files = coverage.get("files") or []
     seed = coverage.get("seed")
     rtl_seed = next((sd for title, sd, _ in cocotb_runs if title == "cocotb, RTL"), None)
     if coverage.get("runs"):
@@ -598,27 +599,23 @@ def coverage_section(coverage, cocotb_runs=(), regression=None):
         base = (regression or {}).get("seed")
         if regression and str(base) == str(seed):
             # The Regression section shows the seed; naming it again says nothing.
-            seed_line = f"<p>Merged over the {coverage['runs']} runs of Regression.</p>"
+            source = (f"<p>Code coverage of the RTL, from the {coverage['runs']} runs of Regression, "
+                      "run again under Verilator and merged.</p>")
         else:
             match = " It is not the base seed of the Regression section." if regression else ""
-            seed_line = (f"<p>Merged over {coverage['runs']} regression runs, from base seed "
-                         f"<code>{esc(str(seed))}</code>.{match}</p>")
-    elif seed and seed == rtl_seed:
-        seed_line = (f"<p>This run used seed <code>{esc(seed)}</code>, the seed of the RTL run in Tests.</p>")
-    elif seed:
-        seed_line = (f"<p>This run used seed <code>{esc(seed)}</code>. "
-                     "It is not the seed of the RTL run in Tests.</p>")
+            source = (f"<p>Code coverage of the RTL, from {coverage['runs']} regression runs under Verilator, "
+                      f"merged. Base seed <code>{esc(str(seed))}</code>.{match}</p>")
     else:
-        seed_line = ""
-    out = ("<h2>Coverage</h2>"
-           "<p>Code coverage of the RTL, from a second run of the same cocotb tests under Verilator.</p>"
-           "<p>Verilator is 2-state, so this run does not decide pass or fail. The Tests section does.</p>"
-           + seed_line +
+        source = "<p>Code coverage of the RTL, from a second run of the cocotb tests under Verilator.</p>"
+        if seed and seed == rtl_seed:
+            source += f"<p>This run used seed <code>{esc(seed)}</code>, the seed of the RTL run in Tests.</p>"
+        elif seed:
+            source += (f"<p>This run used seed <code>{esc(seed)}</code>. "
+                       "It is not the seed of the RTL run in Tests.</p>")
+    out = ("<h2>Coverage</h2>" + source
+           +
            '<div class="scroll"><table class="coverage"><tr><th>kind</th><th class="num">covered</th>'
            f'<th class="num">share</th><th class="bar"></th></tr>{rows}</table></div>')
-    if files:
-        out += ("<p>Files measured, from <code>VERILOG_FILES</code>: "
-                + ", ".join(f"<code>{esc(f)}</code>" for f in files) + ".</p>")
     out += ('<p class="hint">Not measured: expression and FSM coverage. '
             "The Verilator in the image does not support them.</p>")
 

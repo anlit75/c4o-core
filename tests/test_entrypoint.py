@@ -1539,8 +1539,10 @@ class TestEntrypoint(unittest.TestCase):
                                    r'<td class="num">0</td><td class="PASS">PASS</td>')
             for check in ("Magic DRC", "KLayout DRC", "<td>Magic</td>", "<td>KLayout</td>"):
                 self.assertNotIn(check, page)
-            for check in ("LVS", "XOR"):
-                self.assertIn(f"<td>{check}</td>", page)
+            self.assertIn("<td>LVS</td>", page)
+            # XOR names the two layouts it compares.
+            self.assertIn("<td>XOR <span", page)
+            self.assertIn("Magic GDS against KLayout GDS", page)
             # Antenna stays its own row and says why it is not inside DRC.
             self.assertIn("antenna <span", page)
             self.assertIn("checked by OpenROAD, not by DRC", page)
@@ -1733,8 +1735,10 @@ class TestEntrypoint(unittest.TestCase):
         os.chdir(self.test_dir)
         try:
             page = self._run_site(without)
-            self.assertNotIn("IR drop", page)
+            self.assertNotIn("Static IR drop", page)
             self.assertNotIn("ir__drop", page)
+            # What the flow does not analyse is said either way.
+            self.assertIn("<p>Not analysed: electromigration, crosstalk and dynamic IR drop.</p>", page)
             self.assertIn("<h2>Signoff checks</h2>", page)
         finally:
             os.chdir(cwd)
@@ -3105,17 +3109,16 @@ class TestCoverage(unittest.TestCase):
         self.assertNotIn("Lines no test reached", page)
         self.assertNotIn("q &lt;= d;", page)
         self.assertNotIn("coverage-uncovered", page)
-        self.assertIn("<code>src/top.v</code>", section)
 
     def test_the_section_says_what_it_is_not_and_what_it_leaves_out(self):
         page = self.page(self.summary())
-        self.assertIn("so this run does not decide pass or fail. The Tests section does.", page)
         self.assertIn("Not measured: expression and FSM coverage.", page)
         self.assertNotIn("experimental", page)
         self.assertNotIn("sv2v", page)
         self.assertNotIn("generated <code>.v", page)
         self.assertNotIn("Line/block", page)
-        self.assertIn("Files measured, from <code>VERILOG_FILES</code>: ", page)
+        self.assertNotIn("Files measured", page)
+        self.assertNotIn("2-state", page)
 
     def test_the_page_says_which_seed_the_coverage_run_used(self):
         runs = [("cocotb, RTL", "1789965785", [("t", "PASS", 1.0)])]
@@ -3334,7 +3337,8 @@ class TestCoverage(unittest.TestCase):
         merged = self.summary(seed=31, runs=5)
         same = self.page(merged, regression={"seed": 31, "runs": [{"entry": "t", "seed": 1, "verdict": "pass"}]})
         # The same base seed is named once, in Regression.
-        self.assertIn("Merged over the 5 runs of Regression.", same)
+        self.assertIn("from the 5 runs of Regression, run again under Verilator and merged.", same)
+        self.assertNotIn("second run of the cocotb tests", same)
         self.assertNotIn("<code>31</code>", same[same.index('<section id="coverage">'):])
         other = self.page(merged, regression={"seed": 32, "runs": [{"entry": "t", "seed": 1, "verdict": "pass"}]})
         self.assertIn("It is not the base seed of the Regression section.", other)
