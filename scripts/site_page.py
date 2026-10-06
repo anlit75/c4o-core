@@ -74,7 +74,6 @@ section > p, .note { color: var(--muted); font-size: 14px; }
 details { margin-top: 16px; }
 summary { cursor: pointer; font-weight: 600; font-size: 16px; }
 details > :not(summary) { margin-top: 12px; }
-.narrow-only { display: none; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 15px; }
 th, td { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line);
@@ -146,7 +145,6 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
   table.power td:nth-child(2), table.power th:nth-child(2),
   table.power td:nth-child(3), table.power th:nth-child(3),
   table.power td:nth-child(4), table.power th:nth-child(4) { display: none; }
-  .narrow-only { display: block; }
   table.tests th:not(:first-child), table.tests td:not(:first-child) { width: 56px; }
   th { letter-spacing: .02em; font-size: 11px; } th, td { padding-right: 8px; }
   td.bar, th.bar { width: 60px; } }
@@ -265,11 +263,9 @@ def makeup(area, cells, instances=None):
         items = [("accent", f"flip-flops {um2(ff)}"), ("accent2", f"combinational logic {um2(logic)}")]
         if routed is not None and routed >= synth:
             parts.append(("flow", routed - synth))
-            items.append(("muted", f"added by place and route {um2(routed - synth)} "
-                          '<span class="of">(the difference: timing repair also resizes instances)</span>'))
-            out += (f"<p>Synthesis produced {um2(synth)} of instances; place and route grew it "
-                    f"{(routed - synth) / synth:.0%} to {um2(routed)}, with the clock tree, "
-                    "timing buffers and well taps it added.</p>")
+            items.append(("muted", f"added or resized by place and route {um2(routed - synth)}"))
+            out += (f"<p>Synthesis produced {um2(synth)} of instances. Place and route grew it "
+                    f"by {(routed - synth) / synth:.0%} to {um2(routed)}.</p>")
         out += stack(parts, "Instance area by origin") + legend(items)
     elif routed is not None:
         out += f"<p>Instance area after routing: {um2(routed)}.</p>"
@@ -284,8 +280,7 @@ def makeup(area, cells, instances=None):
         head = (f"{instances:,} after synthesis, {total:,} after routing" if instances is not None
                 else f"{total:,} after routing")
         out += (f"<h3>Instances: {head}</h3>"
-                "<p>Placed instances, by the class LibreLane files each under. "
-                "Fill is not counted.</p>"
+                "<p>Placed instances, by LibreLane class. Fill is not counted.</p>"
                 + stack([(g, sums[g]) for g, _, _ in groups], "Instances by origin")
                 + legend([(colour, f"{name} {sums[g]:,} " + '<span class="of">('
                            + ", ".join(f"{n:,} {esc(cls)}" for cls, n, k in cells if k == g)
@@ -349,8 +344,7 @@ def drive_table(drive):
         f"<tr><td>X{n}</td>" + "".join(f'<td class="num">{row[i]:,}</td>' for i, _ in stages) + "</tr>"
         for row in drive for n in (row[0],))
     total = "".join(f'<td class="num">{sum(row[i] for row in drive):,}</td>' for i, _ in stages)
-    out = ("<p>Instances by the <code>_N</code> that ends their library name, as in <code>dfrtp_2</code>. "
-           "Well taps, decap, fill and antenna diodes have no drive strength and are left out.</p>"
+    out = ("<p>Well taps, decap, fill and antenna diodes have no drive strength and are not counted.</p>"
            f'<div class="scroll"><table class="drive"><tr><th>drive strength</th>{head}</tr>'
            f'{body}<tr class="total"><td>Total</td>{total}</tr></table></div>')
     if len(stages) == 2:
@@ -443,11 +437,11 @@ def merged_tests(cocotb_runs):
                       for h, vs in zip(heads, verdicts))
     seeds = " &middot; ".join(f"{esc(h)} <code>{esc(seed)}</code>"
                               for h, (_, seed, _) in zip(heads, cocotb_runs) if seed)
-    seeds = f"<p>Seeds, which rerun each run exactly: {seeds}.</p>" if seeds else ""
+    seeds = f"<p>Seeds: {seeds}. Each seed reruns its run exactly.</p>" if seeds else ""
     def cell(verdict):
         return f'<td class="{verdict}">{verdict}</td>' if verdict else "<td>&mdash;</td>"
-    return (f"<h2>Tests: {score}</h2><p>The same cocotb tests, run on the RTL and again "
-            f"on the gates synthesis produced.</p>{seeds}"
+    return (f"<h2>Tests: {score}</h2><p>The same cocotb tests, on the RTL and on the "
+            f"synthesized netlist with the PDK cell models.</p>{seeds}"
             '<div class="scroll"><table class="tests"><tr><th>test</th>'
             + "".join(f"<th>{esc(h)}</th>" for h in heads) + "</tr>" + "".join(
                 f"<tr><td><code>{test_name(name)}</code></td>"
@@ -483,8 +477,7 @@ def timing_section(physical):
     out = (f'<h2>Timing</h2><p class="{"PASS" if met else "FAIL"}"><strong>'
            f'{"Timing is met: no setup or hold slack is negative." if met else "Timing is not met."}'
            "</strong></p>"
-           '<p>Worst slack over every corner the flow analysed, after routing. Reg-to-reg is the '
-           "worst slack between flip-flops, without the I/O paths.</p>"
+           '<p>Worst slack after routing, over every corner the flow analysed.</p>'
            '<div class="scroll"><table><tr><th>check</th><th class="num">worst slack</th>'
            '<th class="num">violations</th><th class="num">reg-to-reg</th></tr>'
            + rows + "</table></div>")
@@ -506,8 +499,8 @@ def timing_section(physical):
                  "io_delay": "input and output delay"}
         shown = [n for n in value if n in constraints]
         out += (f'<details class="constraints"><summary>Constraints the run used ({len(shown)})</summary>'
-                "<p>Read from the post-route timing step of the run. "
-                "The slack above holds for these values only.</p>"
+                "<p>From the post-route timing step. "
+                "The slack above holds only for these values.</p>"
                 '<div class="scroll"><table><tr><th>constraint</th><th>value</th><th>source</th></tr>'
                 + "".join(f"<tr><td>{label[name]}</td><td>{value[name](v)}</td>"
                           f"<td>{source[mine]}</td></tr>"
@@ -515,36 +508,39 @@ def timing_section(physical):
                 + "</table></div></details>")
     return out
 
-def signoff_section(signoff, physical):
+def ir_drop_line(physical):
     """
-    The physical verification rows, then static IR drop when the run reported
-    it. DRC is one row for the two tools; antenna says it is not part of them.
+    Static IR drop as one line for the Power section, or "" when the run did
+    not report it. It is an estimate beside the power numbers, not a check:
+    LibreLane sets no limit for it.
+    """
+    ir = physical.get("ir_worst")
+    if ir is None:
+        return ""
+    volts = corner_volts(physical.get("corner"))
+    share = f", {significant(ir / volts * 100)}% of {volts:.2f} V" if volts else ""
+    return (f"<p>Static IR drop, worst: {significant(ir * 1000)} mV{share}, "
+            "from OpenROAD (<code>ir__drop__worst</code>).</p>")
+
+def signoff_section(signoff):
+    """
+    The physical verification rows. DRC is one row for the two tools; antenna
+    says it is not part of them.
     """
     esc = html.escape
     rows = ""
     for check, count, tools, failed in signoff:
         result = "FAIL" if count else "PASS"
-        note = {"DRC": tools and f"{tools}", "antenna": "checked by OpenROAD in this flow, not inside DRC"}.get(check, "")
+        note = {"DRC": tools and f"{tools}", "antenna": "checked by OpenROAD, not by DRC",
+                "XOR": "Magic GDS against KLayout GDS"}.get(check, "")
         errors = f"{count} ({esc(failed)})" if failed else str(count)
         rows += (f'<tr><td>{esc(check)}'
                  + (f' <span class="hint">{esc(note)}</span>' if note else "")
                  + f'</td><td class="num">{errors}</td><td class="{result}">{result}</td></tr>')
-    out = ("<h2>Signoff checks</h2><p>Physical verification of the layout: design rules, layout "
-           "against the netlist (LVS), antenna rules, and XOR, which checks the two tools wrote the same GDS. "
-           "The two DRC tools are independent checkers, and the row adds their errors.</p>"
+    out = ("<h2>Signoff checks</h2><p>The DRC row adds the errors of both tools.</p>"
            '<div class="scroll"><table><tr><th>check</th><th class="num">errors</th><th>result</th></tr>'
-           + rows + "</table></div>")
-    ir = physical.get("ir_worst")
-    if ir is not None:
-        mv = f"{significant(ir * 1000)} mV"
-        volts = corner_volts(physical.get("corner"))
-        share = f", {significant(ir / volts * 100)}% of {volts:.2f} V" if volts else ""
-        out += (f"<p>Static IR drop, worst: {mv}{share}.</p>"
-                '<p class="hint">From OpenROAD (<code>ir__drop__worst</code>), which reports it without '
-                "stopping on it. The supply is the voltage in the name of the run's default corner"
-                + (f", <code>{esc(physical['corner'])}</code>" if volts else "")
-                + ". LibreLane sets no limit, so none is claimed. Not analysed: electromigration, "
-                "crosstalk and dynamic IR drop.</p>")
+           + rows + "</table></div>"
+           "<p>Not analysed: electromigration, crosstalk and dynamic IR drop.</p>")
     return out
 
 COVERAGE_LABELS = {"line": "Block", "branch": "Branch", "toggle": "Toggle", "user": "User cover"}
@@ -599,34 +595,32 @@ def coverage_section(coverage, cocotb_runs=(), regression=None):
         '<td class="bar"><span class="track"><span style="width:'
         f'{entry["percent"] or 0:.0f}%"></span></span></td></tr>'
         for name, entry in ((n, types[n]) for n in COVERAGE_LABELS if n in types))
-    files = coverage.get("files") or []
     seed = coverage.get("seed")
     rtl_seed = next((sd for title, sd, _ in cocotb_runs if title == "cocotb, RTL"), None)
     if coverage.get("runs"):
         # Merged over a test list: the seed is the list's base seed, not a run's.
         base = (regression or {}).get("seed")
-        match = ("It is the base seed of the Regression section." if regression and str(base) == str(seed)
-                 else "It is not the base seed of the Regression section." if regression else "")
-        seed_line = (f"<p>Merged over {coverage['runs']} regression runs, from base seed "
-                     f"<code>{esc(str(seed))}</code>. {match}</p>".replace(" </p>", "</p>"))
-    elif seed and seed == rtl_seed:
-        seed_line = (f"<p>This run used seed <code>{esc(seed)}</code>, the seed of the RTL run in Tests.</p>")
-    elif seed:
-        seed_line = (f"<p>This run used seed <code>{esc(seed)}</code>. "
-                     "It is not the seed of the RTL run in Tests.</p>")
+        if regression and str(base) == str(seed):
+            # The Regression section shows the seed; naming it again says nothing.
+            source = (f"<p>Code coverage of the RTL, from the {coverage['runs']} runs of Regression, "
+                      "run again under Verilator and merged.</p>")
+        else:
+            match = " It is not the base seed of the Regression section." if regression else ""
+            source = (f"<p>Code coverage of the RTL, from {coverage['runs']} regression runs under Verilator, "
+                      f"merged. Base seed <code>{esc(str(seed))}</code>.{match}</p>")
     else:
-        seed_line = ""
-    out = ("<h2>Coverage</h2>"
-           "<p>How much of the RTL the cocotb tests ran. Verilator measured it in a second run of the same tests.</p>"
-           "<p>The Tests section above decides pass and fail. This run does not, because Verilator is 2-state.</p>"
-           + seed_line +
+        source = "<p>Code coverage of the RTL, from a second run of the cocotb tests under Verilator.</p>"
+        if seed and seed == rtl_seed:
+            source += f"<p>This run used seed <code>{esc(seed)}</code>, the seed of the RTL run in Tests.</p>"
+        elif seed:
+            source += (f"<p>This run used seed <code>{esc(seed)}</code>. "
+                       "It is not the seed of the RTL run in Tests.</p>")
+    out = ("<h2>Coverage</h2>" + source
+           +
            '<div class="scroll"><table class="coverage"><tr><th>kind</th><th class="num">covered</th>'
            f'<th class="num">share</th><th class="bar"></th></tr>{rows}</table></div>')
-    if files:
-        out += ("<p>The numbers are for " + ", ".join(f"<code>{esc(f)}</code>" for f in files)
-                + ". These are the files in <code>VERILOG_FILES</code>.</p>")
-    out += ('<p class="hint">Not measured: expression coverage and FSM coverage. '
-            "The Verilator in the image does not have them.</p>")
+    out += ('<p class="hint">Not measured: expression and FSM coverage. '
+            "The Verilator in the image does not support them.</p>")
 
     modules = coverage.get("modules") or []
     if modules:
@@ -655,9 +649,9 @@ def regression_section(regression):
         row[0] += run["verdict"] == "pass"
     passed = sum(done for done, _ in counts.values())
     out = (f"<h2>Regression: {passed}/{len(runs)} runs passed</h2>"
-           "<p>Each test of the list, run once for each of its seeds.</p>"
+           "<p>Each test in the list, run once per seed.</p>"
            f"<p>Base seed <code>{esc(str(regression.get('seed')))}</code>. "
-           "Setting it as <code>SEED</code> reruns the whole list with the same seeds.</p>"
+           f"<code>make regress SEED={esc(str(regression.get('seed')))}</code> reruns the list with the same seeds.</p>"
            '<div class="scroll"><table><tr><th>test</th><th class="num">passed</th></tr>'
            + "".join(f'<tr><td><code>{test_name(entry)}</code></td>'
                      f'<td class="num {"PASS" if done == total else "FAIL"}">{done}/{total}</td></tr>'
@@ -841,19 +835,15 @@ def render(design, numbers, layout, cocotb_runs, env,
         uw = lambda w: f"{w * 1e6:,.1f}" if w * 1e6 >= 0.05 or not w else "&lt;0.1"
         words = corner_words(corner)
         period = (physical.get("constraints") or {}).get("clock_period", (None,))[0]
-        clock = (f" Clock {clock_mhz(period)}, from a period of {period:g} ns."
-                 if clock_mhz(period) else "")
+        clock = f", clock {clock_mhz(period)}" if clock_mhz(period) else ""
         add("power", "Power",
             "<h2>Power</h2><p>" + (f"<strong>{milliwatts(total_w)} in total</strong> at corner "
                                    if total_w is not None else "Corner ")
             + f"<code>{esc(corner)}</code>" + (f" ({words})" if words else "")
-            + f".{clock} Dynamic is internal plus switching. Static is leakage. "
-            "The table is in &micro;W.</p>"
+            + f"{clock}. The table is in &micro;W.</p>"
             "<p>Switching activity is OpenSTA's default, 0.1 toggles per clock on data nets. "
             "It is not taken from simulation, so this estimates where power goes. "
             "It does not measure a workload.</p>"
-            '<p class="hint narrow-only">On a narrow screen the table hides the internal, '
-            "switching and leakage columns.</p>"
             '<div class="scroll"><table class="power"><tr><th>group</th><th class="num">internal</th>'
             '<th class="num">switching</th><th class="num">leakage</th>'
             '<th class="num">total</th><th class="num">share</th><th class="bar"></th></tr>' + "".join(
@@ -866,10 +856,12 @@ def render(design, numbers, layout, cocotb_runs, env,
                 + ("" if group == "Total" else
                    f'<span class="track"><span style="width:{t / total:.0%}"></span></span>')
                 + "</td></tr>"
-                for group, i, sw, lk, t in rows) + "</table></div>")
+                for group, i, sw, lk, t in rows) + "</table></div>" + ir_drop_line(physical))
+    elif ir_drop_line(physical):
+        add("power", "Power", "<h2>Power</h2>" + ir_drop_line(physical))
 
     if signoff:
-        add("signoff", "Signoff", signoff_section(signoff, physical))
+        add("signoff", "Signoff", signoff_section(signoff))
 
     # Only on GitHub Actions, where these say which commit the page shows.
     # When the page was built, always: a published page stays up until the
@@ -957,10 +949,9 @@ def render(design, numbers, layout, cocotb_runs, env,
         + "".join(f'<section id="{anchor}">{markup}</section>' for anchor, _, markup in parts)
         + "</main>"
         + '<footer class="wrap"><p>'
-        + (f'Source: <a href="{esc(server)}/{esc(repo)}">{esc(repo)}</a>. ' if server and repo else "")
         + 'Made with <a href="https://github.com/anlit75/ChipForAll">ChipForAll</a>, '
           "an open-source chip design flow. "
-          'This page is generated by <a href="https://github.com/anlit75/c4o-core">c4o-core</a>.</p></footer>'
+          '<a href="https://github.com/anlit75/c4o-core">c4o-core</a> generated this page.</p></footer>'
         + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in actions else "")
         + "</body></html>\n"
     )
