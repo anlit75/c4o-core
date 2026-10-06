@@ -557,7 +557,7 @@ jobs:
           ! grep -qF "Lines no test reached" "$page" || { echo "the page lists the lines no test reached"; exit 1; }
           ! grep -qF "hole_marker &lt;=" "$page" || { echo "the page shows source lines"; exit 1; }
           grep -qF "This run used seed <code>4242</code>" "$page" || { echo "the page does not name the coverage run's seed"; exit 1; }
-          grep -qF "Not measured: expression coverage and FSM coverage." "$page" || { echo "the page does not say what is not measured"; exit 1; }
+          grep -qF "Not measured: expression and FSM coverage." "$page" || { echo "the page does not say what is not measured"; exit 1; }
           # Without the coverage files the page is the page it was.
           run --entrypoint rm c4o-core:test -rf build/coverage
           run c4o-core:test site
