@@ -64,7 +64,10 @@ def load_config():
         config_path = os.path.join(os.getcwd(), name)
         if not os.path.exists(config_path):
             continue
-        log_info(f"Loading config from {config_path}")
+        # The release rides on a line every command prints, so any pasted log
+        # says which c4o-core produced it.
+        version = c4o_version()
+        log_info(f"Loading config from {config_path}" + (f" (c4o-core {version})" if version else ""))
         try:
             with open(config_path, 'r') as f:
                 if name.endswith(".json"):

@@ -4354,5 +4354,26 @@ class TestLogColor(unittest.TestCase):
         out = self.run_log(True, "")
         self.assertIn("\033[92m[INFO] a\033[0m", out)
 
+class TestLoadConfigVersion(unittest.TestCase):
+    """The config line names the c4o-core release, for bug reports."""
+
+    def load(self, version):
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d, patch("os.getcwd", return_value=d), \
+                patch.object(entrypoint, "c4o_version", return_value=version), \
+                contextlib.redirect_stdout(out):
+            with open(os.path.join(d, "config.yaml"), "w") as f:
+                f.write("DESIGN_NAME: demo\n")
+            entrypoint.load_config()
+        return out.getvalue()
+
+    def test_the_config_line_names_the_release(self):
+        self.assertIn("config.yaml (c4o-core 2.23.0)", self.load("2.23.0"))
+
+    def test_no_release_leaves_the_line_as_it_was(self):
+        out = self.load(None)
+        self.assertIn("config.yaml\n", out)
+        self.assertNotIn("c4o-core", out)
+
 if __name__ == '__main__':
     unittest.main()
