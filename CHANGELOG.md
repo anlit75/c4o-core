@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.24.0](https://github.com/anlit75/c4o-core/compare/v2.23.0...v2.24.0) (2026-10-08)
+
+
+### Features
+
+* add Next hints, honor NO_COLOR and name the release in log output ([#93](https://github.com/anlit75/c4o-core/issues/93)) ([4e52f4d](https://github.com/anlit75/c4o-core/commit/4e52f4dac16adeaef036c119cb5e99f279735dfa))
+
 ## [2.23.0](https://github.com/anlit75/c4o-core/compare/v2.22.3...v2.23.0) (2026-10-06)
 
 
