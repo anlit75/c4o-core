@@ -118,6 +118,7 @@ endif
 # reaches sim and cocotb as prerequisites of all, and only then.
 all: C4O_IF_CONFIGURED := --if-configured
 all: lint sim cocotb synth
+	@echo "Next: make gds turns the design into a GDSII layout (takes minutes)."
 
 # Two colons, so a repository can add lines for its own targets with a
 # `help::` rule below its include.
@@ -249,6 +250,8 @@ gds:
 	@# The flow just measured area, timing and power. Show them rather than
 	@# leaving them in a 300-key metrics.json under runs/.
 	@$(MAKE) --no-print-directory report
+	@# Say what comes after the layout, since a new user does not know.
+	@echo "Next: make site puts the results on one page (build/site/index.html); push, and CI publishes it when GitHub Pages is on."
 
 # Reads runs/<tag>/final/metrics.json, which `make gds` leaves behind.
 report:

@@ -22,14 +22,21 @@ RED = '\033[91m'
 YELLOW = '\033[93m'
 RESET = '\033[0m'
 
+def _color(code):
+    # https://no-color.org: NO_COLOR set to anything but "" turns color off.
+    # A pipe or a CI log is not a terminal, so it gets plain text too.
+    if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        return ""
+    return code
+
 def log_info(msg):
-    print(f"{GREEN}[INFO] {msg}{RESET}")
+    print(f"{_color(GREEN)}[INFO] {msg}{_color(RESET)}")
 
 def log_error(msg):
-    print(f"{RED}[ERROR] {msg}{RESET}")
+    print(f"{_color(RED)}[ERROR] {msg}{_color(RESET)}")
 
 def log_warn(msg):
-    print(f"{YELLOW}[WARN] {msg}{RESET}")
+    print(f"{_color(YELLOW)}[WARN] {msg}{_color(RESET)}")
 
 def run_command(cmd, shell=False, env=None):
     """Runs a command and exits if it fails."""
@@ -57,7 +64,10 @@ def load_config():
         config_path = os.path.join(os.getcwd(), name)
         if not os.path.exists(config_path):
             continue
-        log_info(f"Loading config from {config_path}")
+        # The release rides on a line every command prints, so any pasted log
+        # says which c4o-core produced it.
+        version = c4o_version()
+        log_info(f"Loading config from {config_path}" + (f" (c4o-core {version})" if version else ""))
         try:
             with open(config_path, 'r') as f:
                 if name.endswith(".json"):

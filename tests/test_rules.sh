@@ -124,6 +124,23 @@ else
   ok "host: make all does not run coverage"
 fi
 
+# The last line of a target says what to run next. -n prints the echo, so the
+# hint shows without running anything.
+check "host: make all points to make gds" 0 "Next: make gds turns the design into a GDSII layout" in_repo "$host" make -n all
+check "host: make gds points to make site" 0 "Next: make site puts the results on one page" in_repo "$host" make -n gds
+out=$(in_repo "$host" make -n gds 2>&1)
+if [ "$(grep -n 'Next:' <<<"$out" | tail -1 | cut -d: -f1)" = "$(grep -c '' <<<"$out")" ]; then
+  ok "host: the make site hint is the last thing make gds does"
+else
+  fail "host: the make site hint is not last in make gds" "$out"
+fi
+out=$(in_repo "$host" make -n lint 2>&1)
+if grep -qF "Next:" <<<"$out"; then
+  fail "host: make lint must not print a Next: hint" "$out"
+else
+  ok "host: make lint prints no Next: hint"
+fi
+
 # regress is a target of its own and is not part of all.
 check "host: make help lists regress" 0 "make regress" in_repo "$host" make help
 check "host: make help says how to run one test" 0 "make cocotb SEED=<n> TEST=<entry>" in_repo "$host" make help
