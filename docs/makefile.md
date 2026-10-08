@@ -49,6 +49,7 @@ These names stay the same in all 2.x releases.
 | `SEED` | The seed for `make cocotb` and for `make gatesim` with Python tests. For `make regress` it is the base seed of the list. |
 | `TEST` | `make cocotb TEST=<module>[.<function>]` runs one module or one test of `"//COCOTB_TESTS"`. |
 | `WAVES` | `make cocotb WAVES=1` writes `build/<DESIGN_NAME>.vcd`. `make gatesim` passes it on and writes no VCD. |
+| `PROGRESS` | What `make all` and `make gds` print: `raw`, `plain`, `tty` or `auto`. See [What `make all` and `make gds` print](#what-make-all-and-make-gds-print). |
 
 `C4O_CMD`, `C4O_COCOTB` and `c4o_tool` call the program directly inside the image, and start a container on a host. You write the target one time and it works in the two places.
 
@@ -89,3 +90,20 @@ A bare `make` runs `all`, also when one of your targets is above the include.
 `make gatesim` runs the Verilog testbench of `"//GATE_TESTS"`. Without that key, it runs the Python tests of `"//COCOTB_TESTS"` on the netlist. With neither key it fails. `make gatesim SEED=<n>` sets the seed in the same way as `make cocotb SEED=<n>`.
 
 `make gds` starts LibreLane as a second container, from the place where `make` runs. Thus that place needs a Docker daemon: your host, or the Dev Container, which has its own.
+
+### What `make all` and `make gds` print
+
+`make all` prints one line for each of `lint`, `sim`, `cocotb` and `synth`. `make gds` prints one line for each of seven stages. The output of the tools goes to `build/log/`: `lint.log`, `sim.log`, `cocotb.log` and `synth.log`, and `librelane.log` for `make gds`, as LibreLane wrote it. The other targets print what their tools print.
+
+| `PROGRESS=` | What you get |
+|---|---|
+| `auto` | `tty` on a terminal, `plain` anywhere else and when `CI` is set. This is the default. |
+| `tty` | The lines, and under them up to three rows that show what runs now. The rows are gone when the run ends. |
+| `plain` | The lines as text, with `ok`, `FAIL` and `skip`. No colour and no redrawing. `make gds` adds a `still running:` line every 30 seconds. |
+| `raw` | The output of the tools as it is. Nothing goes to `build/log/`. |
+
+`NO_COLOR` removes the colour and keeps the symbols. On GitHub Actions, `plain` puts the output of each tool in a collapsed group. `make all PROGRESS=raw` runs the four commands one after the other.
+
+A failure ends with the reason, the path of the log and the command to run next. For `make cocotb` that is `make cocotb SEED=<n> TEST=<module>.<function>` for each failed test. For `make gds` it is a `make gds LIBRELANE_ARGS="--from ..."` that resumes at the failed step. The text of an error is not cut.
+
+When `make gds` fails, `build/<DESIGN_NAME>.gds` is still the file of the last run that passed. The message says so. It is not removed, because a full run has already cleared `runs/`, and this file is the one copy of that result.

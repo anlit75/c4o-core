@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 
 import yaml
 
+import progress
 import site_page
 
 # ANSI color codes
@@ -58,7 +59,7 @@ def ensure_build_dir():
 # so the same file can be handed to both this engine and the GDS flow.
 CONFIG_FILENAMES = ["config.yaml", "config.yml", "config.json"]
 
-def load_config():
+def load_config(quiet=False):
     """Loads the first configuration file found in the working directory."""
     for name in CONFIG_FILENAMES:
         config_path = os.path.join(os.getcwd(), name)
@@ -67,7 +68,8 @@ def load_config():
         # The release rides on a line every command prints, so any pasted log
         # says which c4o-core produced it.
         version = c4o_version()
-        log_info(f"Loading config from {config_path}" + (f" (c4o-core {version})" if version else ""))
+        if not quiet:
+            log_info(f"Loading config from {config_path}" + (f" (c4o-core {version})" if version else ""))
         try:
             with open(config_path, 'r') as f:
                 if name.endswith(".json"):
@@ -607,6 +609,37 @@ def cocotb_vvp(vvp_file, lib_dir):
     """The command that runs a compiled design under cocotb."""
     return ["vvp", "-M", lib_dir,
             "-m", cocotb_config("--lib-name", "vpi", "icarus"), vvp_file]
+
+def cmd_all(args, config):
+    """
+    lint, sim, cocotb and synth, one line each, and the reason when one fails.
+    Their own output is in build/log/<command>.log; PROGRESS=raw streams it.
+    """
+    design = config_get(config, "DESIGN_NAME") or "design"
+    try:
+        sys.exit(progress.run_all(os.path.abspath(__file__), design, c4o_version()))
+    except KeyboardInterrupt:
+        print("interrupted")
+        sys.exit(130)
+
+def cmd_progress(args, config):
+    """
+    Started by `make gds` beside LibreLane: follows the run directory and prints
+    the ledger until the status file says LibreLane is done. The exit status is
+    not LibreLane's. `make` has that, from the status file.
+    """
+    design = config_get(config, "DESIGN_NAME") or "design"
+    try:
+        sys.exit(progress.watch_flow(
+            args.run_dir, args.status, args.log, args.plan,
+            os.path.join("build", f"{design}.gds"), design, partial=args.partial,
+            report=lambda: cmd_report(argparse.Namespace(metrics=None), config),
+        ))
+    except Exception as e:
+        # A display that breaks must not take the flow with it: make waits for
+        # LibreLane and returns its status.
+        log_warn(f"The progress display stopped ({e}). LibreLane goes on. Its output: {args.log}")
+        sys.exit(0)
 
 # What `coverage` writes. Everything under here is rebuilt on each run.
 COVERAGE_DIR = "build/coverage"
@@ -2198,6 +2231,23 @@ def build_parser():
     )
     sim_parser.set_defaults(func=cmd_sim)
 
+    # All command
+    all_parser = subparsers.add_parser(
+        "all", help="Run lint, sim, cocotb and synth and print one line for each"
+    )
+    all_parser.set_defaults(func=cmd_all)
+
+    # Progress command: what `make gds` runs beside LibreLane
+    progress_parser = subparsers.add_parser(
+        "progress", help="Follow a LibreLane run and print its ledger (started by make gds)"
+    )
+    progress_parser.add_argument("--run-dir", required=True, help="runs/<tag>")
+    progress_parser.add_argument("--status", required=True, help="File that holds LibreLane's exit status when it is done")
+    progress_parser.add_argument("--log", required=True, help="LibreLane's output, kept as it is")
+    progress_parser.add_argument("--plan", required=True, help="The steps this run will take (JSON)")
+    progress_parser.add_argument("--partial", action="store_true", help="Not a whole flow: do not count steps")
+    progress_parser.set_defaults(func=cmd_progress)
+
     # Cocotb command
     cocotb_parser = subparsers.add_parser(
         "cocotb", help="Run cocotb (Python) tests against the RTL"
@@ -2305,7 +2355,9 @@ def main():
         sys.exit(1)
 
     args = parser.parse_args()
-    args.func(args, load_config())
+    # The ledger opens with the release and the design, so it does not need the
+    # line that says which config was read.
+    args.func(args, load_config(quiet=args.command in ("all", "progress")))
 
 if __name__ == "__main__":
     main()

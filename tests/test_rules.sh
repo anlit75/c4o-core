@@ -51,8 +51,7 @@ docker image inspect "$image" >/dev/null 2>&1 \
 host="$work/host"
 new_repo "$host" "$image"
 
-check "host: a bare make is 'all'" 0 "$image lint" in_repo "$host" make -n
-check "host: ... and all ends with synth" 0 "$image synth" in_repo "$host" make -n
+check "host: a bare make is 'all'" 0 "$image all" in_repo "$host" make -n
 copied=$(ls "$host"/.c4o/*.mk 2>/dev/null | wc -l)
 [ "$copied" -eq 1 ] && ok "host: one rules file in .c4o/" || fail "host: $copied rules files in .c4o/, expected 1"
 id=$(docker image inspect -f '{{.Id}}' "$image" | sed 's/sha256://')
@@ -98,13 +97,131 @@ check "host: SEED reaches the cocotb tests that gatesim runs" 0 "-e RANDOM_SEED=
   in_repo "$host" make -n gatesim SEED=7
 # all asks for no test kind by name, so it skips the one that is not configured.
 # Named by themselves, sim and cocotb must keep failing without their key.
-check "host: all runs sim only if configured" 0 "$image sim --if-configured" in_repo "$host" make -n all
-check "host: all runs cocotb only if configured" 0 "$image cocotb --if-configured" in_repo "$host" make -n all
+check "host: all runs sim only if configured" 0 "$image sim --if-configured" in_repo "$host" make -n all PROGRESS=raw
+check "host: all runs cocotb only if configured" 0 "$image cocotb --if-configured" in_repo "$host" make -n all PROGRESS=raw
+check "host: PROGRESS=raw runs the four commands in order" 0 "$image lint" in_repo "$host" make -n all PROGRESS=raw
+check "host: ... ending with synth" 0 "$image synth" in_repo "$host" make -n all PROGRESS=raw
 out=$(in_repo "$host" make -n sim cocotb 2>&1)
 if grep -qF "$image sim" <<<"$out" && grep -qF "$image cocotb" <<<"$out" && ! grep -qF -- "--if-configured" <<<"$out"; then
   ok "host: sim and cocotb named by themselves do not skip"
 else
   fail "host: make sim and make cocotb must not pass --if-configured" "$out"
+fi
+
+# The progress ledger: make all and make gds print one line for each command or
+# stage, with the tools' own output in build/log/. Only those two.
+out=$(in_repo "$host" make -n all 2>&1)
+if grep -qF "$image all" <<<"$out" && ! grep -qE "$image (lint|sim|cocotb|synth)" <<<"$out"; then
+  ok "host: all is one container that prints the ledger"
+else
+  fail "host: make all should run '$image all' and not the four commands" "$out"
+fi
+out=$(in_repo "$host" make -n all PROGRESS=raw 2>&1)
+if grep -qE "$image all( |$)" <<<"$out"; then
+  fail "host: PROGRESS=raw must run the four commands, not the ledger" "$out"
+else
+  ok "host: PROGRESS=raw does not start the ledger"
+fi
+out=$(C4O_PROGRESS=raw in_repo "$host" make -n all 2>&1)
+if grep -qF "$image lint" <<<"$out"; then ok "host: C4O_PROGRESS=raw in the environment is PROGRESS=raw"
+else fail "host: C4O_PROGRESS=raw in the environment did not give the raw output" "$out"; fi
+check "host: PROGRESS reaches the container as C4O_PROGRESS" 0 "-e C4O_PROGRESS=plain" in_repo "$host" make -n all PROGRESS=plain
+check "host: the terminal's own variables reach the container" 0 "-e NO_COLOR -e CI -e TERM -e GITHUB_ACTIONS" in_repo "$host" make -n all
+check "host: the container gets -t when make's output is a terminal" 0 'if [ -t 1 ]; then T=-t; else T=; fi' in_repo "$host" make -n all
+check "host: SEED reaches the ledger run" 0 "-e RANDOM_SEED=7" in_repo "$host" make -n all SEED=7
+check "host: TEST reaches the ledger run" 0 "-e TEST=test_a" in_repo "$host" make -n all TEST=test_a
+for t in lint sim cocotb synth regress coverage gatesim; do
+  out=$(in_repo "$host" make -n $t 2>&1)
+  if grep -qF "C4O_PROGRESS" <<<"$out"; then fail "host: make $t must not start the ledger" "$out"; else ok "host: make $t prints what it always did"; fi
+done
+check "host: gds starts LibreLane in the background and the ledger beside it" 0 "progress --run-dir runs/demo_run --status build/log/status" in_repo "$host" make -n gds
+check "host: ... with LibreLane's whole output in a file" 0 "> build/log/librelane.log 2>&1" in_repo "$host" make -n gds
+check "host: ... and its exit status in another" 0 "echo \$? > build/log/status.tmp" in_repo "$host" make -n gds
+check "host: ... and Ctrl-C does not end make before LibreLane stops" 0 "trap '' INT" in_repo "$host" make -n gds
+check "host: a full run deletes the previous run first" 0 "rm -rf runs/demo_run" in_repo "$host" make -n gds
+check "host: ... and counts its steps beforehand" 0 "gating_config_vars" in_repo "$host" make -n gds
+check "host: PROGRESS reaches the gds ledger" 0 "-e C4O_PROGRESS=plain" in_repo "$host" make -n gds PROGRESS=plain
+out=$(in_repo "$host" make -n gds PROGRESS=raw 2>&1)
+if grep -qE "progress --run-dir|build/log" <<<"$out"; then
+  fail "host: PROGRESS=raw must run LibreLane in the foreground, as it did" "$out"
+elif grep -qF -- "--run-tag demo_run config.yaml" <<<"$out" && grep -qF -- "cp runs/demo_run/final/gds/demo.gds build/demo.gds" <<<"$out"; then
+  ok "host: PROGRESS=raw runs LibreLane in the foreground, as it did"
+else
+  fail "host: PROGRESS=raw lost the LibreLane run or the copy of the GDS" "$out"
+fi
+for args in "--from OpenROAD.Floorplan --with-initial-state x.json" "--to OpenROAD.CTS" "--skip OpenROAD.CTS" "--only OpenROAD.CTS"; do
+  out=$(in_repo "$host" make -n gds LIBRELANE_ARGS="$args" 2>&1)
+  if grep -qF -- "--partial" <<<"$out"; then
+    ok "host: gds with '$args' shows step numbers and no total"
+  else
+    fail "host: gds with '$args' should show step numbers and no total" "$out"
+  fi
+done
+out=$(in_repo "$host" make -n gds 2>&1)
+if grep -qF -- "--partial" <<<"$out"; then
+  fail "host: a whole run has a total" "$out"
+else
+  ok "host: a whole run is not partial"
+fi
+out=$(in_repo "$host" make -n gds LIBRELANE_ARGS="--from OpenROAD.Floorplan --with-initial-state x.json" 2>&1)
+if grep -qF "rm -rf runs/demo_run" <<<"$out"; then
+  fail "host: a resume must keep the previous run" "$out"
+else
+  ok "host: a resume does not delete the previous run"
+fi
+
+# The exit status of make gds is LibreLane's. A pipe to the ledger would return
+# the ledger's, which is 0 whatever LibreLane did. docker is a stand-in here: it
+# answers `run` and passes the rest to the real one. LibreLane exits 2.
+shim="$work/shim"
+mkdir -p "$shim"
+real_docker=$(command -v docker)
+cat > "$shim/docker" <<SHIM
+#!/bin/sh
+if [ "\$1" = run ]; then
+  echo "\$*" >> "$work/docker-calls"
+  case "\$*" in
+    *"-m librelane"*) exit 2 ;;
+    *"python3 -c"*) exit 1 ;;
+  esac
+  exit 0
+fi
+exec "$real_docker" "\$@"
+SHIM
+chmod +x "$shim/docker"
+fake="$work/fake"
+new_repo "$fake" "$image"
+in_repo "$fake" make -n lint >/dev/null 2>&1      # the rules are copied out of the image before the stand-in is used
+: > "$work/docker-calls"
+out=$(cd "$fake" && PATH="$shim:$PATH" make gds 2>&1)
+got=$?
+if [ "$got" -ne 0 ] && grep -qE "Error 2" <<<"$out"; then
+  ok "gds: make fails when LibreLane does, with LibreLane's status"
+else
+  fail "gds: LibreLane exited 2 and make exited $got" "$out"
+fi
+[ "$(cat "$fake/build/log/status" 2>/dev/null)" = 2 ] && ok "gds: the status file holds LibreLane's exit status" \
+  || fail "gds: build/log/status is not LibreLane's exit status" "$(cat "$fake/build/log/status" 2>&1)"
+[ -f "$fake/build/log/librelane.log" ] && ok "gds: LibreLane's output is in build/log/librelane.log" || fail "gds: no build/log/librelane.log"
+if [ -e "$fake/build/demo.gds" ]; then fail "gds: a failed flow must not copy a GDS"; else ok "gds: a failed flow copies no GDS"; fi
+# make all: a terminal for the container exactly when make's output is one.
+: > "$work/docker-calls"
+(cd "$fake" && PATH="$shim:$PATH" make all >/dev/null 2>&1)
+if grep -qE "$image all" "$work/docker-calls" && ! grep -E "$image all" "$work/docker-calls" | grep -qE " -t "; then
+  ok "all: not a terminal, no -t"
+else
+  fail "all: a pipe must not get a terminal, and the ledger container must start" "$(cat "$work/docker-calls")"
+fi
+if command -v script >/dev/null 2>&1; then
+  : > "$work/docker-calls"
+  (cd "$fake" && PATH="$shim:$PATH" script -qec "make all" /dev/null >/dev/null 2>&1)
+  if grep -E "$image all" "$work/docker-calls" | grep -qE " -t "; then
+    ok "all: a terminal gets -t"
+  else
+    fail "all: on a terminal the container needs -t" "$(cat "$work/docker-calls")"
+  fi
+else
+  echo "skip  all: no script(1) here to give make a terminal"
 fi
 
 # coverage is a target of its own and is not part of all.
@@ -176,7 +293,7 @@ ral:
 cocotb-gl:
 	$(C4O_COCOTB) cocotb --netlist
 EOF
-check "own: a target above the include is not the default" 0 "$image lint" in_repo "$own" make -n
+check "own: a target above the include is not the default" 0 "$image all" in_repo "$own" make -n
 check "own: help:: adds a line" 0 "a target of this repository" in_repo "$own" make help
 check "own: ... after the standard ones" 0 "Available targets:" in_repo "$own" make help
 check "own: c4o_tool runs an image tool" 0 "--entrypoint peakrdl $image pyuvm regs/x.rdl" in_repo "$own" make -n ral
@@ -195,6 +312,11 @@ check "inside: TEST reaches the entrypoint" 0 "env TEST=test_a.f python3 /opt/c4
 check "inside: SEED, WAVES and TEST reach the entrypoint" 0 "env RANDOM_SEED=7 WAVES=1 TEST=test_a python3 /opt/c4o-core/scripts/entrypoint.py cocotb" \
   dmake -n cocotb SEED=7 WAVES=1 TEST=test_a
 check "inside: SEED reaches regress" 0 "env RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py regress" dmake -n regress SEED=7
+check "inside: all is the ledger, called directly" 0 "env C4O_PROGRESS= python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all
+check "inside: PROGRESS reaches the entrypoint" 0 "env C4O_PROGRESS=plain python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all PROGRESS=plain
+check "inside: SEED reaches the ledger run" 0 "env C4O_PROGRESS= RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all SEED=7
+check "inside: PROGRESS=raw runs the four commands" 0 "python3 /opt/c4o-core/scripts/entrypoint.py synth" dmake -n all PROGRESS=raw
+check "inside: gds follows the run with the entrypoint, not a second container" 0 "python3 /opt/c4o-core/scripts/entrypoint.py progress --run-dir runs/demo_run" dmake -n gds
 check "inside: coverage calls the entrypoint directly" 0 "python3 /opt/c4o-core/scripts/entrypoint.py coverage" dmake -n coverage
 [ ! -e "$inside/.c4o" ] && ok "inside: nothing is copied to .c4o/" || fail "inside: .c4o/ was written inside the image"
 cat >> "$inside/Makefile" <<'EOF'

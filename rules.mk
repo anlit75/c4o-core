@@ -50,6 +50,22 @@ ifeq ($(filter --from --from=% -F --only --only=%,$(LIBRELANE_ARGS)),)
 LIBRELANE_OVERWRITE := --overwrite
 endif
 
+# What `make all` and `make gds` print while they run. The tools' own output
+# goes to build/log/ and the terminal gets one line for each command or stage:
+#
+#   make gds PROGRESS=raw     the tools' output as it is, nothing kept
+#   make gds PROGRESS=plain   the lines as text: no colour, no redrawing (CI)
+#   make gds PROGRESS=tty     the lines and, under them, what is running now
+#
+# Left out, it is tty on a terminal and plain anywhere else, also when CI is
+# set. NO_COLOR removes the colour. The other commands print what they always did.
+C4O_PROGRESS := $(or $(PROGRESS),$(C4O_PROGRESS))
+
+# A run that is not the whole flow shows the number of the step, and no total.
+ifneq ($(filter --from --from=% -F --to --to=% -T --skip --skip=% --only --only=%,$(LIBRELANE_ARGS)),)
+LIBRELANE_PARTIAL := 1
+endif
+
 # Where the Sky130 PDK lives on the host. One copy is 3GB and every checkout
 # needs the same one, so a machine with several -- a lab, a teaching account --
 # can point them all at one directory instead of paying for it again each time:
@@ -63,6 +79,28 @@ PDK_ROOT ?= $(PWD)/pdks
 # The current directory is mounted at /workspace, so what the tools write lands
 # in build/ and runs/ here, owned by the user who ran make.
 DOCKER_RUN := docker run --rm -v $(PWD):/workspace -w /workspace -u $(shell id -u):$(shell id -g)
+
+# The LibreLane container and the flags of the run.
+LIBRELANE_RUN = docker run --rm \
+		-v $(PWD):/workspace -w /workspace \
+		-v $(PDK_ROOT):/pdks \
+		-e PDK_ROOT=/pdks \
+		-e HOME=/tmp \
+		-u $(shell id -u):$(shell id -g) \
+		$(LIBRELANE_IMAGE) \
+		python3 -m librelane --manual-pdk --pdk-root /pdks \
+			$(LIBRELANE_OVERWRITE) $(LIBRELANE_ARGS) \
+			--run-tag $(DESIGN_NAME)_run config.yaml
+
+# Which steps this config will run, before it does: the steps of the Classic
+# flow, less those a switch of the config turns off. It is how the ledger can
+# say "step 24 of 76". About a second, in the LibreLane image, and it uses
+# gating_config_vars, an attribute of LibreLane's that is not a documented
+# interface: when it fails, or after an upgrade changed it, the ledger counts
+# steps without a total. Check it again when LIBRELANE_IMAGE moves.
+LIBRELANE_PLAN_PY := import json,librelane;from librelane.flows import Flow;C=Flow.factory.get("Classic");f=C("config.yaml",pdk_root="/pdks");g={s for s,v in f.gating_config_vars.items() if any(not f.config[x] for x in v)};print(json.dumps({"version":librelane.__version__,"all":len(C.Steps),"steps":[[s.id,s.name] for s in C.Steps if s.id not in g]}))
+LIBRELANE_PLAN = docker run --rm -v $(PWD):/workspace -w /workspace -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks -e HOME=/tmp \
+		-u $(shell id -u):$(shell id -g) $(LIBRELANE_IMAGE) python3 -c '$(LIBRELANE_PLAN_PY)'
 
 # The results page names the commit and CI run it was built from, which c4o-core
 # reads from these. `-e NAME` with no value passes the host's value through, and
@@ -102,6 +140,7 @@ C4O_COCOTB = $(if $(or $(SEED),$(WAVES),$(TEST)),env $(strip $(if $(SEED),RANDOM
 C4O_SITE := $(C4O_CMD)
 C4O_PDK := env PDK_ROOT=$(PDK_ROOT) $(C4O_CMD)
 c4o_tool = $(1)
+C4O_LEDGER = env $(strip C4O_PROGRESS=$(C4O_PROGRESS) $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)) $(if $(TEST),TEST=$(TEST))) python3 $(ENTRYPOINT_SCRIPT)
 else
 C4O_IN_CONTAINER :=
 C4O_CMD := $(DOCKER_RUN) $(C4O_IMAGE)
@@ -109,15 +148,29 @@ C4O_COCOTB = $(DOCKER_RUN) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(W
 C4O_SITE := $(DOCKER_RUN) $(SITE_ENV) $(C4O_IMAGE)
 C4O_PDK := $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(C4O_IMAGE)
 c4o_tool = $(DOCKER_RUN) --entrypoint $(1) $(C4O_IMAGE)
+# The ledger redraws, so on a host its container gets a terminal exactly when
+# make's output is one. A recipe sets $$T for that: `[ -t 1 ]` has to run in the
+# recipe's own shell, where $(shell) would be asking about a pipe.
+C4O_LEDGER = $(DOCKER_RUN) $$T $(PROGRESS_ENV) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
 endif
+# What the ledger decides its mode from, passed on as the host has it.
+PROGRESS_ENV := -e C4O_PROGRESS=$(C4O_PROGRESS) -e NO_COLOR -e CI -e TERM -e GITHUB_ACTIONS
 
 .PHONY: all help lint sim cocotb regress coverage gatesim synth schematic gds pdk report site clean distclean shell
 
 # A bare `make all` asks for no test kind by name: it runs each kind whose key
 # is in config.yaml and fails when neither is. The target-specific variable
 # reaches sim and cocotb as prerequisites of all, and only then.
+#
+# One line for each of the four, with their own output in build/log/. With
+# PROGRESS=raw it is the four commands one after the other, as it was.
 all: C4O_IF_CONFIGURED := --if-configured
+ifeq ($(C4O_PROGRESS),raw)
 all: lint sim cocotb synth
+else
+all:
+	@if [ -t 1 ]; then T=-t; else T=; fi; $(C4O_LEDGER) all
+endif
 	@echo "Next: make gds turns the design into a GDSII layout (takes minutes)."
 
 # Two colons, so a repository can add lines for its own targets with a
@@ -231,25 +284,48 @@ gds:
 	$(MAKE) pdk
 	@echo "🟢 Running LibreLane..."
 	mkdir -p build
-	docker run --rm \
-		-v $(PWD):/workspace -w /workspace \
-		-v $(PDK_ROOT):/pdks \
-		-e PDK_ROOT=/pdks \
-		-e HOME=/tmp \
-		-u $(shell id -u):$(shell id -g) \
-		$(LIBRELANE_IMAGE) \
-		python3 -m librelane --manual-pdk --pdk-root /pdks \
-			$(LIBRELANE_OVERWRITE) $(LIBRELANE_ARGS) \
-			--run-tag $(DESIGN_NAME)_run config.yaml
+ifeq ($(C4O_PROGRESS),raw)
+	$(LIBRELANE_RUN)
 	@echo "🟢 Post-processing..."
 	# Copy the final GDS to the build folder
 	cp runs/$(DESIGN_NAME)_run/final/gds/$(DESIGN_NAME).gds build/$(DESIGN_NAME).gds
 	# runs/ stays where LibreLane put it: a resume looks for the run there, and
 	# c4o-core's report and gatesim search it too.
+else
+	@# LibreLane runs in the background with its whole output in
+	@# build/log/librelane.log, and its exit status in build/log/status once it is
+	@# done. `c4o progress` follows runs/<tag>/ meanwhile and prints the ledger.
+	@# A pipe would lose the status: sh has no pipefail, and the pipe returns 0.
+	@#
+	@# Ctrl-C: the shell and everything it starts ignore it, and docker passes it
+	@# on to the container, so LibreLane stops by itself, the ledger says where,
+	@# and this recipe returns after that and not before. Measured: without the
+	@# trap, make returned while the container still ran for seconds.
+	@#
+	@# A full run deletes the previous run first. LibreLane clears it too, with the
+	@# flag above, but later than the watcher looks, which then reads the old steps.
+	@trap '' INT; \
+	mkdir -p build/log; \
+	rm -f build/log/status build/log/status.tmp build/log/plan.json build/log/plan.tmp; \
+	$(LIBRELANE_PLAN) > build/log/plan.tmp 2>/dev/null \
+		&& mv build/log/plan.tmp build/log/plan.json || rm -f build/log/plan.tmp; \
+	$(if $(LIBRELANE_OVERWRITE),rm -rf runs/$(DESIGN_NAME)_run;) \
+	if [ -t 1 ]; then T=-t; else T=; fi; \
+	( $(LIBRELANE_RUN) > build/log/librelane.log 2>&1; echo $$? > build/log/status.tmp; \
+	  mv build/log/status.tmp build/log/status ) & \
+	$(C4O_LEDGER) progress --run-dir runs/$(DESIGN_NAME)_run --status build/log/status \
+		--log build/log/librelane.log --plan build/log/plan.json $(if $(LIBRELANE_PARTIAL),--partial); \
+	wait; \
+	exit `cat build/log/status`
+	@cp runs/$(DESIGN_NAME)_run/final/gds/$(DESIGN_NAME).gds build/$(DESIGN_NAME).gds
+endif
 
 	@# The flow just measured area, timing and power. Show them rather than
 	@# leaving them in a 300-key metrics.json under runs/.
 	@$(MAKE) --no-print-directory report
+ifneq ($(C4O_PROGRESS),raw)
+	@echo "  GDS         build/$(DESIGN_NAME).gds"
+endif
 	@# Say what comes after the layout, since a new user does not know.
 	@echo "Next: make site puts the results on one page (build/site/index.html); push, and CI publishes it when GitHub Pages is on."
 

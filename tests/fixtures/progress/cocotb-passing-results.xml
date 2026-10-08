@@ -1,0 +1,10 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1791475867" />
+    <testcase name="reset_holds_led_low" classname="test_blinky_cocotb" file="/workspace/tb/test_blinky_cocotb.py" lineno="48" time="0.0024852752685546875" sim_time_ns="110.001" ratio_time="44261.09308365311" />
+    <testcase name="led_rises_half_a_period_after_reset" classname="test_blinky_cocotb" file="/workspace/tb/test_blinky_cocotb.py" lineno="59" time="2.3223183155059814" sim_time_ns="327703.001" ratio_time="141110.28570542915" />
+    <testcase name="led_toggles_with_a_full_period" classname="test_blinky_cocotb" file="/workspace/tb/test_blinky_cocotb.py" lineno="68" time="3.9234402179718018" sim_time_ns="655383.001" ratio_time="167042.9430778472" />
+    <testcase name="reset_in_the_middle_restarts_the_count" classname="test_blinky_cocotb" file="/workspace/tb/test_blinky_cocotb.py" lineno="77" time="3.9410390853881836" sim_time_ns="655453.0009999999" ratio_time="166314.76795806485" />
+    <testcase name="random_resets_match_the_model" classname="test_blinky_random" file="/workspace/tb/test_blinky_random.py" lineno="85" time="5.783017873764038" sim_time_ns="659625.0009999999" ratio_time="114062.41782383852" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,18 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1791475857" />
+    <testcase name="reset_holds_led_low" classname="test_blinky_cocotb" file="/workspace/tb/test_blinky_cocotb.py" lineno="48" time="0.0023255348205566406" sim_time_ns="110.001" ratio_time="47301.377312282144" />
+    <testcase name="led_rises_half_a_period_after_reset" classname="test_blinky_cocotb" file="/workspace/tb/test_blinky_cocotb.py" lineno="59" time="1.860621690750122" sim_time_ns="327693.001" ratio_time="176120.16597951643">
+      <failure message="Test failed with RANDOM_SEED=1791475857" />
+    </testcase>
+    <testcase name="led_toggles_with_a_full_period" classname="test_blinky_cocotb" file="/workspace/tb/test_blinky_cocotb.py" lineno="68" time="1.9834866523742676" sim_time_ns="327693.00100000005" ratio_time="165210.5904558248">
+      <failure message="Test failed with RANDOM_SEED=1791475857" />
+    </testcase>
+    <testcase name="reset_in_the_middle_restarts_the_count" classname="test_blinky_cocotb" file="/workspace/tb/test_blinky_cocotb.py" lineno="77" time="2.0637142658233643" sim_time_ns="327753.00099999993" ratio_time="158817.04479531504">
+      <failure message="Test failed with RANDOM_SEED=1791475857" />
+    </testcase>
+    <testcase name="random_resets_match_the_model" classname="test_blinky_random" file="/workspace/tb/test_blinky_random.py" lineno="85" time="1.6664724349975586" sim_time_ns="163875.00099999993" ratio_time="98336.46063292971">
+      <failure message="Test failed with RANDOM_SEED=1791475857" />
+    </testcase>
+  </testsuite>
+</testsuites>

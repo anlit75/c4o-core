@@ -221,6 +221,31 @@ one of them instead, run yosys yourself and name it.
 
 `schematic` writes SVG and not the JSON, on purpose. A file that every browser and editor opens beats one that needs a particular extension installed.
 
+## The progress ledger (all and gds)
+
+`make all` and `make gds` do not show the output of the tools. They show a ledger, one line for each command or stage, and write the output to `build/log/`. [The Makefile rules](makefile.md#what-make-all-and-make-gds-print) say how to choose between `raw`, `plain` and `tty`.
+
+```console
+$ make all PROGRESS=plain
+c4o all, blinky, c4o-core 2.24.0
+  ok   lint    verilator, no warnings, 0.3 s
+  skip sim     skipped: TEST_FILES is not set
+  ok   cocotb  5/5 passed, seed 1791475212, 23.0 s
+  ok   synth   yosys 0.33, 54 cells, 2.3 s
+```
+
+`c4o-core all` runs the four commands and times them itself. A command that is not configured says so and counts as passed. The first command that fails stops the run, and the commands after it are listed as not run.
+
+A failed cocotb test gets its name, the file and line of the assertion, and the message. It also gets a command that runs only that test with the same seed. The line `[ERROR] cocotb tests failed: <names>` stays in the output. `build/cocotb-results.xml` has the verdicts.
+
+`make gds` starts `c4o-core progress` beside LibreLane. You do not run it yourself. It reads `runs/<tag>/`, not the text of LibreLane. A step starts when its directory appears. It ends when its `state_out.json` can be read, or when the next directory appears. A signoff check that fails with a deferred error writes no `state_out.json`, so the stage shows `FAIL` and names the check. The flow still ends, `final/` exists, and the exit status is not 0.
+
+The total in `step 24 of 76` is the number of steps LibreLane will run for your config. `make gds` asks for it before the flow, with `gating_config_vars` of LibreLane's `Classic` flow. That is not a documented interface. When it fails, the ledger counts steps and shows no total. It shows no total when `LIBRELANE_ARGS` has `--from`, `--to`, `--skip`, `-F`, `-T` or `--only`.
+
+The seven stages are in `scripts/stages.py`. A stage starts at its first step. A step that the table does not know belongs to the stage that is running.
+
+Ctrl-C stops LibreLane. The ledger then says at which step it stopped and prints the command that resumes there.
+
 ## Before the physical flow (check)
 
 `check` is the pre-flight for the physical design flow. It reads values, not
