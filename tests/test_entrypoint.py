@@ -4322,5 +4322,37 @@ class TestRegress(unittest.TestCase):
         page = entrypoint.site_page.render("top", [], None, [], {}, regression=summary)
         self.assertNotIn("<b>x</b>", page)
 
+class TestLogColor(unittest.TestCase):
+    """log_* use ANSI codes only on a terminal, and not when NO_COLOR is set."""
+
+    def run_log(self, tty, no_color):
+        out = io.StringIO()
+        out.isatty = lambda: tty
+        with patch.dict(os.environ):
+            os.environ.pop("NO_COLOR", None)
+            if no_color is not None:
+                os.environ["NO_COLOR"] = no_color
+            with contextlib.redirect_stdout(out):
+                entrypoint.log_info("a")
+                entrypoint.log_error("b")
+                entrypoint.log_warn("c")
+        return out.getvalue()
+
+    def test_a_terminal_without_no_color_gets_codes(self):
+        out = self.run_log(True, None)
+        self.assertEqual(out, "\033[92m[INFO] a\033[0m\n\033[91m[ERROR] b\033[0m\n\033[93m[WARN] c\033[0m\n")
+
+    def test_no_color_turns_the_codes_off_on_a_terminal(self):
+        out = self.run_log(True, "1")
+        self.assertEqual(out, "[INFO] a\n[ERROR] b\n[WARN] c\n")
+
+    def test_a_pipe_gets_no_codes(self):
+        out = self.run_log(False, None)
+        self.assertEqual(out, "[INFO] a\n[ERROR] b\n[WARN] c\n")
+
+    def test_an_empty_no_color_does_not_turn_the_codes_off(self):
+        out = self.run_log(True, "")
+        self.assertIn("\033[92m[INFO] a\033[0m", out)
+
 if __name__ == '__main__':
     unittest.main()
