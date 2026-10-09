@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import filecmp
 import glob
 import json
 import os
@@ -16,6 +17,7 @@ import yaml
 
 import progress
 import site_page
+import stage_renders
 
 # ANSI color codes
 GREEN = '\033[92m'
@@ -640,6 +642,24 @@ def cmd_progress(args, config):
         # LibreLane and returns its status.
         log_warn(f"The progress display stopped ({e}). LibreLane goes on. Its output: {args.log}")
         sys.exit(0)
+
+def cmd_stages(args, config):
+    """
+    Started by `make gds` around the one KLayout call that draws each stage:
+    `stages` decides what to draw (build/stages/jobs.json), `stages --collect`
+    writes build/stages/stages.json from what was drawn. It never fails: a
+    picture that is not drawn is a stage without one, and make goes on.
+    """
+    try:
+        if args.collect:
+            count = stage_renders.collect(args.run_dir)
+            if count is not None and not args.quiet:
+                print(f"  Stages      {stage_renders.OUT}/ ({count} render{'' if count == 1 else 's'})")
+        else:
+            stage_renders.plan(args.run_dir)
+    except Exception as e:
+        log_warn(f"No stage renders ({e}). make gds goes on.")
+    sys.exit(0)
 
 # What `coverage` writes. Everything under here is rebuilt on each run.
 COVERAGE_DIR = "build/coverage"
@@ -2065,6 +2085,7 @@ def cmd_site(args, config):
     os.makedirs(SITE_DIR)
 
     numbers, layout, details = [], None, {}
+    render = None  # the flow's own render of the layout, when there is a run
     files = []  # (section, name next to the page) of each file copied
     found = [path for pattern in METRICS_GLOBS for path in glob.glob(pattern)]
     if found:
@@ -2157,6 +2178,30 @@ def cmd_site(args, config):
             names += [name for name, _, _ in cases if name not in names]
         regression["tests"] = tests
 
+    # From `make gds`: the render of each stage. Left out when there is none,
+    # and when the file cannot be read, since the page does not need it.
+    built = None
+    stages_path = os.path.join(stage_renders.OUT, "stages.json")
+    if os.path.exists(stages_path):
+        try:
+            with open(stages_path) as f:
+                built = json.load(f)
+            for row in built["stages"]:
+                name = os.path.basename(row["png"] or "")
+                png = os.path.join(stage_renders.OUT, name)
+                if row["png"] and os.path.isfile(png):
+                    if layout and render and filecmp.cmp(png, render, shallow=False):
+                        # The picture the page already publishes as the layout: not a second copy.
+                        row["png"] = layout     # offered as a download elsewhere on the page
+                    else:
+                        row["png"] = "stages/" + name
+                        files.append(("stages", png, row["png"]))
+                else:
+                    row["png"] = None
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+            log_warn(f"Not showing {stages_path} ({e}).")
+            built = None
+
     if not (numbers or layout or cocotb_runs or details or coverage or regression):
         log_error(
             "Nothing to put on the page: no metrics.json under runs/ and no "
@@ -2178,6 +2223,7 @@ def cmd_site(args, config):
     for section, src, name in files:
         dest = os.path.join(SITE_DIR, name)
         if os.path.abspath(src) != os.path.abspath(dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.copy(src, dest)
         offered.append((section, name, os.path.getsize(dest)))
 
@@ -2187,7 +2233,7 @@ def cmd_site(args, config):
         f.write(site_page.render(design, numbers, layout, cocotb_runs, os.environ,
                                  description=config_get(config, "DESCRIPTION", None),
                                  coverage=coverage, regression=regression,
-                                 history=history, files=offered, **details))
+                                 history=history, files=offered, stages=built, **details))
     log_info(f"Wrote {index}")
 
 def cmd_pdk(args, config):
@@ -2247,6 +2293,15 @@ def build_parser():
     progress_parser.add_argument("--plan", required=True, help="The steps this run will take (JSON)")
     progress_parser.add_argument("--partial", action="store_true", help="Not a whole flow: do not count steps")
     progress_parser.set_defaults(func=cmd_progress)
+
+    # Stages command: what `make gds` runs to put a picture on each stage
+    stages_parser = subparsers.add_parser(
+        "stages", help="Decide which layouts of a LibreLane run to draw, and list the pictures (started by make gds)"
+    )
+    stages_parser.add_argument("--run-dir", required=True, help="runs/<tag>")
+    stages_parser.add_argument("--collect", action="store_true", help="After the render: write build/stages/stages.json")
+    stages_parser.add_argument("--quiet", action="store_true", help="Print nothing (PROGRESS=raw)")
+    stages_parser.set_defaults(func=cmd_stages)
 
     # Cocotb command
     cocotb_parser = subparsers.add_parser(
@@ -2357,7 +2412,7 @@ def main():
     args = parser.parse_args()
     # The ledger opens with the release and the design, so it does not need the
     # line that says which config was read.
-    args.func(args, load_config(quiet=args.command in ("all", "progress")))
+    args.func(args, load_config(quiet=args.command in ("all", "progress", "stages")))
 
 if __name__ == "__main__":
     main()

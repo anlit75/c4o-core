@@ -15,6 +15,7 @@ from unittest.mock import patch, MagicMock
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
 import entrypoint
 import progress
+import stage_renders
 import stages
 
 class TestEntrypoint(unittest.TestCase):
@@ -5340,6 +5341,441 @@ class TestAllCommand(unittest.TestCase):
                 config = entrypoint.load_config(quiet=True)
         self.assertEqual(out.getvalue(), "")
         self.assertEqual(config["DESIGN_NAME"], "demo")
+
+class StageCase(unittest.TestCase):
+    """A run replayed from directories: the 76 steps of blinky, each with the files it would have written."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.cwd = os.getcwd()
+        os.chdir(self.dir)
+        self.run = os.path.join("runs", "demo_run")
+        os.makedirs(self.run)
+        self.ids = [i for i, _ in json.load(open(os.path.join(FIXTURES, "plan-blinky.json")))["steps"]]
+        self.number = {i: n for n, i in enumerate(self.ids, 1)}
+        with open(os.path.join(self.run, "resolved.json"), "w") as f:
+            json.dump({"DESIGN_NAME": "demo", "KLAYOUT_PROPERTIES": "/pdks/a.lyp", "KLAYOUT_TECH": "/pdks/a.lyt",
+                       "KLAYOUT_DEF_LAYER_MAP": "/pdks/a.map", "KLAYOUT_RENDER_RESOLUTION": 800,
+                       "TECH_LEFS": {"min_*": "/pdks/min.tlef", "nom_*": "/pdks/nom.tlef"},
+                       "CELL_LEFS": ["/pdks/cells.lef"], "EXTRA_LEFS": None}, f)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.dir)
+
+    DEFS = ("OpenROAD.Floorplan", "OpenROAD.GeneratePDN", "OpenROAD.GlobalPlacement", "OpenROAD.DetailedPlacement",
+            "OpenROAD.CTS", "OpenROAD.GlobalRouting", "OpenROAD.DetailedRouting", "OpenROAD.FillInsertion")
+
+    def flow(self, upto=76, defs=DEFS, no_state=(), seconds=1.0):
+        """The directories of the first `upto` steps. The steps named in `defs` write a DEF, those in `no_state` never finish."""
+        for n, ident in enumerate(self.ids[:upto], 1):
+            d = os.path.join(self.run, f"{n:02d}-{stages.slug(ident)}")
+            os.makedirs(d)
+            if ident in no_state:
+                continue
+            for name in ("state_out.json",):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write("{}")
+            with open(os.path.join(d, "runtime.txt"), "w") as f:
+                f.write(f"00:00:{seconds:06.3f}")
+        for ident in defs:
+            d = os.path.join(self.run, f"{self.number[ident]:02d}-{stages.slug(ident)}")
+            if os.path.isdir(d):
+                open(os.path.join(d, "demo.def"), "w").close()
+
+    def final(self):
+        os.makedirs(os.path.join(self.run, "final", "render"))
+        with open(os.path.join(self.run, "final", "render", "demo.png"), "w") as f:
+            f.write("signoff picture")
+
+    def draw(self, skip=()):
+        """What the LibreLane image would do with jobs.json: a picture for each job, except those named."""
+        with open("build/stages/jobs.json") as f:
+            jobs = json.load(f)
+        for job in jobs:
+            if os.path.basename(job["png"]) not in skip:
+                with open(job["png"], "w") as f:
+                    f.write("png")
+        return jobs
+
+    def stages(self):
+        with open("build/stages/stages.json") as f:
+            return {r["name"]: r for r in json.load(f)["stages"]}
+
+class TestStageRenders(StageCase):
+    def test_each_stage_is_drawn_from_the_last_step_of_it_that_wrote_a_def(self):
+        self.flow()
+        self.final()
+        # a step inside a step is not a step, whatever it wrote
+        later = "OpenROAD.CheckAntennas-1"       # a step of the stage after the one that holds the DEF of routing
+        nested = os.path.join(self.run, f"{self.number[later]:02d}-{stages.slug(later)}", "1-x")
+        os.makedirs(nested)
+        open(os.path.join(nested, "demo.def"), "w").close()
+        self.assertEqual(stage_renders.plan(self.run), 5 - 0)
+        jobs = {os.path.basename(j["png"]): j["args"][0] for j in json.load(open("build/stages/jobs.json"))}
+        step = lambda ident: os.path.join(self.run, f"{self.number[ident]:02d}-{stages.slug(ident)}", "demo.def")
+        self.assertEqual(jobs, {"floorplan.png": step("OpenROAD.GeneratePDN"),
+                                "placement.png": step("OpenROAD.DetailedPlacement"),
+                                "clock-tree.png": step("OpenROAD.CTS"),
+                                "routing.png": step("OpenROAD.DetailedRouting"),
+                                "finish-gds.png": step("OpenROAD.FillInsertion")})
+
+    def test_signoff_is_the_flows_own_render_copied_and_not_drawn_again(self):
+        self.flow(defs=self.DEFS + ("Misc.ReportManufacturability",))
+        self.final()
+        stage_renders.plan(self.run)
+        self.assertNotIn("signoff.png", [os.path.basename(j["png"]) for j in json.load(open("build/stages/jobs.json"))])
+        with open("build/stages/signoff.png") as f:
+            self.assertEqual(f.read(), "signoff picture")
+
+    def test_the_arguments_are_what_librelanes_render_step_passes(self):
+        self.flow()
+        stage_renders.plan(self.run)
+        args = json.load(open("build/stages/jobs.json"))[0]["args"]
+        self.assertEqual(args[:3], [os.path.join(self.run, "21-openroad-generatepdn", "demo.def"), "--output", "build/stages/floorplan.png"])
+        self.assertEqual(args[args.index("--resolution") + 1], "800")
+        self.assertEqual(args[args.index("--grid-visible") + 1], "False")
+        self.assertEqual(args[args.index("--lyp") + 1], "/pdks/a.lyp")
+        self.assertEqual([args[i + 1] for i, a in enumerate(args) if a == "--input-lef"], ["/pdks/nom.tlef", "/pdks/cells.lef"])
+
+    def test_a_stage_with_no_def_has_no_picture(self):
+        self.flow(defs=("OpenROAD.Floorplan", "OpenROAD.GlobalPlacement"))
+        stage_renders.plan(self.run)
+        self.draw()
+        self.assertEqual(stage_renders.collect(self.run), 2)
+        got = self.stages()
+        self.assertIsNone(got["Synthesis"]["png"])
+        self.assertIsNone(got["Clock tree"]["png"])
+        self.assertEqual(got["Clock tree"]["status"], "ok")
+        self.assertEqual(got["Placement"]["png"], "placement.png")
+        self.assertEqual(got["Placement"]["after_step"], self.number["OpenROAD.GlobalPlacement"])
+
+    def test_a_step_that_never_finished_is_not_trusted_with_its_def(self):
+        self.flow(no_state=("OpenROAD.DetailedRouting",))
+        stage_renders.plan(self.run)
+        jobs = {os.path.basename(j["png"]): j["args"][0] for j in json.load(open("build/stages/jobs.json"))}
+        self.assertEqual(jobs["routing.png"], os.path.join(self.run, "39-openroad-globalrouting", "demo.def"))
+
+    def test_a_flow_that_failed_in_the_middle_is_drawn_up_to_where_it_got(self):
+        self.flow(upto=24, no_state=("OpenROAD.GlobalPlacementSkipIO",))
+        self.final()    # what an earlier flow left in the same directory is not a render of this one
+        self.assertEqual(stage_renders.plan(self.run), 1)
+        self.draw()
+        self.assertEqual(stage_renders.collect(self.run), 1)
+        got = self.stages()
+        self.assertEqual(got["Floorplan"]["png"], "floorplan.png")
+        self.assertEqual(got["Placement"]["status"], "failed")
+        self.assertEqual(got["Placement"]["failed"], ["24-openroad-globalplacementskipio"])
+        self.assertIsNone(got["Placement"]["png"])
+        for name in ("Clock tree", "Routing", "Finish & GDS", "Signoff"):
+            self.assertEqual((got[name]["status"], got[name]["png"], got[name]["first_step"]), ("not reached", None, None))
+        self.assertFalse(os.path.exists("build/stages/signoff.png"))
+
+    def test_a_deferred_failure_is_a_failed_signoff_with_the_picture_of_the_run(self):
+        self.flow(no_state=("Checker.XOR",))
+        self.final()
+        stage_renders.plan(self.run)
+        self.draw()
+        self.assertEqual(stage_renders.collect(self.run), 6)
+        got = self.stages()
+        self.assertEqual((got["Signoff"]["status"], got["Signoff"]["failed"], got["Signoff"]["png"]),
+                         ("failed", ["63-checker-xor"], "signoff.png"))
+        self.assertEqual(got["Routing"]["status"], "ok")
+
+    def test_the_seconds_of_a_stage_are_those_of_its_steps(self):
+        self.flow(seconds=0.5)
+        # one step is slower, and the step with no runtime.txt counts for none
+        with open(os.path.join(self.run, "35-openroad-cts", "runtime.txt"), "w") as f:
+            f.write("00:01:02.250")
+        os.remove(os.path.join(self.run, "36-openroad-stamidpnr-1", "runtime.txt"))
+        stage_renders.plan(self.run)
+        stage_renders.collect(self.run)
+        got = self.stages()
+        self.assertEqual(got["Clock tree"]["seconds"], 62.25 + 0.5 + 0.5)
+        self.assertEqual(got["Synthesis"]["seconds"], 12 * 0.5)
+        self.assertEqual((got["Signoff"]["first_step"], got["Signoff"]["last_step"]), (61, 76))
+
+    def test_a_resumed_run_counts_the_step_it_ran_last(self):
+        self.flow(seconds=1.0)
+        # --from OpenROAD.Floorplan: the steps run again are appended after the 76
+        for n, ident in enumerate(self.ids[12:23], 77):
+            d = os.path.join(self.run, f"{n:02d}-{stages.slug(ident)}")
+            os.makedirs(d)
+            with open(os.path.join(d, "state_out.json"), "w") as f:
+                f.write("{}")
+            with open(os.path.join(d, "runtime.txt"), "w") as f:
+                f.write("00:00:02.000")
+        open(os.path.join(self.run, "85-openroad-generatepdn", "demo.def"), "w").close()
+        stage_renders.plan(self.run)
+        self.draw()
+        stage_renders.collect(self.run)
+        got = self.stages()
+        self.assertEqual(got["Floorplan"]["seconds"], 22.0)
+        self.assertEqual((got["Floorplan"]["after_step"], got["Synthesis"]["seconds"]), (85, 12.0))
+        self.assertEqual(got["Routing"]["after_step"], self.number["OpenROAD.DetailedRouting"])
+
+    def test_stages_json_names_every_stage_of_the_table_in_order(self):
+        self.flow()
+        self.final()
+        stage_renders.plan(self.run)
+        self.draw()
+        stage_renders.collect(self.run)
+        with open("build/stages/stages.json") as f:
+            data = json.load(f)
+        self.assertEqual(data["run"], "demo_run")
+        self.assertEqual([r["name"] for r in data["stages"]], [s.name for s in stages.STAGES])
+        self.assertEqual([r["blurb"] for r in data["stages"]], [s.blurb for s in stages.STAGES])
+        self.assertEqual([r["detail"] for r in data["stages"]], [s.detail for s in stages.STAGES])
+        self.assertEqual(set(data["stages"][2]), {"name", "blurb", "first_step", "last_step", "seconds", "png",
+                                                   "after_step", "status", "failed", "detail"})
+        self.assertEqual([r["png"] for r in data["stages"]],
+                         [None, "floorplan.png", "placement.png", "clock-tree.png", "routing.png", "finish-gds.png", "signoff.png"])
+        self.assertEqual({r["status"] for r in data["stages"]}, {"ok"})
+        self.assertFalse(os.path.exists("build/stages/jobs.json"))
+
+    def test_a_picture_that_was_not_drawn_is_a_stage_without_one(self):
+        self.flow()
+        stage_renders.plan(self.run)
+        self.draw(skip=("routing.png",))
+        open("build/stages/floorplan.png", "w").close()     # an empty file is not a picture either
+        self.assertEqual(stage_renders.collect(self.run), 3)
+        got = self.stages()
+        self.assertIsNone(got["Routing"]["png"])
+        self.assertIsNone(got["Floorplan"]["png"])
+        self.assertEqual(got["Routing"]["status"], "ok")
+
+    def test_a_run_with_no_steps_leaves_nothing_and_the_old_pictures_are_gone(self):
+        os.makedirs("build/stages")
+        open("build/stages/stages.json", "w").close()
+        self.assertEqual(stage_renders.plan(self.run), 0)
+        self.assertIsNone(stage_renders.collect(self.run))
+        self.assertFalse(os.path.exists("build/stages"))
+        self.assertEqual(stage_renders.plan("runs/none"), 0)
+
+    def test_a_run_that_does_not_say_where_klayout_is_has_no_jobs(self):
+        self.flow()
+        with open(os.path.join(self.run, "resolved.json"), "w") as f:
+            f.write("{}")
+        self.assertEqual(stage_renders.plan(self.run), 0)
+        self.assertEqual(json.load(open("build/stages/jobs.json")), [])
+
+class TestStagesCommand(StageCase):
+    def run_cmd(self, *argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            args = entrypoint.build_parser().parse_args(["stages", "--run-dir", self.run, *argv])
+            entrypoint.cmd_stages(args, {"DESIGN_NAME": "demo"})
+        return cm.exception.code, out.getvalue()
+
+    def test_it_names_the_directory_and_how_many_pictures_there_are(self):
+        self.flow()
+        self.assertEqual(self.run_cmd(), (0, ""))
+        self.draw()
+        self.assertEqual(self.run_cmd("--collect"), (0, "  Stages      build/stages/ (5 renders)\n"))
+
+    def test_one_picture_is_not_plural(self):
+        self.flow(defs=("OpenROAD.Floorplan",))
+        self.run_cmd()
+        self.draw()
+        self.assertIn("(1 render)", self.run_cmd("--collect")[1])
+
+    def test_quiet_says_nothing_and_writes_the_same_file(self):
+        self.flow()
+        self.run_cmd()
+        self.draw()
+        self.assertEqual(self.run_cmd("--collect", "--quiet"), (0, ""))
+        self.assertTrue(os.path.exists("build/stages/stages.json"))
+
+    def test_it_never_fails(self):
+        self.flow()
+        with patch.object(stage_renders, "plan", side_effect=RuntimeError("boom")):
+            code, out = self.run_cmd()
+        self.assertEqual(code, 0)
+        with patch.object(stage_renders, "collect", side_effect=RuntimeError("boom")):
+            self.assertEqual(self.run_cmd("--collect")[0], 0)
+
+class TestFilesLine(unittest.TestCase):
+    def test_bare_names_are_one_line_of_whole_entries(self):
+        import site_page
+        out = site_page.files_line([(f"stages/f{k}.png", 100) for k in range(7)], bare=True)
+        self.assertNotIn("<br>", out)
+        self.assertEqual(out.count('<span class="file"><a href="stages/f'), 7)
+        self.assertIn('<a href="stages/f3.png" download>f3.png</a> <span class="of">100 B</span></span> &middot; <span class="file">', out)
+
+    def test_a_name_is_whole_when_it_is_not_bare(self):
+        import site_page
+        out = site_page.files_line([("stages/f.png", 100)])
+        self.assertIn('download>stages/f.png</a>', out)
+        self.assertNotIn('class="file"', out)
+
+    def test_the_text_of_a_stage_is_for_a_student(self):
+        for stage in stages.STAGES:
+            self.assertTrue(stage.detail.strip())
+            self.assertNotRegex(stage.detail, r"\bstep\b|\w\.[A-Z]\w+")
+
+class TestSiteStages(StageCase):
+    def page(self, config=None):
+        os.makedirs("build/site", exist_ok=True)
+        os.makedirs("build/cocotb", exist_ok=True)
+        with open("build/cocotb-results.xml", "w") as f:
+            f.write('<testsuites><testsuite><testcase name="t" sim_time_ns="1"/></testsuite></testsuites>')
+        with contextlib.redirect_stdout(io.StringIO()):
+            entrypoint.cmd_site(MagicMock(), config or {"DESIGN_NAME": "demo"})
+        with open("build/site/index.html") as f:
+            return f.read()
+
+    def drawn(self, **flow):
+        self.flow(**flow)
+        self.final()
+        stage_renders.plan(self.run)
+        self.draw()
+        stage_renders.collect(self.run)
+
+    def test_the_page_has_a_section_with_a_picture_and_a_row_for_each_stage(self):
+        self.drawn()
+        page = self.page()
+        self.assertIn('<section id="stages"><h2>How it was built</h2>', page)
+        for stage in stages.STAGES:
+            self.assertIn(f'<span class="nm">{html.escape(stage.name)}</span>', page)
+        self.assertEqual(page.count('data-src="'), 6)
+        # a row is its name; opened it says what the stage does, in the line of the terminal, and what to see
+        for stage in stages.STAGES:
+            self.assertIn(f'<p class="detail"><strong>{html.escape(stage.blurb)}</strong><br>{html.escape(stage.detail)}', page)
+        self.assertNotIn(f'<span class="sub">{html.escape(stages.STAGES[1].blurb)}', page)
+        self.assertIn('<span class="nm">Floorplan</span></span>', page)
+        self.assertIn('<span class="nm">Synthesis</span><span class="sub">no picture</span>', page)
+        self.assertIn('<figure class="pic"><a href="stages/floorplan.png"><img src="stages/floorplan.png"', page)
+        self.assertEqual(page.count('aria-selected="true"'), 1)
+        self.assertIn('<li id="stage-1" role="option" aria-selected="true" class="on" data-src="stages/floorplan.png"', page)
+        self.assertIn('role="listbox" aria-label="Stages of the flow" tabindex="0" aria-activedescendant="stage-1"', page)
+        # nothing a student cannot read: no caption, no step numbers
+        self.assertNotIn("<figcaption>", page.split('id="stages"')[1])
+        self.assertNotIn("after step", page)
+        self.assertNotIn("Click a row", page)
+        # one second for each of the 76 steps, in 7 stages
+        self.assertIn("<p>One picture per stage of the real run, which took 1 min 16 s.</p>", page)
+        self.assertIn('<span class="nm">Synthesis</span><span class="sub">no picture</span></span><span class="secs">12 s</span>', page)
+        # seconds in words, no bars
+        stages_html = page.split('<section id="stages">')[1]
+        self.assertNotIn('class="bar"', stages_html)
+        self.assertNotIn("Bars", stages_html)
+        self.assertNotIn("did not finish cleanly", page)
+        self.assertIn(">How it was built</a>", page.split("</nav>")[0])
+        # the pictures are files of the page, and offered as such
+        for name in ("floorplan", "placement", "clock-tree", "routing", "finish-gds", "signoff"):
+            self.assertTrue(os.path.exists(f"build/site/stages/{name}.png"))
+        # bare names, on one line that breaks between entries only
+        files = page.split('<p class="note files">Files: ')[-1].split("</p>")[0]
+        self.assertNotIn("<br>", files)
+        self.assertEqual(files.count('class="file"'), 6)
+        self.assertIn('<span class="file"><a href="stages/floorplan.png" download>floorplan.png</a> <span class="of">', files)
+        self.assertIn(".files .file { white-space: nowrap; }", page)
+        self.assertIn("querySelectorAll('.built')", page)
+        self.assertNotIn("History", page.split('id="stages"')[1])
+
+    def test_it_is_the_last_section_and_needs_nothing_from_outside(self):
+        self.drawn()
+        page = self.page()
+        ids = re.findall(r'<section id="([a-z0-9-]+)"', page)
+        self.assertGreater(len(ids), 1)
+        self.assertEqual(ids[-1], "stages")
+        self.assertNotRegex(page, r'(src|href)="https?://(?!github)')
+
+    def test_a_page_without_stages_json_has_no_section_and_no_script(self):
+        self.drawn()
+        os.remove("build/stages/stages.json")
+        page = self.page()
+        self.assertNotIn('id="stages"', page)
+        self.assertNotIn("querySelectorAll('.built')", page)
+        self.assertFalse(os.path.exists("build/site/stages"))
+
+    def test_a_stages_json_that_cannot_be_read_leaves_the_section_out(self):
+        self.drawn()
+        with open("build/stages/stages.json", "w") as f:
+            f.write("[not json")
+        self.assertNotIn('id="stages"', self.page())
+
+    def test_a_picture_that_is_not_there_is_a_row_without_one(self):
+        self.drawn()
+        os.remove("build/stages/routing.png")
+        page = self.page()
+        self.assertNotIn("stages/routing.png", page)
+        self.assertEqual(page.count('data-src="'), 5)
+        self.assertIn('<span class="nm">Routing</span><span class="sub">no picture</span>', page)
+
+    def test_a_failed_signoff_is_a_failed_row_and_a_sentence_and_not_a_clean_build(self):
+        self.drawn(no_state=("Checker.XOR",))
+        page = self.page()
+        self.assertIn('aria-selected="false" class="bad" data-src="stages/signoff.png"', page)
+        self.assertIn('<span class="nm">Signoff</span><span class="sub"><span class="bad">failed</span></span>', page)
+        self.assertIn('<strong class="bad">This run did not finish cleanly:</strong> Signoff failed.', page)
+        self.assertIn("This stage failed. The picture is real, but this stage did not pass.", page)
+
+    def test_a_flow_that_stopped_shows_the_stages_it_got_to(self):
+        self.flow(upto=24, no_state=("OpenROAD.GlobalPlacementSkipIO",))
+        stage_renders.plan(self.run)
+        self.draw()
+        stage_renders.collect(self.run)
+        page = self.page()
+        self.assertEqual(page.count('data-src="'), 1)
+        self.assertIn('<span class="nm">Placement</span><span class="sub"><span class="bad">failed</span> &middot; no picture</span>', page)
+        self.assertIn('<span class="nm">Clock tree</span><span class="sub">not reached</span>', page)
+        self.assertIn("Placement failed.", page)
+
+    def layout_page(self, same=True):
+        """A page with a layout image: the render of the run, which signoff.png is a copy of."""
+        self.drawn()
+        shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "metrics.json"),
+                    os.path.join(self.run, "final", "metrics.json"))
+        if not same:
+            with open("build/stages/signoff.png", "w") as f:
+                f.write("a different picture")
+        return self.page()
+
+    def test_the_signoff_picture_is_the_layout_image_when_it_is_the_same_file(self):
+        page = self.layout_page()
+        self.assertTrue(os.path.exists("build/site/layout.png"))
+        self.assertFalse(os.path.exists("build/site/stages/signoff.png"))
+        self.assertIn('data-src="layout.png"', page)
+        self.assertNotIn("stages/signoff.png", page)
+        files = page.split('<p class="note files">Files: ')[-1].split("</p>")[0]
+        # offered as a download elsewhere on the page, so not again here
+        self.assertNotIn("layout.png", files)
+        self.assertEqual(files.count('class="file"'), 5)
+
+    def test_a_signoff_picture_that_is_not_the_layout_image_is_copied(self):
+        page = self.layout_page(same=False)
+        self.assertTrue(os.path.exists("build/site/stages/signoff.png"))
+        self.assertIn('data-src="stages/signoff.png"', page)
+        self.assertIn('<a href="stages/signoff.png" download>signoff.png</a>', page)
+
+    def test_without_a_layout_image_the_signoff_picture_is_copied(self):
+        self.drawn()
+        page = self.page()
+        self.assertTrue(os.path.exists("build/site/stages/signoff.png"))
+        self.assertFalse(os.path.exists("build/site/layout.png"))
+        self.assertIn('data-src="stages/signoff.png"', page)
+
+    def test_the_names_on_the_page_are_escaped(self):
+        self.drawn()
+        with open("build/stages/stages.json") as f:
+            data = json.load(f)
+        data["stages"][1]["name"] = "<b>x</b>"
+        with open("build/stages/stages.json", "w") as f:
+            json.dump(data, f)
+        self.assertNotIn("<b>x</b>", self.page())
+
+    def test_a_picture_name_cannot_leave_the_directory(self):
+        self.drawn()
+        with open("build/stages/stages.json") as f:
+            data = json.load(f)
+        data["stages"][1]["png"] = "../../secret.txt"
+        open("secret.txt", "w").write("x")
+        with open("build/stages/stages.json", "w") as f:
+            json.dump(data, f)
+        self.page()
+        self.assertFalse(os.path.exists("build/site/secret.txt"))
+        self.assertFalse(os.path.exists("build/site/stages/secret.txt"))
 
 if __name__ == '__main__':
     unittest.main()

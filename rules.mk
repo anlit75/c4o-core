@@ -102,6 +102,23 @@ LIBRELANE_PLAN_PY := import json,librelane;from librelane.flows import Flow;C=Fl
 LIBRELANE_PLAN = docker run --rm -v $(PWD):/workspace -w /workspace -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks -e HOME=/tmp \
 		-u $(shell id -u):$(shell id -g) $(LIBRELANE_IMAGE) python3 -c '$(LIBRELANE_PLAN_PY)'
 
+# One picture per stage of the flow, for the results page. c4o-core decides
+# which layout of the run each stage is drawn from (`stages`, in the c4o-core
+# image), and the LibreLane image draws them with LibreLane's own render.py,
+# as its KLayout.Render step does: this is the only part that needs KLayout.
+# Every call is allowed to fail, and none changes the status of `make gds`: a
+# picture that is not drawn is a stage without one. Run after a flow that
+# failed as well, on what the run left. After an upgrade of LIBRELANE_IMAGE,
+# check that scripts/klayout/render.py still takes the arguments c4o-core gives it.
+STAGES_RUN := runs/$(DESIGN_NAME)_run
+LIBRELANE_RENDER_PY := import json,os,subprocess,sys,librelane;R=os.path.join(os.path.dirname(librelane.__file__),"scripts","klayout","render.py");ok=lambda j:subprocess.run([sys.executable,R]+j["args"],capture_output=True).returncode==0 and os.path.exists(j["png"]) and os.path.getsize(j["png"])>0;[os.path.exists(j["png"]) and os.remove(j["png"]) for j in json.load(open("build/stages/jobs.json")) if not ok(j)]
+LIBRELANE_RENDER = docker run --rm -v $(PWD):/workspace -w /workspace -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks -e HOME=/tmp \
+		-u $(shell id -u):$(shell id -g) $(LIBRELANE_IMAGE) timeout 300 python3 -c '$(LIBRELANE_RENDER_PY)'
+# $(1): flags for the call that lists the pictures (--quiet for PROGRESS=raw)
+C4O_STAGES = ( $(C4O_CMD) stages --run-dir $(STAGES_RUN) || true ); \
+	if [ -f build/stages/jobs.json ]; then ( $(LIBRELANE_RENDER) >/dev/null 2>&1 || true ); fi; \
+	( $(C4O_CMD) stages --run-dir $(STAGES_RUN) --collect $(1) || true )
+
 # The results page names the commit and CI run it was built from, which c4o-core
 # reads from these. `-e NAME` with no value passes the host's value through, and
 # passes nothing when the host has none, so a local `make site` is unaffected.
@@ -285,10 +302,11 @@ gds:
 	@echo "🟢 Running LibreLane..."
 	mkdir -p build
 ifeq ($(C4O_PROGRESS),raw)
-	$(LIBRELANE_RUN)
+	$(LIBRELANE_RUN) || { code=$$?; $(call C4O_STAGES,--quiet); exit $$code; }
 	@echo "🟢 Post-processing..."
 	# Copy the final GDS to the build folder
 	cp runs/$(DESIGN_NAME)_run/final/gds/$(DESIGN_NAME).gds build/$(DESIGN_NAME).gds
+	@$(call C4O_STAGES,--quiet)
 	# runs/ stays where LibreLane put it: a resume looks for the run there, and
 	# c4o-core's report and gatesim search it too.
 else
@@ -316,7 +334,9 @@ else
 	$(C4O_LEDGER) progress --run-dir runs/$(DESIGN_NAME)_run --status build/log/status \
 		--log build/log/librelane.log --plan build/log/plan.json $(if $(LIBRELANE_PARTIAL),--partial); \
 	wait; \
-	exit `cat build/log/status`
+	code=`cat build/log/status`; \
+	if [ "$$code" != 0 ]; then $(call C4O_STAGES,); fi; \
+	exit $$code
 	@cp runs/$(DESIGN_NAME)_run/final/gds/$(DESIGN_NAME).gds build/$(DESIGN_NAME).gds
 endif
 
@@ -325,6 +345,7 @@ endif
 	@$(MAKE) --no-print-directory report
 ifneq ($(C4O_PROGRESS),raw)
 	@echo "  GDS         build/$(DESIGN_NAME).gds"
+	@$(call C4O_STAGES,)
 endif
 	@# Say what comes after the layout, since a new user does not know.
 	@echo "Next: make site puts the results on one page (build/site/index.html); push, and CI publishes it when GitHub Pages is on."
