@@ -14,6 +14,8 @@ from unittest.mock import patch, MagicMock
 # Add scripts/ to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
 import entrypoint
+import progress
+import stages
 
 class TestEntrypoint(unittest.TestCase):
     def setUp(self):
@@ -4374,6 +4376,970 @@ class TestLoadConfigVersion(unittest.TestCase):
         out = self.load(None)
         self.assertIn("config.yaml\n", out)
         self.assertNotIn("c4o-core", out)
+
+
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "progress")
+
+def fixture_text(name):
+    with open(os.path.join(FIXTURES, name)) as f:
+        return f.read()
+
+class TestProgressMode(unittest.TestCase):
+    """PROGRESS= / C4O_PROGRESS: which of raw, plain and tty a run gets."""
+
+    def mode(self, env, isatty):
+        return progress.choose_mode(env, isatty)
+
+    def test_a_named_mode_wins_over_what_the_terminal_is(self):
+        for want in ("raw", "plain", "tty"):
+            for isatty in (True, False):
+                self.assertEqual(self.mode({"C4O_PROGRESS": want, "CI": "true", "TERM": "dumb"}, isatty), want)
+
+    def test_auto_is_tty_on_a_terminal(self):
+        self.assertEqual(self.mode({"TERM": "xterm"}, True), "tty")
+        self.assertEqual(self.mode({"C4O_PROGRESS": "auto", "TERM": "xterm"}, True), "tty")
+        self.assertEqual(self.mode({"C4O_PROGRESS": "", "TERM": "xterm"}, True), "tty")
+
+    def test_auto_is_plain_when_stdout_is_not_a_terminal(self):
+        self.assertEqual(self.mode({"TERM": "xterm"}, False), "plain")
+
+    def test_auto_is_plain_in_ci_even_on_a_terminal(self):
+        self.assertEqual(self.mode({"TERM": "xterm", "CI": "true"}, True), "plain")
+
+    def test_auto_is_plain_for_a_dumb_terminal(self):
+        self.assertEqual(self.mode({"TERM": "dumb"}, True), "plain")
+
+    def test_a_word_that_is_not_a_mode_is_auto_and_is_known_to_be_wrong(self):
+        self.assertEqual(progress.parse_mode({"C4O_PROGRESS": "fancy"}), ("fancy", False))
+        self.assertEqual(self.mode({"C4O_PROGRESS": "fancy", "TERM": "xterm"}, True), "tty")
+        self.assertEqual(progress.parse_mode({}), ("auto", True))
+
+    def test_the_case_of_the_word_does_not_matter(self):
+        self.assertEqual(self.mode({"C4O_PROGRESS": "RAW"}, True), "raw")
+
+    def test_plain_has_no_escape_codes_and_says_ok_fail_skip(self):
+        style = progress.Style("plain", {})
+        rows = [progress.ledger_row(style, k, "lint", "text") for k in ("ok", "fail", "skip")]
+        self.assertNotIn("\x1b", "".join(rows))
+        self.assertTrue(rows[0].lstrip().startswith("ok "))
+        self.assertTrue(rows[1].lstrip().startswith("FAIL "))
+        self.assertTrue(rows[2].lstrip().startswith("skip "))
+        self.assertTrue(all(ord(c) < 128 for c in "".join(rows)))
+
+    def test_a_terminal_has_symbols_and_colour(self):
+        style = progress.Style("tty", {"TERM": "xterm"})
+        row = progress.ledger_row(style, "ok", "lint", "text")
+        self.assertIn("✓", row)
+        self.assertIn("\x1b[92m", row)
+
+    def test_no_color_removes_the_colour_and_keeps_the_symbols(self):
+        style = progress.Style("tty", {"NO_COLOR": "1"})
+        row = progress.ledger_row(style, "fail", "cocotb", "text")
+        self.assertIn("✗", row)
+        self.assertNotRegex(row, r"\x1b\[(3\d|9\d)m")
+
+    def test_an_empty_no_color_is_not_no_color(self):
+        row = progress.ledger_row(progress.Style("tty", {"NO_COLOR": ""}), "ok", "lint", "t")
+        self.assertIn("\x1b[92m", row)
+
+    def test_c4o_ascii_replaces_the_symbols(self):
+        row = progress.ledger_row(progress.Style("tty", {"C4O_ASCII": "1"}), "ok", "lint", "t")
+        self.assertNotIn("✓", row)
+        self.assertIn("ok", row)
+
+class TestLedgerLines(unittest.TestCase):
+    """What a line of the ledger looks like at 80 and 120 columns."""
+
+    def visible(self, rows):
+        return [progress.ANSI.sub("", r) for r in rows]
+
+    def test_a_stage_row_explains_itself_on_a_wide_terminal_only(self):
+        style = progress.Style("tty", {})
+        stage = stages.STAGES[3]
+        wide = self.visible([progress.stage_row(style, "ok", stage, 4, 22.0, 120)])[0]
+        narrow = self.visible([progress.stage_row(style, "ok", stage, 4, 22.0, 80)])[0]
+        self.assertIn(stage.blurb, wide)
+        self.assertNotIn(stage.blurb, narrow)
+        self.assertIn("4 steps", narrow)
+        self.assertIn("22s", narrow)
+
+    def test_the_explanation_is_there_from_100_columns_and_not_at_99(self):
+        style = progress.Style("tty", {})
+        stage = stages.STAGES[0]
+        self.assertIn(stage.blurb, self.visible([progress.stage_row(style, "ok", stage, 12, 4.0, 100)])[0])
+        self.assertNotIn(stage.blurb, self.visible([progress.stage_row(style, "ok", stage, 12, 4.0, 99)])[0])
+
+    def test_plain_rows_never_carry_the_explanation(self):
+        row = progress.stage_row(progress.Style("plain", {}), "ok", stages.STAGES[0], 12, 4.0, 200)
+        self.assertNotIn(stages.STAGES[0].blurb, row)
+
+    def test_one_step_is_not_steps(self):
+        row = progress.stage_row(progress.Style("plain", {}), "fail", stages.STAGES[2], 1, 0.2, 80)
+        self.assertIn("1 step ", row)
+        self.assertNotIn("1 steps", row)
+
+    def head(self, style):
+        return [("  ▸ ", ), ("Routing", "bold"), ("  stage 5/7 · Detailed Routing (OpenROAD.DetailedRouting) · 3s in this step", )]
+
+    def test_the_live_rows_at_120_columns(self):
+        style = progress.Style("tty", {})
+        rows = self.visible(progress.live_rows(style, 120, self.head(style), 47, 76, "47/76 steps · 0:52 elapsed", "[INFO DRT-0084] Complete 62 groups."))
+        self.assertEqual(len(rows), 3)
+        self.assertIn("(OpenROAD.DetailedRouting)", rows[0])
+        self.assertIn("47/76 steps", rows[1])
+        self.assertIn("Complete 62 groups.", rows[2])
+
+    def test_the_live_rows_at_80_columns_drop_the_id_not_the_bar(self):
+        style = progress.Style("tty", {})
+        head = [("  ▸ ", ), ("Routing", "bold"), (" 5/7 · Detailed Routing · 3s", )]
+        rows = self.visible(progress.live_rows(style, 80, head, 47, 76, "47/76 steps · 0:52 elapsed", "last"))
+        self.assertEqual(len(rows), 3)
+        self.assertNotIn("OpenROAD", rows[0])
+        self.assertIn("47/76 steps", rows[1])
+
+    def test_under_60_columns_there_is_no_bar(self):
+        style = progress.Style("tty", {})
+        rows = progress.live_rows(style, 50, [("  ▸ Routing", )], 1, 2, "1/2", "last")
+        self.assertEqual(len(rows), 2)
+
+    def test_under_40_columns_there_is_nothing_pinned(self):
+        self.assertEqual(progress.live_rows(progress.Style("tty", {}), 39, [("x", )], 1, 2, "1/2", "last"), [])
+
+    def test_a_row_is_never_wider_than_the_terminal_and_a_cut_shows(self):
+        style = progress.Style("tty", {})
+        long = "x" * 300
+        for width in (40, 60, 80, 120):
+            rows = self.visible(progress.live_rows(style, width, [(long, )], 1, 2, "1/2 steps", long))
+            self.assertTrue(all(len(r) < width for r in rows), (width, [len(r) for r in rows]))
+            self.assertTrue(rows[0].endswith("…"))
+
+    def test_the_bar_fills_in_proportion(self):
+        style = progress.Style("plain", {})
+        self.assertEqual(style.bar(0, 10, 20), "-" * 20)
+        self.assertEqual(style.bar(5, 10, 20), "#" * 10 + "-" * 10)
+        self.assertEqual(style.bar(10, 10, 20), "#" * 20)
+
+    def test_durations(self):
+        self.assertEqual(progress.fmt_secs(0.2), "<1s")
+        self.assertEqual(progress.fmt_secs(22.4), "22s")
+        self.assertEqual(progress.fmt_secs(97), "1:37")
+        self.assertEqual(progress.fmt_clock(3725), "1:02:05")
+
+class TestLastOutput(unittest.TestCase):
+    def last(self, text):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "log")
+            with open(path, "w") as f:
+                f.write(text)
+            return progress.last_output(path)
+
+    def test_the_last_line_that_starts_at_the_margin(self):
+        self.assertEqual(self.last("[INFO A] one\n[INFO B] two  \n"), "[INFO B] two")
+
+    def test_the_rest_of_a_wrapped_line_is_not_a_line(self):
+        self.assertEqual(self.last("[INFO B] a long path 'runs/x/y/z\n                     tail.log'\n"), "[INFO B] a long path 'runs/x/y/z")
+
+    def test_blank_lines_and_colour_codes_do_not_count(self):
+        self.assertEqual(self.last("\x1b[32mgreen\x1b[0m\n\n   \n"), "green")
+
+    def test_no_file_no_line(self):
+        self.assertEqual(progress.last_output("/nonexistent"), "")
+
+class TestLive(unittest.TestCase):
+    """The rows under the ledger are drawn by moving up, and leave nothing."""
+
+    def test_a_redraw_moves_up_over_the_old_rows_and_clears(self):
+        out = io.StringIO()
+        live = progress.Live(out, True)
+        live.draw(["a", "b", "c"])
+        live.draw(["a", "b", "d"])
+        self.assertIn("\x1b[3A\r\x1b[J", out.getvalue())
+
+    def test_an_unchanged_frame_is_not_drawn_again(self):
+        out = io.StringIO()
+        live = progress.Live(out, True)
+        live.draw(["a"])
+        before = out.getvalue()
+        live.draw(["a"])
+        self.assertEqual(out.getvalue(), before)
+
+    def test_a_ledger_line_goes_above_the_rows_which_come_back(self):
+        out = io.StringIO()
+        live = progress.Live(out, True)
+        live.draw(["row1", "row2"])
+        live.commit("LEDGER")
+        text = out.getvalue()
+        self.assertTrue(text.index("LEDGER") > text.index("\x1b[2A"))
+        self.assertTrue(text.endswith("row1\nrow2\n"))
+
+    def test_closing_erases_the_rows_and_draws_nothing(self):
+        out = io.StringIO()
+        live = progress.Live(out, True)
+        live.draw(["a", "b"])
+        live.close()
+        self.assertTrue(out.getvalue().endswith("\x1b[2A\r\x1b[J"))
+
+    def test_without_a_terminal_it_writes_the_ledger_and_no_codes(self):
+        out = io.StringIO()
+        live = progress.Live(out, False)
+        live.draw(["row"])
+        live.commit("LEDGER")
+        live.close()
+        self.assertEqual(out.getvalue(), "LEDGER\n")
+
+    def test_no_absolute_positioning_and_no_alternate_screen(self):
+        out = io.StringIO()
+        live = progress.Live(out, True)
+        for n in range(3):
+            live.draw([f"r{n}", "x"])
+            live.commit(f"l{n}")
+        live.close()
+        self.assertNotRegex(out.getvalue(), r"\x1b\[\d*;\d*H|\x1b\[\?1049|\x1b\[H")
+
+class TestCocotbFailures(unittest.TestCase):
+    """What the ledger says about cocotb comes from a real run of a broken blinky."""
+
+    def setUp(self):
+        self.log = fixture_text("cocotb-failing.log")
+        self.xml = os.path.join(FIXTURES, "cocotb-failing-results.xml")
+
+    def test_the_failed_tests_with_file_line_and_message(self):
+        info = progress.summarize_cocotb(self.log, self.xml, cwd="/workspace")
+        self.assertEqual(info["seed"], "1791475857")
+        self.assertEqual((info["total"], info["passed"], len(info["failures"])), (5, 1, 4))
+        first = info["failures"][0]
+        self.assertEqual(first["name"], "led_rises_half_a_period_after_reset")
+        self.assertEqual(first["module"], "test_blinky_cocotb")
+        self.assertEqual(first["where"], "tb/test_blinky_cocotb.py:64")
+        self.assertEqual(first["message"], ["AssertionError: led rose before cycle 32768", "assert 1 == 0"])
+        last = info["failures"][3]
+        self.assertEqual(last["module"], "test_blinky_random")
+        self.assertEqual(last["where"], "tb/test_blinky_random.py:106")
+
+    def test_where_is_the_deepest_frame_that_is_not_cocotbs_own(self):
+        log = (
+            "  100.00ns INFO     cocotb.regression                  t failed\n"
+            "                                                        Traceback (most recent call last):\n"
+            '                                                          File "/workspace/tb/t.py", line 10, in t\n'
+            "                                                            await helper(dut)\n"
+            '                                                          File "/opt/venv/lib/python3.12/site-packages/cocotb/x.py", line 5, in run\n'
+            '                                                          File "/workspace/tb/helpers.py", line 22, in helper\n'
+            "                                                            assert dut.q.value == 1\n"
+            "                                                        AssertionError: q is low\n"
+            "  100.00ns INFO     cocotb.regression                  *****\n")
+        block = progress.cocotb_failure_blocks(log)["t"]
+        self.assertEqual(block["where"], ("/workspace/tb/helpers.py", "22"))
+        self.assertEqual(block["message"], ["AssertionError: q is low"])
+
+    def test_the_cell_count_is_the_last_one_yosys_printed(self):
+        text = "Yosys 0.33 (git sha1 x)\n   Number of cells:                 10\n...\n   Number of cells:                 54\n"
+        self.assertEqual(progress.synth_text(text), "yosys 0.33, 54 cells")
+
+    def test_cocotbs_indentation_is_taken_off(self):
+        info = progress.summarize_cocotb(self.log, self.xml, cwd="/workspace")
+        for fail in info["failures"]:
+            self.assertTrue(all(not line.startswith(" ") for line in fail["message"]), fail["message"])
+
+    def test_a_passing_run(self):
+        info = progress.summarize_cocotb(fixture_text("cocotb-passing.log"),
+                                         os.path.join(FIXTURES, "cocotb-passing-results.xml"))
+        self.assertEqual((info["total"], info["passed"], info["failures"]), (5, 5, []))
+        self.assertEqual(info["seed"], "1791475867")
+
+    def test_a_seed_given_to_the_run_is_read_too(self):
+        info = progress.summarize_cocotb("0.00ns INFO cocotb  Seeding Python random module with supplied seed 77\n", "/nonexistent.xml")
+        self.assertEqual(info["seed"], "77")
+
+    def test_a_missing_results_file_is_no_tests_not_a_crash(self):
+        info = progress.summarize_cocotb(self.log, "/nonexistent.xml")
+        self.assertEqual((info["total"], info["failures"]), (0, []))
+
+    def test_without_a_results_file_the_row_says_only_that_it_failed(self):
+        with tempfile.TemporaryDirectory() as d:
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                text = progress.failed_text("cocotb", self.log, 9.0, progress.Style("plain", {}))
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(text, "failed, 9.0 s")
+
+    def failure_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "build", "log"))
+            shutil.copy(self.xml, os.path.join(d, "build", "cocotb-results.xml"))
+            shutil.copy(os.path.join(FIXTURES, "cocotb-failing.log"), os.path.join(d, "build", "log", "cocotb.log"))
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                with patch("os.getcwd", return_value="/workspace"):
+                    return progress.failure_block("cocotb", self.log, "build/log/cocotb.log"), \
+                        progress.failed_text("cocotb", self.log, 9.0, progress.Style("plain", {}))
+            finally:
+                os.chdir(cwd)
+
+    def test_the_block_keeps_the_error_line_the_readme_quotes(self):
+        block, _ = self.failure_block()
+        self.assertEqual(
+            block[0],
+            "[ERROR] cocotb tests failed: led_rises_half_a_period_after_reset, led_toggles_with_a_full_period, "
+            "reset_in_the_middle_restarts_the_count, random_resets_match_the_model")
+
+    def test_the_block_has_a_rerun_line_for_each_failed_test(self):
+        block, _ = self.failure_block()
+        self.assertIn("make cocotb SEED=1791475857 TEST=test_blinky_cocotb.led_toggles_with_a_full_period", block)
+        self.assertIn("make cocotb SEED=1791475857 TEST=test_blinky_random.random_resets_match_the_model", block)
+        self.assertEqual(sum(1 for l in block if l.startswith("make cocotb ")), 4)
+
+    def test_nothing_in_the_block_is_indented_or_cut(self):
+        block, _ = self.failure_block()
+        self.assertTrue(all(not l.startswith(" ") for l in block), [l for l in block if l.startswith(" ")])
+        self.assertIn("AssertionError: led is 1, model says 0: cycle 16387, rst was 0, model count 16384", block)
+
+    def test_the_block_names_the_logs(self):
+        block, _ = self.failure_block()
+        self.assertIn("full output: build/log/cocotb.log (%d lines)" % len(self.log.splitlines()), block)
+        self.assertIn("verdicts:    build/cocotb-results.xml", block)
+
+    def test_the_row_counts_the_passed_and_the_failed(self):
+        _, row = self.failure_block()
+        self.assertEqual(row, "1 passed, 4 failed, seed 1791475857, 9.0 s")
+
+    def test_another_command_that_fails_gets_the_end_of_its_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "lint.log")
+            lines = [f"%Error: line {n}" for n in range(100)] + ["[ERROR] Command failed with exit code 1"]
+            with open(log, "w") as f:
+                f.write("\n".join(lines) + "\n")
+            block = progress.failure_block("lint", "\n".join(lines), log)
+        self.assertIn("[ERROR] Command failed with exit code 1", block)
+        self.assertIn("%Error: line 99", block)
+        self.assertNotIn("%Error: line 10", block)
+        self.assertTrue(block[1].startswith("last 30 of 101 lines of"))
+
+class TestRunDirState(unittest.TestCase):
+    """The state of a flow comes from runs/<tag>/, not from what LibreLane prints."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.run = os.path.join(self.dir, "runs", "demo_run")
+        os.makedirs(self.run)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def step(self, name, state=True, runtime=None, state_text="{}"):
+        d = os.path.join(self.run, name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "state_in.json"), "w") as f:
+            f.write("{}")
+        if state:
+            with open(os.path.join(d, "state_out.json"), "w") as f:
+                f.write(state_text)
+        if runtime:
+            with open(os.path.join(d, "runtime.txt"), "w") as f:
+                f.write(runtime)
+
+    def test_a_step_that_has_started(self):
+        rd = progress.RunDir(self.run)
+        self.step("01-verilator-lint", state=False)
+        rd.scan(10.0)
+        self.assertEqual([s.name for s in rd.steps], ["01-verilator-lint"])
+        self.assertFalse(rd.steps[0].ok)
+        self.assertIs(rd.current, rd.steps[0])
+
+    def test_a_step_that_has_finished_has_its_runtime(self):
+        rd = progress.RunDir(self.run)
+        self.step("01-verilator-lint", runtime="00:00:01.250")
+        rd.scan(10.0)
+        self.assertTrue(rd.steps[0].ok)
+        self.assertIsNone(rd.current)
+        self.assertAlmostEqual(rd.steps[0].seconds, 1.25)
+
+    def test_a_state_file_that_is_still_being_written_does_not_count(self):
+        rd = progress.RunDir(self.run)
+        self.step("01-verilator-lint", state_text="")
+        rd.scan(10.0)
+        self.assertFalse(rd.steps[0].ok)
+        with open(os.path.join(self.run, "01-verilator-lint", "state_out.json"), "w") as f:
+            f.write('{"a": 1}')
+        rd.scan(10.2)
+        self.assertTrue(rd.steps[0].ok)
+
+    def test_the_next_directory_ends_a_step_that_never_wrote_a_state(self):
+        # a signoff check that failed with a deferred error: no state_out.json, no runtime.txt
+        rd = progress.RunDir(self.run)
+        self.step("63-checker-xor", state=False)
+        rd.scan(10.0)
+        self.assertIs(rd.current, rd.steps[0])
+        self.step("64-odb-reportwirelength")
+        rd.scan(11.0)
+        self.assertTrue(rd.steps[0].ended)
+        self.assertFalse(rd.steps[0].ok)
+        self.assertEqual(rd.unfinished(), [rd.steps[0]])
+        self.assertEqual(rd.steps[0].seconds, 1.0)
+
+    def test_a_directory_inside_a_step_is_not_a_step(self):
+        self.step("42-openroad-repairantennas")
+        os.makedirs(os.path.join(self.run, "42-openroad-repairantennas", "1-openroad-diodeinsertion"))
+        os.makedirs(os.path.join(self.run, "42-openroad-repairantennas", "2-openroad-checkantennas"))
+        rd = progress.RunDir(self.run)
+        rd = progress.RunDir(self.run)
+        self.step("43-next")
+        rd.scan(1.0)
+        self.assertEqual([s.name for s in rd.steps], ["43-next"])
+
+    def test_nested_steps_alongside_new_ones_count_once(self):
+        rd = progress.RunDir(self.run)
+        self.step("42-openroad-repairantennas")
+        os.makedirs(os.path.join(self.run, "42-openroad-repairantennas", "1-openroad-diodeinsertion"))
+        rd.scan(1.0)
+        self.assertEqual(len(rd.steps), 1)
+
+    def test_files_in_the_run_directory_are_not_steps(self):
+        rd = progress.RunDir(self.run)
+        for name in ("flow.log", "error.log", "resolved.json", "tmp"):
+            open(os.path.join(self.run, name), "w").close()
+        os.makedirs(os.path.join(self.run, "final"))
+        rd.scan(1.0)
+        self.assertEqual(rd.steps, [])
+
+    def test_what_was_there_before_the_flow_started_is_not_ours(self):
+        self.step("01-verilator-lint")
+        self.step("13-openroad-floorplan")
+        rd = progress.RunDir(self.run)
+        self.step("14-openroad-floorplan", state=False)
+        rd.scan(5.0)
+        self.assertEqual([s.name for s in rd.steps], ["14-openroad-floorplan"])
+
+    def test_steps_are_ordered_by_number_and_not_by_text(self):
+        rd = progress.RunDir(self.run)
+        for n, name in ((55, "55-a"), (119, "119-b"), (9, "09-c")):
+            self.step(name)
+        rd.scan(1.0)
+        self.assertEqual([s.ordinal for s in rd.steps], [9, 55, 119])
+
+    def test_the_stage_follows_the_table_and_an_unknown_step_stays_in_the_stage(self):
+        rd = progress.RunDir(self.run)
+        for name in ("01-verilator-lint", "02-somethingnew-unseen", "13-openroad-floorplan", "14-newvendor-thing"):
+            self.step(name)
+        rd.scan(1.0)
+        self.assertEqual([s.stage for s in rd.steps], [0, 0, 1, 1])
+
+class TestStages(unittest.TestCase):
+    def ids(self):
+        with open(os.path.join(FIXTURES, "plan-blinky.json")) as f:
+            return [i for i, _ in json.load(f)["steps"]]
+
+    def test_the_76_steps_of_blinky_fall_into_seven_stages(self):
+        counts = stages.step_counts(self.ids())
+        self.assertEqual(counts, [12, 11, 11, 4, 8, 14, 16])
+        self.assertEqual(sum(counts), 76)
+
+    def test_a_directory_name_is_the_same_step_as_its_id(self):
+        self.assertEqual(stages.slug("OpenROAD.CTS"), stages.slug("openroad-cts"))
+        self.assertEqual(stages.group(["verilator-lint", "openroad-floorplan"]), [0, 1])
+
+    def test_an_unknown_id_joins_the_running_stage_and_the_first_stage_at_the_start(self):
+        self.assertEqual(stages.group(["Unknown.First", "OpenROAD.CTS", "Brand.New", "Checker.TrDRC", "Other.New"]),
+                         [0, 3, 3, 5, 5])
+
+class TestPlan(unittest.TestCase):
+    def test_the_plan_of_blinky(self):
+        plan = progress.Plan.load(os.path.join(FIXTURES, "plan-blinky.json"))
+        self.assertEqual((plan.version, plan.total, plan.skipped), ("3.0.14", 76, 4))
+        self.assertEqual(plan.step_id("openroad-cts"), "OpenROAD.CTS")
+        self.assertEqual(plan.title("openroad-detailedrouting"), "Detailed Routing")
+
+    def test_no_plan_is_none_and_not_an_error(self):
+        self.assertIsNone(progress.Plan.load("/nonexistent/plan.json"))
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write("not json")
+        try:
+            self.assertIsNone(progress.Plan.load(f.name))
+        finally:
+            os.remove(f.name)
+
+    def test_without_a_plan_the_first_hyphen_is_the_dot(self):
+        self.assertEqual(progress.guess_id("openroad-globalplacementskipio"), "openroad.globalplacementskipio")
+
+class WatchCase(unittest.TestCase):
+    """
+    A flow replayed from directories, with the status file already there. What
+    the flow writes appears when the watcher starts its clock, which is after it
+    has looked at what was there before: the way a flow's directories appear.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.cwd = os.getcwd()
+        os.chdir(self.dir)
+        self.run = os.path.join("runs", "demo_run")
+        os.makedirs(self.run)
+        os.makedirs("build/log")
+        shutil.copy(os.path.join(FIXTURES, "plan-blinky.json"), "build/log/plan.json")
+        with open("build/log/librelane.log", "w") as f:
+            f.write("[00:00:01] INFO Starting\n[00:00:02] VERBOSE Running 'OpenROAD.GlobalPlacementSkipIO' at 'runs/demo_run/24-x'\nlast line of output\n")
+        with open("build/log/status", "w") as f:
+            f.write("0\n")
+        self.ids = [i for i, _ in json.load(open("build/log/plan.json"))["steps"]]
+        self.queue = []
+        self.ticks = None
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.dir)
+
+    def later(self, fn):
+        self.queue.append(fn)
+
+    def steps(self, upto, missing_state=(), failing=None):
+        def make():
+            for n, ident in enumerate(self.ids[:upto], 1):
+                name = f"{n:02d}-{stages.slug(ident)}"
+                d = os.path.join(self.run, name)
+                os.makedirs(d)
+                with open(os.path.join(d, "state_in.json"), "w") as f:
+                    f.write("{}")
+                if n in missing_state or n == failing:
+                    continue
+                with open(os.path.join(d, "state_out.json"), "w") as f:
+                    f.write("{}")
+                with open(os.path.join(d, "runtime.txt"), "w") as f:
+                    f.write("00:00:01.000")
+        self.later(make)
+
+    def status(self, code):
+        with open("build/log/status", "w") as f:
+            f.write(f"{code}\n")
+
+    def clock(self, step=3.0):
+        state = {"t": -step, "first": True}
+
+        def clock():
+            if state["first"]:
+                state["first"] = False
+                for fn in self.queue:
+                    fn()
+            state["t"] += step
+            return state["t"]
+        return clock
+
+    def watch(self, env=None, report=None, partial=False, clock=None, sleep=None):
+        out = io.StringIO()
+        code = progress.watch_flow(self.run, "build/log/status", "build/log/librelane.log", "build/log/plan.json",
+                                   "build/demo.gds", "demo", partial=partial, env={"TERM": "xterm"} if env is None else env,
+                                   out=out, report=report, clock=clock or self.clock(), sleep=sleep or (lambda s: None))
+        self.code = code
+        return out.getvalue()
+
+class TestWatchPassing(WatchCase):
+    def test_seven_stages_a_summary_and_the_paths(self):
+        self.steps(76)
+        out = self.watch()
+        self.assertTrue(out.startswith("c4o gds, demo, LibreLane 3.0.14 Classic flow\n"))
+        rows = [l for l in out.splitlines() if l.startswith("  ok ")]
+        self.assertEqual(len(rows), 8)
+        self.assertIn("Synthesis     12 steps  12s", out)
+        self.assertIn("Signoff       16 steps  16s", out)
+        self.assertIn("flow complete: 76 steps (4 skipped by the config) in ", out)
+        self.assertIn("raw output  build/log/librelane.log", out)
+        self.assertNotIn("\x1b", out)
+
+    def test_the_return_value_is_zero(self):
+        self.steps(76)
+        self.watch()
+        self.assertEqual(self.code, 0)
+
+    def test_a_resume_has_no_total_and_does_not_count_the_old_steps(self):
+        for name in ("34-openroad-detailedplacement", "35-openroad-cts"):
+            os.makedirs(os.path.join(self.run, name))
+
+        def resumed():
+            for name in ("36-openroad-cts", "37-openroad-stamidpnr-1"):
+                d = os.path.join(self.run, name)
+                os.makedirs(d)
+                open(os.path.join(d, "state_out.json"), "w").write("{}")
+        self.later(resumed)
+        out = self.watch(partial=True)
+        self.assertNotIn("/76", out)
+        self.assertNotIn("of 76", out)
+        self.assertNotIn("skipped by the config", out)
+        self.assertIn("flow complete: 2 steps in", out)
+        self.assertIn("Clock tree    2 steps", out)
+
+    def test_a_resume_that_fails_names_the_step_as_the_flow_does_and_shows_no_total(self):
+        os.makedirs(os.path.join(self.run, "35-openroad-cts"))
+        with open(os.path.join(self.run, "error.log"), "w") as f:
+            f.write("[OLD-0001] an error of the run before\n")
+
+        def resumed():
+            d = os.path.join(self.run, "36-openroad-cts")
+            os.makedirs(d)
+            with open(os.path.join(self.run, "error.log"), "a") as f:
+                f.write("[CTS-0001] this one\n")
+        self.later(resumed)
+        self.status(2)
+        out = self.watch(partial=True)
+        self.assertIn("stopped at step 1: Clock Tree Synthesis (OpenROAD.CTS)", out)
+        self.assertIn("[CTS-0001] this one\n", out)
+        self.assertNotIn("OLD-0001", out)
+        self.assertIn('--from OpenROAD.CTS --with-initial-state runs/demo_run/36-openroad-cts/state_in.json', out)
+
+    def test_the_heartbeat_in_plain_mode_names_the_step_and_the_total(self):
+        self.steps(40, failing=40)
+        os.remove("build/log/status")
+        count = {"n": 0}
+
+        def sleep(_):
+            count["n"] += 1
+            if count["n"] == 40:
+                self.status(1)
+        out = self.watch(env={}, clock=self.clock(step=1.0), sleep=sleep)
+        beats = [l for l in out.splitlines() if "still running:" in l]
+        self.assertTrue(beats)
+        self.assertRegex(beats[0], r"still running: .+ \(OpenROAD\.\w+\), step 40 of 76, \d+:\d\d elapsed")
+
+    def test_without_a_plan_it_counts_steps_and_names_no_total(self):
+        self.steps(40, failing=40)
+        os.remove("build/log/plan.json")
+        os.remove("build/log/status")
+        count = {"n": 0}
+
+        def sleep(_):
+            count["n"] += 1
+            if count["n"] == 40:
+                self.status(1)
+        out = self.watch(env={}, clock=self.clock(step=1.0), sleep=sleep)
+        beats = [l for l in out.splitlines() if "still running:" in l]
+        self.assertIn("step 40,", beats[0])
+        self.assertNotIn(" of 76", out)
+        self.assertTrue(out.startswith("c4o gds, demo\n"))
+
+class TTYOut(io.StringIO):
+    def isatty(self):
+        return True
+
+class TestWatchOnATerminal(WatchCase):
+    def run_tty(self, ticks_before_status=6, **kwargs):
+        self.steps(40, failing=40)
+        os.remove("build/log/status")
+        count = {"n": 0}
+
+        def sleep(_):
+            count["n"] += 1
+            if count["n"] == ticks_before_status:
+                self.status(1)
+        out = TTYOut()
+        with patch.object(progress, "term_width", return_value=120):
+            progress.watch_flow(self.run, "build/log/status", "build/log/librelane.log", "build/log/plan.json",
+                                "build/demo.gds", "demo", env={"TERM": "xterm"}, out=out,
+                                clock=self.clock(step=1.0), sleep=sleep)
+        return out.getvalue()
+
+    def test_three_rows_are_pinned_while_a_step_runs(self):
+        out = self.run_tty()
+        self.assertIn("in this step", out)
+        self.assertIn("40/76 steps", out)
+        self.assertIn("last line of output", out)
+
+    def test_the_rows_are_gone_before_the_failure_is_printed(self):
+        out = self.run_tty()
+        tail = out[out.rindex("\x1b[J"):]
+        self.assertNotIn("in this step", tail)
+        self.assertIn("FAIL gds:", tail)
+
+    def test_the_ledger_rows_stay(self):
+        out = self.run_tty()
+        visible = progress.ANSI.sub("", out)
+        self.assertIn("Synthesis     12 steps", visible)
+
+class TestProgressDoesNotBreakTheFlow(unittest.TestCase):
+    def test_a_display_that_breaks_says_so_and_exits_zero(self):
+        args = entrypoint.build_parser().parse_args(
+            ["progress", "--run-dir", "r", "--status", "s", "--log", "build/log/librelane.log", "--plan", "p"])
+        out = io.StringIO()
+        with patch.object(progress, "watch_flow", side_effect=RuntimeError("boom")), \
+                contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            entrypoint.cmd_progress(args, {"DESIGN_NAME": "demo"})
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn("The progress display stopped (boom). LibreLane goes on. Its output: build/log/librelane.log", out.getvalue())
+
+class TestWatchFailing(WatchCase):
+    def fail_midway(self):
+        self.steps(24, failing=24)
+
+        def more():
+            with open(os.path.join(self.run, "error.log"), "w") as f:
+                f.write("[GPL-0301] Utilization 124.809 % exceeds 100%.\n")
+            d = os.path.join(self.run, "24-" + stages.slug(self.ids[23]))
+            with open(os.path.join(d, "openroad-globalplacementskipio.log"), "w") as f:
+                f.write("\n".join(f"line {n}" for n in range(20)) + "\n")
+        self.later(more)
+        self.status(2)
+
+    def test_the_failed_stage_step_and_reason(self):
+        self.fail_midway()
+        out = self.watch()
+        self.assertIn("FAIL Placement", out)
+        self.assertIn("stopped at step 24 of 76: Global Placement Skip IO (OpenROAD.GlobalPlacementSkipIO)", out)
+        self.assertIn("\n[GPL-0301] Utilization 124.809 % exceeds 100%.\n", out)
+        self.assertEqual(out.count("  ok "), 2)       # Synthesis and Floorplan ended; Placement did not
+        self.assertEqual(self.code, 1)
+
+    def test_the_last_eight_lines_of_the_step_log(self):
+        self.fail_midway()
+        out = self.watch()
+        self.assertIn("last 8 lines of openroad-globalplacementskipio.log:\nline 12\n", out)
+        self.assertIn("line 19\n", out)
+        self.assertNotIn("line 11\n", out)
+
+    def test_the_resume_command_names_the_step_and_its_state(self):
+        self.fail_midway()
+        out = self.watch()
+        self.assertIn('make gds LIBRELANE_ARGS="--from OpenROAD.GlobalPlacementSkipIO '
+                      '--with-initial-state runs/demo_run/24-openroad-globalplacementskipio/state_in.json"', out)
+
+    def test_the_resume_command_without_a_plan_still_names_the_step(self):
+        self.fail_midway()
+        os.remove("build/log/plan.json")
+        out = self.watch()
+        self.assertIn('--from openroad.globalplacementskipio --with-initial-state', out)
+
+    def test_the_last_two_lines_say_what_and_where(self):
+        self.fail_midway()
+        lines = self.watch().rstrip("\n").splitlines()
+        self.assertTrue(lines[-2].startswith("FAIL gds: Placement stopped at step 24 of 76"))
+        self.assertTrue(lines[-2].endswith("[GPL-0301] Utilization 124.809 % exceeds 100%."))
+        self.assertEqual(lines[-1], "raw output: build/log/librelane.log:2")
+
+    def test_nothing_is_indented_after_the_ledger(self):
+        self.fail_midway()
+        out = self.watch()
+        after = out.split("stopped at step", 1)[1].splitlines()[1:]
+        self.assertTrue(all(not l.startswith(" ") for l in after), [l for l in after if l.startswith(" ")])
+
+    def test_a_gds_from_an_earlier_run_is_called_one(self):
+        self.fail_midway()
+        with open("build/demo.gds", "w") as f:
+            f.write("old")
+        out = self.watch()
+        self.assertRegex(out, r"build/demo\.gds is from an earlier run \(\d{4}-\d\d-\d\d \d\d:\d\d\), not from this one\.")
+
+    def test_with_no_gds_there_is_nothing_to_warn_about(self):
+        self.fail_midway()
+        self.assertNotIn("earlier run", self.watch())
+
+    def test_the_old_gds_is_left_where_it_is(self):
+        self.fail_midway()
+        with open("build/demo.gds", "w") as f:
+            f.write("old")
+        self.watch()
+        self.assertTrue(os.path.exists("build/demo.gds"))
+
+    def test_a_flow_that_stops_before_its_first_step_shows_the_end_of_the_output(self):
+        with open("build/log/librelane.log", "w") as f:
+            f.write("\n".join(f"output {n}" for n in range(50)) + "\n[ERROR] bad config\n")
+        self.status(1)
+        out = self.watch()
+        self.assertIn("[ERROR] bad config", out)
+        self.assertIn("FAIL gds: LibreLane stopped before its first step", out)
+
+    def test_ctrl_c_says_where_it_stopped_and_how_to_go_on(self):
+        self.steps(17, failing=17)
+        os.remove("build/log/status")
+        handlers = {}
+        count = {"n": 0}
+
+        def sleep(_):
+            count["n"] += 1
+            if count["n"] == 2:
+                handlers[progress.signal.SIGINT](progress.signal.SIGINT, None)
+                self.status(1)
+        with patch.object(progress.signal, "signal", lambda num, handler: handlers.__setitem__(num, handler)):
+            out = self.watch(env={}, sleep=sleep)
+        self.assertIn("interrupted at step 17 of 76 (Floorplan): ", out)
+        self.assertIn("--from Odb.ManualMacroPlacement --with-initial-state runs/demo_run/17-odb-manualmacroplacement/state_in.json", out)
+        self.assertIn("raw output: build/log/librelane.log", out)
+        self.assertNotIn("FAIL gds", out)
+
+class TestWatchDeferred(WatchCase):
+    def deferred(self, final_first=False):
+        self.steps(76, missing_state=(63,))
+
+        def final():
+            os.makedirs(os.path.join(self.run, "final", "gds"))
+            with open(os.path.join(self.run, "final", "metrics.json"), "w") as f:
+                f.write("{}")
+            with open(os.path.join(self.run, "final", "gds", "demo.gds"), "w") as f:
+                f.write("x")
+            with open(os.path.join(self.run, "error.log"), "w") as f:
+                f.write("1 XOR differences found. - deferred\n")
+        self.later(final)
+        self.status(2)
+
+    def watch_deferred(self):
+        return self.watch(report=lambda: print("  blinky\n\n  die  1 x 1 um"))
+
+    def test_signoff_fails_and_names_the_checker_and_its_error(self):
+        self.deferred()
+        out = self.watch_deferred()
+        self.assertRegex(out, r"FAIL Signoff +16 steps +\d+s +failed: Checker\.XOR")
+        self.assertIn("\n1 XOR differences found. - deferred\n", out)
+        self.assertEqual(out.count("  ok "), 6)
+        self.assertEqual(self.code, 1)
+
+    def test_the_report_is_still_printed(self):
+        self.deferred()
+        out = self.watch_deferred()
+        self.assertIn("  blinky", out)
+        self.assertIn("die  1 x 1 um", out)
+
+    def test_the_last_line_states_the_failure_and_the_old_gds_is_called_old(self):
+        self.deferred()
+        with open("build/demo.gds", "w") as f:
+            f.write("old")
+        out = self.watch_deferred()
+        lines = out.rstrip("\n").splitlines()
+        self.assertTrue(lines[-2].startswith("FAIL gds: the flow ran to the end and Checker.XOR failed: 1 XOR differences found"))
+        self.assertIn("build/demo.gds is from an earlier run", out)
+        self.assertIn("This run's GDS is runs/demo_run/final/gds/demo.gds. It failed a signoff check.", out)
+
+    def test_a_final_directory_that_was_there_before_is_not_a_deferred_failure(self):
+        # a resume that died: final/ is the old run's, so this is a failure at a step
+        os.makedirs(os.path.join(self.run, "final"))
+        with open(os.path.join(self.run, "final", "metrics.json"), "w") as f:
+            f.write("{}")
+        self.steps(30, failing=30)
+        self.status(1)
+        out = self.watch()
+        self.assertIn("FAIL gds: ", out)
+        self.assertNotIn("ran to the end", out)
+
+class FakeEntry:
+    """A stand-in for entrypoint.py that behaves as each command is told to."""
+
+    def __init__(self, directory, behaviour):
+        self.path = os.path.join(directory, "fake_entry.py")
+        with open(self.path, "w") as f:
+            f.write("import sys, os\n"
+                    "step = sys.argv[1]\n"
+                    f"behaviour = {behaviour!r}\n"
+                    "text, code = behaviour.get(step, ('', 0))\n"
+                    "sys.stdout.write(text)\n"
+                    "sys.exit(code)\n")
+
+class TestRunAll(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.cwd = os.getcwd()
+        os.chdir(self.dir)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.dir)
+
+    def run_all(self, behaviour, env=None):
+        entry = FakeEntry(self.dir, behaviour).path
+        out = io.StringIO()
+        code = progress.run_all(entry, "demo", "9.9.9", env=env if env is not None else {"C4O_PROGRESS": "plain"},
+                                out=out, sleep=lambda s: None)
+        return code, out.getvalue()
+
+    GOOD = {
+        "lint": ("[INFO] Running: verilator\n", 0),
+        "sim": ("[INFO] sim skipped: TEST_FILES is not set.\n", 0),
+        "cocotb": ("0.00ns INFO cocotb Seeding Python random module with 5\n[INFO] All cocotb tests passed.\n", 0),
+        "synth": ("Yosys 0.33 (git sha1 x)\n   Number of cells:                 54\n", 0),
+    }
+
+    def test_one_line_for_each_command_with_real_numbers(self):
+        code, out = self.run_all(self.GOOD)
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "c4o all, demo, c4o-core 9.9.9")
+        self.assertRegex(lines[1], r"^  ok +lint +verilator, no warnings, \d+\.\d s$")
+        self.assertEqual(lines[2].split(None, 2)[0:2], ["skip", "sim"])
+        self.assertIn("skipped: TEST_FILES is not set", lines[2])
+        self.assertRegex(lines[3], r"^  ok +cocotb +passed, seed 5, \d+\.\d s$")
+        self.assertRegex(lines[4], r"^  ok +synth +yosys 0\.33, 54 cells, \d+\.\d s$")
+
+    def test_each_commands_output_goes_to_its_own_log_unchanged(self):
+        self.run_all(self.GOOD)
+        for step, (text, _) in self.GOOD.items():
+            with open(f"build/log/{step}.log") as f:
+                self.assertEqual(f.read(), text)
+
+    def test_the_raw_output_is_not_in_the_ledger(self):
+        _, out = self.run_all(self.GOOD)
+        self.assertNotIn("Running: verilator", out)
+        self.assertNotIn("Yosys 0.33 (git", out)
+
+    def test_a_failure_stops_there_names_the_rest_and_returns_its_status(self):
+        behaviour = dict(self.GOOD, cocotb=("[ERROR] cocotb tests failed: a, b\n", 1))
+        code, out = self.run_all(behaviour)
+        self.assertEqual(code, 1)
+        self.assertRegex(out, r"FAIL +cocotb +failed, \d+\.\d s")
+        self.assertIn("\n[ERROR] cocotb tests failed: a, b\n", out)
+        self.assertRegex(out, r"skip +synth +not run: cocotb failed first")
+        self.assertFalse(os.path.exists("build/log/synth.log"))
+
+    def test_a_command_that_exits_with_another_status_returns_that(self):
+        code, _ = self.run_all(dict(self.GOOD, lint=("%Error: x\n", 7)))
+        self.assertEqual(code, 7)
+
+    def test_lint_warnings_are_counted(self):
+        _, out = self.run_all(dict(self.GOOD, lint=("%Warning-UNUSED: a\n%Warning-WIDTH: b\n", 0)))
+        self.assertIn("verilator, 2 warnings", out)
+
+    def test_sim_and_cocotb_are_asked_to_skip_what_is_not_configured(self):
+        entry = FakeEntry(self.dir, {})
+        self.assertEqual(progress.command_of(entry.path, "sim")[-1], "--if-configured")
+        self.assertEqual(progress.command_of(entry.path, "cocotb")[-1], "--if-configured")
+        self.assertEqual(progress.command_of(entry.path, "lint")[1:], [entry.path, "lint"])
+        self.assertEqual(progress.command_of(entry.path, "synth")[1:], [entry.path, "synth"])
+
+    def test_raw_streams_the_output_and_writes_no_files(self):
+        entry = FakeEntry(self.dir, self.GOOD).path
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = progress.run_all(entry, "demo", "9.9.9", env={"C4O_PROGRESS": "raw"}, out=sys.stdout)
+        self.assertEqual(code, 0)
+        self.assertFalse(os.path.exists("build/log"))
+
+    def test_a_bad_mode_word_is_said_and_auto_is_used(self):
+        _, out = self.run_all(self.GOOD, env={"C4O_PROGRESS": "fancy"})
+        self.assertIn("C4O_PROGRESS=fancy is not raw, plain, tty or auto", out)
+        self.assertIn("  ok", out)
+
+    def test_the_raw_output_is_a_collapsed_group_only_on_github_actions(self):
+        _, plain = self.run_all(self.GOOD)
+        self.assertNotIn("::group::", plain)
+        _, gh = self.run_all(self.GOOD, env={"C4O_PROGRESS": "plain", "GITHUB_ACTIONS": "true"})
+        self.assertIn("::group::lint raw output\n[INFO] Running: verilator\n::endgroup::\n", gh)
+        self.assertLess(gh.index("::endgroup::"), gh.index("ok   lint"))
+
+    def test_there_is_no_escape_code_in_plain_output(self):
+        _, out = self.run_all(self.GOOD)
+        self.assertNotIn("\x1b", out)
+
+class TestAllCommand(unittest.TestCase):
+    def test_all_and_progress_are_commands(self):
+        parser = entrypoint.build_parser()
+        self.assertIs(parser.parse_args(["all"]).func, entrypoint.cmd_all)
+        args = parser.parse_args(["progress", "--run-dir", "r", "--status", "s", "--log", "l", "--plan", "p"])
+        self.assertIs(args.func, entrypoint.cmd_progress)
+        self.assertFalse(args.partial)
+
+    def test_the_config_line_is_left_to_the_ledger(self):
+        with tempfile.TemporaryDirectory() as d, patch("os.getcwd", return_value=d):
+            with open(os.path.join(d, "config.yaml"), "w") as f:
+                f.write("DESIGN_NAME: demo\n")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                config = entrypoint.load_config(quiet=True)
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(config["DESIGN_NAME"], "demo")
 
 if __name__ == '__main__':
     unittest.main()
