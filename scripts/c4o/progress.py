@@ -296,6 +296,9 @@ def group_raw(env, title, path, out):
 # What `make sim` runs: the RTL checks, the config of the tests, then each kind
 # of test the config lists. `check` here is `check --for sim`.
 ALL_STEPS = ("rtl", "check", "sim", "cocotb")
+# The ledger and build/log/ name a step as the reader knows it. The entrypoint's
+# `sim` runs only the Verilog testbenches, and `make sim` is the whole run.
+LABELS = {"sim": "verilog"}
 
 def summarize_cocotb(log_text, results_path, cwd=None):
     """
@@ -429,31 +432,32 @@ def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sl
     width = term_width()
     os.makedirs(LOG_DIR, exist_ok=True)
     live = Live(out, style.tty and width >= 40)
-    title = f"c4o all{style.sep}{design}" + (f"{style.sep}c4o-core {version}" if version else "")
+    title = f"c4o sim{style.sep}{design}" + (f"{style.sep}c4o-core {version}" if version else "")
     out.write(style.paint(title, "bold") + "\n")
     t_start = clock()
     done_logs = []
     failed = None
     try:
         for index, step in enumerate(ALL_STEPS):
-            log = os.path.join(LOG_DIR, f"{step}.log")
+            name = LABELS.get(step, step)
+            log = os.path.join(LOG_DIR, f"{name}.log")
             began = clock()
             with open(log, "wb") as f:
                 proc = subprocess.Popen(command_of(entry, step), stdout=f, stderr=subprocess.STDOUT, env=env)
                 while proc.poll() is None:
-                    live.draw(all_live_rows(style, term_width(), step, index, began, clock, log, t_start))
+                    live.draw(all_live_rows(style, term_width(), name, index, began, clock, log, t_start))
                     sleep(0.25)
             spent = clock() - began
             text = read_text(log)
-            group_raw(env, f"{step} raw output", log, out)
+            group_raw(env, f"{name} raw output", log, out)
             if proc.returncode:
-                live.commit(ledger_row(style, "fail", step, failed_text(step, text, spent, style)))
+                live.commit(ledger_row(style, "fail", name, failed_text(step, text, spent, style)))
                 failed = (step, index, proc.returncode, text, log)
                 break
             kind, line = summarize_step(step, text, spent, style)
             if kind != "skip":
                 done_logs.append(log)
-            live.commit(ledger_row(style, kind, step, line))
+            live.commit(ledger_row(style, kind, name, line))
         live.close()
     except BaseException:
         live.close()
@@ -464,7 +468,7 @@ def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sl
         for line in failure_block(step, text, log):
             out.write(line + "\n")
         for later in ALL_STEPS[index + 1:]:
-            out.write(ledger_row(style, "skip", later, f"not run: {step} failed first") + "\n")
+            out.write(ledger_row(style, "skip", LABELS.get(later, later), f"not run: {LABELS.get(step, step)} failed first") + "\n")
         out.flush()
         return rc
     out.write("\n" + f"  all passed in {fmt_time(clock() - t_start)}. raw output: "

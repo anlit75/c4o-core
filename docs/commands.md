@@ -231,14 +231,14 @@ one of them instead, run yosys yourself and name it.
 
 ```console
 $ make sim PROGRESS=plain
-c4o all, blinky, c4o-core 2.26.0
+c4o sim, blinky, c4o-core 2.26.0
   ok   rtl     verilator, no warnings, yosys 0.33, 54 cells, 0.5 s
   ok   check   tests configured, 0.3 s
-  skip sim     skipped: TEST_FILES is not set
+  skip verilog skipped: TEST_FILES is not set
   ok   cocotb  5/5 passed, seed 1791614587, 17.8 s
 ```
 
-`c4o-core all` is what `make sim` runs. It runs `rtl`, `check --for sim`, `sim` and `cocotb`, and times them itself. A kind of test that is not configured says so and counts as passed. The first command that fails stops the run, and the commands after it are listed as not run.
+`c4o-core all` is what `make sim` runs. It runs `rtl`, `check --for sim`, `sim` and `cocotb`, and times them itself. The ledger and `build/log/` call `sim` `verilog`, because it runs only the Verilog testbenches. A kind of test that is not configured says so and counts as passed. The first command that fails stops the run, and the commands after it are listed as not run.
 
 A failed cocotb test gets its name, the file and line of the assertion, and the message. It also gets a command that runs only that test with the same seed. The line `[ERROR] cocotb tests failed: <names>` stays in the output. `build/cocotb-results.xml` has the verdicts.
 
