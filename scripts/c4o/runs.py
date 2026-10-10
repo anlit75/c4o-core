@@ -37,13 +37,41 @@ def locate(config, pattern):
             return run_dir, found[0]
     return None, None
 
+def dir_paths(value):
+    """Every 'dir::' path inside a config value: a string, or lists and mappings of them."""
+    if isinstance(value, str):
+        return [common.strip_path_prefix(value)] if value.startswith("dir::") else []
+    if isinstance(value, list):
+        return [p for item in value for p in dir_paths(item)]
+    if isinstance(value, dict):
+        return [p for item in value.values() for p in dir_paths(item)]
+    return []
+
+def expand(pattern):
+    """The files a path or glob names. A directory counts as the files under it."""
+    files = set()
+    for match in glob.glob(pattern, recursive=True):
+        if os.path.isdir(match):
+            files.update(os.path.join(root, name) for root, _, names in os.walk(match) for name in names)
+        elif os.path.isfile(match):
+            files.add(match)
+    return files
+
 def input_files(config):
-    """The files a run is made from: the config file and what VERILOG_FILES names."""
+    """
+    The files a run is made from: the config file, VERILOG_FILES, the include
+    directories, and every file a key of the config points at with 'dir::'.
+
+    Keys that start with '//' are c4o-core's own (the tests, the regression
+    list), and LibreLane ignores them. They stay out, so that editing a
+    testbench does not make a layout stale.
+    """
     patterns = common.config_get(config, "VERILOG_FILES") or []
-    if not isinstance(patterns, list):
-        return []
-    files = {f for p in patterns for f in glob.glob(common.strip_path_prefix(p), recursive=True)
-             if os.path.isfile(f)}
+    patterns = list(patterns) if isinstance(patterns, list) else []
+    includes = common.config_get(config, "VERILOG_INCLUDE_DIRS", [])
+    patterns += common.get_include_dirs(config) if isinstance(includes, list) else []
+    patterns += dir_paths({k: v for k, v in config.items() if not str(k).startswith("//")})
+    files = {f for p in patterns if isinstance(p, str) for f in expand(common.strip_path_prefix(p))}
     configs = [name for name in common.CONFIG_FILENAMES if os.path.isfile(name)]
     return sorted(files) + configs[:1]
 
@@ -52,7 +80,7 @@ def inputs_hash(config):
     A hash of the contents of the RTL and the config, or None when there is
     nothing to hash. File names count too, so a renamed file is a change.
     """
-    files = input_files(config)
+    files = sorted(set(input_files(config)))
     if not files:
         return None
     digest = hashlib.sha256()
@@ -69,7 +97,7 @@ def freshness(run_dir, config):
     """
     try:
         with open(os.path.join(run_dir, INPUTS_FILE)) as f:
-            recorded = f.read().strip()
+            recorded = f.readline().strip()
     except OSError:
         return "unknown"
     current = inputs_hash(config)
@@ -126,26 +154,53 @@ def find_metrics(explicit, config):
     check_fresh(run_dir, config)
     return found
 
+def flow_identity():
+    """What besides the inputs decides the result: the LibreLane image and this release."""
+    return {"librelane_image": os.environ.get("LIBRELANE_IMAGE"), "c4o_core": common.c4o_version()}
+
+def recorded_identity(run_dir):
+    """The identity lines of the stamp. A stamp of one line has none."""
+    try:
+        with open(os.path.join(run_dir, INPUTS_FILE)) as f:
+            lines = f.read().splitlines()[1:]
+    except OSError:
+        return {}
+    return dict(line.split("=", 1) for line in lines if "=" in line)
+
 def cmd_stamp(args, config):
-    """Record the inputs of the run `make gds` just finished (started by make gds)."""
+    """
+    Record the inputs of the run `make gds` just finished, and the flow that
+    made it (started by make gds). The first line is the hash of the inputs,
+    which is all that report and gatesim compare.
+    """
     run_dir, _ = locate(config, "final/metrics.json")
     digest = inputs_hash(config)
     if not run_dir or not digest:
         common.log_warn("Could not record the inputs of the run.")
         return
+    identity = "".join(f"{k}={v}\n" for k, v in flow_identity().items() if v)
     with open(os.path.join(run_dir, INPUTS_FILE), "w") as f:
-        f.write(digest + "\n")
+        f.write(digest + "\n" + identity)
 
 def cmd_fresh(args, config):
     """
     Exit 0 when `make gds` has nothing to redo: the run was made from these
-    inputs and its GDS was copied to build/. Exit 1 otherwise (started by make gds).
+    inputs by this LibreLane image and this release, and its GDS was copied to
+    build/. Exit 1 otherwise (started by make gds).
+
+    The image is only known here, from the environment, so report and gatesim
+    cannot compare it. A stamp that records no image or release is not held
+    against the run.
     """
     run_dir, _ = locate(config, "final/metrics.json")
     gds = os.path.join("build", f"{common.config_get(config, 'DESIGN_NAME')}.gds")
     if run_dir and os.path.isfile(gds) and freshness(run_dir, config) == "fresh":
-        common.log_info(f"{run_dir} was made from this RTL and config.")
-        return
+        recorded, now = recorded_identity(run_dir), flow_identity()
+        changed = [k for k, v in recorded.items() if now.get(k) and now[k] != v]
+        if not changed:
+            common.log_info(f"{run_dir} was made from these inputs by the same flow.")
+            return
+        common.log_info(f"{run_dir} was made by another {' and '.join(changed)}: running the flow.")
     sys.exit(1)
 
 # KLAYOUT_RENDER is registered with extension "png" and folder "render", so the

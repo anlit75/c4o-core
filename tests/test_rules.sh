@@ -196,6 +196,8 @@ else
   fail "host: a partial run must not ask whether the run is current, nor stamp it" "$out"
 fi
 check "host: a whole run records the inputs it was made from" 0 "$image stamp" in_repo "$host" make -n gds
+check "host: ... and the LibreLane image that made it" 0 "-e LIBRELANE_IMAGE=ghcr.io/librelane/librelane:3.0.14 $image stamp" in_repo "$host" make -n gds
+check "host: fresh compares the LibreLane image too" 0 "-e LIBRELANE_IMAGE=ghcr.io/librelane/librelane:3.0.14 $image fresh" in_repo "$host" make -n gds
 check "host: ... in both modes" 0 "$image stamp" in_repo "$host" make -n gds PROGRESS=raw
 check "host: a new run removes the record of the last one" 0 "rm -f runs/demo_run/c4o-inputs.sha256" in_repo "$host" make -n gds
 

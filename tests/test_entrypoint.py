@@ -1044,6 +1044,78 @@ class TestEntrypoint(unittest.TestCase):
         os.utime("rtl/a.v", (4_000_000_000, 4_000_000_000))
         self.assertEqual(c4o.runs.freshness(run, config), "fresh")
 
+    def test_a_file_a_key_points_at_is_an_input(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        os.makedirs("pnr/inc")
+        for path in ("pnr/a.sdc", "pnr/inc/h.vh", "tb_x.py"):
+            open(path, "w").write("1")
+        config.update({"PNR_SDC_FILE": "dir::pnr/a.sdc", "VERILOG_INCLUDE_DIRS": ["dir::pnr/inc"],
+                       "//COCOTB_TESTS": ["dir::tb_*.py"]})
+        with patch("c4o.common.log_info"):
+            c4o.runs.cmd_stamp(MagicMock(), config)
+        self.assertEqual(c4o.runs.freshness(run, config), "fresh")
+        # (a) a constraint file, and a file in an include directory
+        for path in ("pnr/a.sdc", "pnr/inc/h.vh"):
+            open(path, "w").write("2")
+            self.assertEqual(c4o.runs.freshness(run, config), "stale", path)
+            open(path, "w").write("1")
+            self.assertEqual(c4o.runs.freshness(run, config), "fresh", path)
+        # (b) a file of a '//' key is the testbench's, not the layout's
+        open("tb_x.py", "w").write("changed")
+        self.assertEqual(c4o.runs.freshness(run, config), "fresh")
+
+    def test_a_directory_a_key_points_at_counts_as_the_files_under_it(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        os.makedirs("macros/sub")
+        open("macros/sub/m.lef", "w").write("1")
+        config["MACROS"] = {"m": {"lef": ["dir::macros"]}}
+        with patch("c4o.common.log_info"):
+            c4o.runs.cmd_stamp(MagicMock(), config)
+        open("macros/sub/m.lef", "w").write("2")
+        self.assertEqual(c4o.runs.freshness(run, config), "stale")
+
+    def test_another_librelane_image_or_release_reruns_the_flow_but_not_report(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run", stamp=False)
+        os.makedirs("build")
+        open("build/a.gds", "w").close()
+        with patch.dict(os.environ, {"LIBRELANE_IMAGE": "librelane:3.0.14"}), \
+             patch("c4o.common.c4o_version", return_value="2.26.0"), patch("c4o.common.log_info"):
+            c4o.runs.cmd_stamp(MagicMock(), config)
+            self.assertTrue(open(os.path.join(run, c4o.runs.INPUTS_FILE)).read().endswith(
+                "librelane_image=librelane:3.0.14\nc4o_core=2.26.0\n"))
+            c4o.runs.cmd_fresh(MagicMock(), config)  # the same flow: nothing to redo
+        # (c) the image moved: fresh says rerun. report reads the file hash only.
+        with patch.dict(os.environ, {"LIBRELANE_IMAGE": "librelane:3.0.15"}), \
+             patch("c4o.common.c4o_version", return_value="2.26.0"), patch("c4o.common.log_info"):
+            with self.assertRaises(SystemExit):
+                c4o.runs.cmd_fresh(MagicMock(), config)
+        with patch.dict(os.environ, {}, clear=False) as env, patch("c4o.common.log_warn") as warn, \
+             patch("c4o.common.log_error") as error:
+            env.pop("LIBRELANE_IMAGE", None)
+            self.assertTrue(c4o.runs.find_metrics(None, config).endswith("metrics.json"))
+        warn.assert_not_called()
+        error.assert_not_called()
+        # the release moved
+        with patch.dict(os.environ, {"LIBRELANE_IMAGE": "librelane:3.0.14"}), \
+             patch("c4o.common.c4o_version", return_value="2.27.0"), patch("c4o.common.log_info"):
+            with self.assertRaises(SystemExit):
+                c4o.runs.cmd_fresh(MagicMock(), config)
+
+    def test_a_stamp_of_one_line_still_reads_and_does_not_force_a_rerun(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")  # stamped; keep only the hash line
+        path = os.path.join(run, c4o.runs.INPUTS_FILE)
+        first = open(path).readline()
+        open(path, "w").write(first)
+        os.makedirs("build")
+        open("build/a.gds", "w").close()
+        with patch.dict(os.environ, {"LIBRELANE_IMAGE": "x"}), patch("c4o.common.log_info"):
+            c4o.runs.cmd_fresh(MagicMock(), config)
+        self.assertEqual(c4o.runs.freshness(run, config), "fresh")
+
     def test_fresh_needs_the_stamp_and_the_gds_in_build(self):
         self._in_test_dir()
         config, run = self._run_of("a_run")

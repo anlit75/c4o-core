@@ -158,6 +158,7 @@ C4O_CMD := python3 $(ENTRYPOINT_SCRIPT)
 C4O_COCOTB = $(if $(or $(SEED),$(WAVES),$(TEST)),env $(strip $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)) $(if $(TEST),TEST=$(TEST)))) $(C4O_CMD)
 C4O_SITE := $(C4O_CMD)
 C4O_PDK := env PDK_ROOT=$(PDK_ROOT) $(C4O_CMD)
+C4O_FLOW := env LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) $(C4O_CMD)
 c4o_tool = $(1)
 C4O_LEDGER = env $(strip C4O_PROGRESS=$(C4O_PROGRESS) $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)) $(if $(TEST),TEST=$(TEST))) python3 $(ENTRYPOINT_SCRIPT)
 else
@@ -166,6 +167,7 @@ C4O_CMD := $(DOCKER_RUN) $(C4O_IMAGE)
 C4O_COCOTB = $(DOCKER_RUN) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
 C4O_SITE := $(DOCKER_RUN) $(SITE_ENV) $(C4O_IMAGE)
 C4O_PDK := $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(C4O_IMAGE)
+C4O_FLOW := $(DOCKER_RUN) -e LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) $(C4O_IMAGE)
 c4o_tool = $(DOCKER_RUN) --entrypoint $(1) $(C4O_IMAGE)
 # The ledger redraws, so on a host its container gets a terminal exactly when
 # make's output is one. A recipe sets $$T for that: `[ -t 1 ]` has to run in the
@@ -211,8 +213,8 @@ help::
 	@echo "  make synth   - Run Yosys synthesis"
 	@echo "  make schematic - Draw the circuit as build/schematic.svg"
 	@echo "  make pdk     - Install/Enable Sky130 PDK via Ciel, LibreLane's PDK manager"
-	@echo "  make gds     - Run LibreLane GDSII flow (skipped when the RTL and config.yaml are"
-	@echo "                 unchanged since the last one; make gds FORCE=1 runs it anyway)"
+	@echo "  make gds     - Run LibreLane GDSII flow (skipped when its inputs are unchanged"
+	@echo "                 since the last one; make gds FORCE=1 runs it anyway)"
 	@echo "  make report  - Show area, timing and power from the last GDS run"
 	@echo "  make site    - Put tests, timing, area, power and signoff on one page (build/site/)"
 	@echo "  make shell   - Enter c4o-core interactive shell"
@@ -301,13 +303,13 @@ gds:
 	@echo "🟢 Validating config with c4o-core..."
 	$(C4O_CMD) check
 
-	@# A run made from this RTL and config.yaml has nothing to redo: print its
+	@# A run made from these inputs by this LibreLane image has nothing to redo: print its
 	@# report instead of waiting minutes for the same numbers. FORCE=1 reruns it,
 	@# and so does a partial run, which exists to run a part of the flow again.
 	@# What the run was made from is written by `stamp` below, after a whole
 	@# flow succeeded and not before.
-	@if $(if $(or $(FORCE),$(LIBRELANE_PARTIAL)),false,$(C4O_CMD) fresh); then \
-		echo "🟢 LibreLane skipped: the RTL and config.yaml are unchanged since the last run. make gds FORCE=1 runs it again."; \
+	@if $(if $(or $(FORCE),$(LIBRELANE_PARTIAL)),false,$(C4O_FLOW) fresh); then \
+		echo "🟢 LibreLane skipped: the inputs are unchanged since the last run. make gds FORCE=1 runs it again."; \
 		$(MAKE) --no-print-directory report; \
 	else \
 		$(MAKE) --no-print-directory gds-flow; \
@@ -327,7 +329,7 @@ ifeq ($(C4O_PROGRESS),raw)
 	# Copy the final GDS to the build folder
 	cp runs/$(DESIGN_NAME)_run/final/gds/$(DESIGN_NAME).gds build/$(DESIGN_NAME).gds
 	@$(call C4O_STAGES,--quiet)
-	@$(if $(LIBRELANE_PARTIAL),,$(C4O_CMD) stamp)
+	@$(if $(LIBRELANE_PARTIAL),,$(C4O_FLOW) stamp)
 	# runs/ stays where LibreLane put it: a resume looks for the run there, and
 	# c4o-core's report and gatesim search it too.
 else
@@ -359,7 +361,7 @@ else
 	if [ "$$code" != 0 ]; then $(call C4O_STAGES,); fi; \
 	exit $$code
 	@cp runs/$(DESIGN_NAME)_run/final/gds/$(DESIGN_NAME).gds build/$(DESIGN_NAME).gds
-	@$(if $(LIBRELANE_PARTIAL),,$(C4O_CMD) stamp)
+	@$(if $(LIBRELANE_PARTIAL),,$(C4O_FLOW) stamp)
 endif
 
 	@# The flow just measured area, timing and power. Show them rather than

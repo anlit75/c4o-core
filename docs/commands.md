@@ -334,13 +334,13 @@ With no argument it takes the `metrics.json` of `runs/<DESIGN_NAME>_run/`, the r
 
 ### Is it the run of this RTL?
 
-After a full run, `make gds` writes `c4o-inputs.sha256` into `runs/<DESIGN_NAME>_run/`. It is a hash of the contents of the files in `VERILOG_FILES` and of `config.yaml`. The modification time does not count, so `git checkout` does not change the answer.
+After a full run, `make gds` writes `c4o-inputs.sha256` into `runs/<DESIGN_NAME>_run/`. Its first line is a hash of `config.yaml`, of the files in `VERILOG_FILES` and of the files in `VERILOG_INCLUDE_DIRS`. It also covers every file that a key of `config.yaml` points at with `dir::`, such as an SDC file or a macro. A directory counts as the files under it. Keys that start with `//` are left out, so editing a testbench does not make a layout stale. The modification time does not count, so `git checkout` does not change the answer.
 
 `report` and `gatesim` compare that hash with the files in your directory before they read the run. When the two differ, they fail and tell you to run `make gds`. A run made by an older c4o-core has no hash. That is a warning, not an error, because the run may well be current.
 
 `gatesim <path>` and `report <path>` do not compare anything. You named the file, so they use it. `site` never fails on an old run. It builds the page and marks the layout as older than the RTL. The mark is a chip and a line that names `make gds`.
 
-`make gds` uses the same hash. When it matches, `make gds` skips LibreLane and prints the report. `make gds FORCE=1` runs the flow anyway. The hash covers the RTL and `config.yaml` only. Files that the config points to, such as an SDC file or a macro, are not in it. The PDK and the LibreLane image are not in it either. Use `FORCE=1` after you change one of those.
+`make gds` uses the same hash. When it matches, `make gds` skips LibreLane and prints the report. `make gds FORCE=1` runs the flow anyway. The stamp also names the LibreLane image and the c4o-core release that made the run. Only `make gds` compares those two, because `report` and `gatesim` do not see the image name. When either one changed, `make gds` runs the flow.
 
 A partial run (`LIBRELANE_ARGS` with `--from`, `--to`, `--skip` or `--only`) always runs. It removes the hash and does not write a new one. The run is then a mix of old and new steps that no input set describes. `report` and `gatesim` warn about it until the next full `make gds`. After `make clean`, `make gds` runs again, because `build/<DESIGN_NAME>.gds` is gone.
 
