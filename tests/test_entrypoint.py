@@ -14,6 +14,14 @@ from unittest.mock import patch, MagicMock
 # Add scripts/ to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
 import entrypoint
+import check
+import common
+import regress
+import report
+import rtl
+import runs
+import sim
+import site_cmd
 import progress
 import stage_renders
 import stages
@@ -48,9 +56,9 @@ class TestEntrypoint(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_lint(self, mock_ensure, mock_load, mock_run):
         mock_load.return_value = self.config
 
@@ -60,7 +68,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_lint(args, self.config)
+            rtl.cmd_lint(args, self.config)
 
             call_args = mock_run.call_args[0][0]
             self.assertEqual(call_args[0], "verilator")
@@ -75,9 +83,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_sim(self, mock_ensure, mock_load, mock_run):
         mock_load.return_value = self.config
         cwd = os.getcwd()
@@ -86,7 +94,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_sim(args, self.config)
+            sim.cmd_sim(args, self.config)
 
             calls = mock_run.call_args_list
             compile_cmd = calls[0][0][0]
@@ -104,9 +112,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_synth(self, mock_ensure, mock_load, mock_run):
         mock_load.return_value = self.config
         cwd = os.getcwd()
@@ -115,7 +123,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_synth(args, self.config)
+            rtl.cmd_synth(args, self.config)
 
             call_args = mock_run.call_args[0][0]
             self.assertEqual(call_args[0], "yosys")
@@ -133,9 +141,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_sim_librelane_dialect(self, mock_ensure, mock_load, mock_run):
         # A config written the way LibreLane expects: 'dir::' paths, and the
         # key LibreLane does not own hidden behind a '//' prefix so that its
@@ -153,7 +161,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_sim(args, config)
+            sim.cmd_sim(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertTrue(any("src/top.v" in arg for arg in compile_cmd))
@@ -164,9 +172,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_blank_cli_files_does_not_shadow_config(self, mock_ensure, mock_load, mock_run):
         # An empty --files used to win over the config file, leaving the tool
         # with no inputs at all.
@@ -176,7 +184,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = [""]
 
-            entrypoint.cmd_lint(args, self.config)
+            rtl.cmd_lint(args, self.config)
 
             call_args = mock_run.call_args[0][0]
             self.assertTrue(any("src/top.v" in arg for arg in call_args))
@@ -184,9 +192,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_lint_silences_the_warnings_the_config_names(self, mock_ensure, mock_load, mock_run):
         # Generated RTL trips warnings that are about the generator, not the
         # design. Without this the config could say so and lint would refuse
@@ -200,7 +208,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_lint(args, config)
+            rtl.cmd_lint(args, config)
 
             call_args = mock_run.call_args[0][0]
             self.assertIn("-Wno-WIDTHEXPAND", call_args)
@@ -209,9 +217,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_lint_runs_with_librelanes_flags_and_default_waivers(self, mock_ensure, mock_load, mock_run):
         # make lint and LibreLane's lint step must report the same warnings.
         # LibreLane runs -Wall without failing on a warning, waives
@@ -225,7 +233,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_lint(args, self.config)
+            rtl.cmd_lint(args, self.config)
 
             call_args = mock_run.call_args[0][0]
             for flag in ("--Wall", "--Wno-fatal", "-Wno-DECLFILENAME", "-Wno-EOFNEWLINE",
@@ -236,9 +244,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_lint_does_not_turn_a_waived_code_back_into_an_error(self, mock_ensure, mock_load, mock_run):
         # -Werror-LATCH after -Wno-LATCH would bring the warning back. A config
         # that waives LATCH (third-party RTL) or turns the error off gets
@@ -252,7 +260,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_lint(args, config)
+            rtl.cmd_lint(args, config)
 
             call_args = mock_run.call_args[0][0]
             self.assertIn("-Wno-LATCH", call_args)
@@ -264,9 +272,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_lint_rejects_one_warning_written_without_its_brackets(self, mock_ensure, mock_load, mock_run):
         # A bare string is iterable, so this would otherwise spell out
         # -Wno-W -Wno-I -Wno-D ... and verilator would reject flags nobody
@@ -283,7 +291,7 @@ class TestEntrypoint(unittest.TestCase):
             # log_error prints to stdout, so that is where the refusal lands.
             out = io.StringIO()
             with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
-                entrypoint.cmd_lint(args, config)
+                rtl.cmd_lint(args, config)
 
             self.assertIn("LINTER_DISABLE_WARNINGS", out.getvalue())
             mock_run.assert_not_called()
@@ -300,19 +308,19 @@ class TestEntrypoint(unittest.TestCase):
             with open("config.yaml", "w") as f:
                 f.write("DESIGN_NAME: from_yaml\nVERILOG_FILES:\n  - dir::src/*.v\n")
 
-            config = entrypoint.load_config()
+            config = common.load_config()
             self.assertEqual(config["DESIGN_NAME"], "from_yaml")
             self.assertEqual(config["VERILOG_FILES"], ["dir::src/*.v"])
 
             os.remove("config.yaml")
-            self.assertEqual(entrypoint.load_config()["DESIGN_NAME"], "from_json")
+            self.assertEqual(common.load_config()["DESIGN_NAME"], "from_json")
 
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_check_missing_rtl(self, mock_ensure, mock_load, mock_run):
         # Config with required GDS keys but missing RTL files
         gds_config = {
@@ -345,7 +353,7 @@ class TestEntrypoint(unittest.TestCase):
 
             # Should exit with code 1 due to no matching files
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_check(args, gds_config)
+                check.cmd_check(args, gds_config)
 
             self.assertEqual(cm.exception.code, 1)
 
@@ -354,9 +362,9 @@ class TestEntrypoint(unittest.TestCase):
 
     # --- sim must never pass without actually simulating something ---
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_sim_errors_when_test_files_match_nothing(self, mock_ensure, mock_load, mock_run):
         # This used to be a warning: sim compiled the RTL alone and exited 0,
         # so a renamed directory or a typo left CI green with nothing verified.
@@ -370,7 +378,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
 
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(args, config)
+                sim.cmd_sim(args, config)
 
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
@@ -378,9 +386,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_sim_errors_without_a_testbench(self, mock_ensure, mock_load, mock_run):
         config = {k: v for k, v in self.config.items() if k != "TEST_FILES"}
         mock_load.return_value = config
@@ -392,7 +400,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
 
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(args, config)
+                sim.cmd_sim(args, config)
 
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
@@ -400,9 +408,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_sim_requires_a_top_for_several_testbenches(self, mock_ensure, mock_load, mock_run):
         # Icarus roots every uninstantiated module, and the first $finish ends
         # the run -- so the second testbench was cut off mid-way, silently.
@@ -417,7 +425,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
 
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(args, self.config)
+                sim.cmd_sim(args, self.config)
 
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
@@ -425,9 +433,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_sim_top_selects_the_root(self, mock_ensure, mock_load, mock_run):
         with open(os.path.join(self.test_dir, "test/other_tb.v"), "w") as f:
             f.write("module other_tb; endmodule")
@@ -442,7 +450,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_sim(args, config)
+            sim.cmd_sim(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertIn("-s", compile_cmd)
@@ -462,9 +470,9 @@ class TestEntrypoint(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            with patch("entrypoint.run_command") as run:
+            with patch("common.run_command") as run:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    entrypoint.cmd_schematic(args, config)
+                    rtl.cmd_schematic(args, config)
             cmd = run.call_args[0][0]
         finally:
             os.chdir(cwd)
@@ -505,7 +513,7 @@ class TestEntrypoint(unittest.TestCase):
         script = self._schematic_script(self.config)
 
         self.assertIn("-viewer none", script)
-        self.assertIn(f"-prefix {entrypoint.SCHEMATIC_PREFIX}", script)
+        self.assertIn(f"-prefix {rtl.SCHEMATIC_PREFIX}", script)
 
     def test_schematic_ignores_testbenches(self):
         # A testbench in the picture is noise, and TEST_FILES is in the config
@@ -541,7 +549,7 @@ class TestEntrypoint(unittest.TestCase):
         out = io.StringIO()
         try:
             with contextlib.redirect_stdout(out):
-                entrypoint.cmd_check(args, config)
+                check.cmd_check(args, config)
         finally:
             os.chdir(cwd)
             # Kept on the instance so a test that expects a refusal can still
@@ -624,7 +632,7 @@ class TestEntrypoint(unittest.TestCase):
         with open(path, "w") as f:
             f.write("// module ghost;\n/* module phantom; */\nmodule real_one; endmodule\n")
 
-        self.assertEqual(entrypoint.declared_modules([path]), {"real_one"})
+        self.assertEqual(check.declared_modules([path]), {"real_one"})
 
     def test_check_says_it_built_no_layout(self):
         # `gds` is an alias of check and exits 0. Without this line a passing
@@ -633,9 +641,9 @@ class TestEntrypoint(unittest.TestCase):
 
     def test_check_is_reachable_under_both_names(self):
         parser_args = entrypoint.build_parser().parse_args(["gds"])
-        self.assertIs(parser_args.func, entrypoint.cmd_check)
+        self.assertIs(parser_args.func, check.cmd_check)
         parser_args = entrypoint.build_parser().parse_args(["check"])
-        self.assertIs(parser_args.func, entrypoint.cmd_check)
+        self.assertIs(parser_args.func, check.cmd_check)
 
     # --- report: the numbers the flow computes and then throws away ---
 
@@ -647,7 +655,7 @@ class TestEntrypoint(unittest.TestCase):
         args.metrics = path
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            entrypoint.cmd_report(args, {"DESIGN_NAME": "blinky"})
+            report.cmd_report(args, {"DESIGN_NAME": "blinky"})
         return out.getvalue()
 
     def test_report_reads_a_real_metrics_file(self):
@@ -796,7 +804,7 @@ class TestEntrypoint(unittest.TestCase):
         for d in (step, final):
             open(os.path.join(d, "blinky.png"), "w").close()
 
-        found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+        found = runs.find_render(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(final, "blinky.png"))
 
@@ -807,7 +815,7 @@ class TestEntrypoint(unittest.TestCase):
         os.makedirs(os.path.join(run, "final"))
         open(os.path.join(step, "blinky.png"), "w").close()
 
-        found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+        found = runs.find_render(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(step, "blinky.png"))
 
@@ -821,7 +829,7 @@ class TestEntrypoint(unittest.TestCase):
         for d in (old, new, os.path.join(run, "final")):
             os.makedirs(d)
 
-        found = entrypoint.sta_step(os.path.join(run, "final", "metrics.json"))
+        found = report.sta_step(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, new)
 
@@ -851,7 +859,7 @@ class TestEntrypoint(unittest.TestCase):
             ("121-magic-streamout", None),
         ])
 
-        found = entrypoint.sta_step(os.path.join(run, "final", "metrics.json"))
+        found = report.sta_step(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(run, "55-openroad-stapostpnr"))
 
@@ -864,7 +872,7 @@ class TestEntrypoint(unittest.TestCase):
             ("140-misc-reportmanufacturability", resumed),
         ])
 
-        found = entrypoint.sta_step(os.path.join(run, "final", "metrics.json"))
+        found = report.sta_step(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(run, "119-openroad-stapostpnr"))
 
@@ -879,7 +887,7 @@ class TestEntrypoint(unittest.TestCase):
             ("119-openroad-stapostpnr", {"timing__setup__ws": 4.63}),
         ])
 
-        self.assertEqual(entrypoint.last_finished_step(run), 76)
+        self.assertEqual(runs.last_finished_step(run), 76)
 
     def test_last_finished_step_has_no_answer_without_state_files(self):
         run = self._run_with_states({"timing__setup__ws": 4.70}, [
@@ -887,9 +895,9 @@ class TestEntrypoint(unittest.TestCase):
             ("119-openroad-stapostpnr", None),
         ])
 
-        self.assertIsNone(entrypoint.last_finished_step(run))
+        self.assertIsNone(runs.last_finished_step(run))
         self.assertEqual(
-            entrypoint.sta_step(os.path.join(run, "final", "metrics.json")),
+            report.sta_step(os.path.join(run, "final", "metrics.json")),
             os.path.join(run, "119-openroad-stapostpnr"))
 
     def test_newest_step_reads_the_ordinal_as_a_number(self):
@@ -900,11 +908,11 @@ class TestEntrypoint(unittest.TestCase):
             os.makedirs(os.path.join(run, step, "reports"))
             open(os.path.join(run, step, "reports", "stat.json"), "w").close()
 
-        found = entrypoint.newest_step(run, "*-yosys-synthesis/reports/stat.json")
+        found = runs.newest_step(run, "*-yosys-synthesis/reports/stat.json")
 
         self.assertEqual(
             found, os.path.join(run, "158-yosys-synthesis", "reports", "stat.json"))
-        self.assertIsNone(entrypoint.newest_step(run, "*-openroad-cts"))
+        self.assertIsNone(runs.newest_step(run, "*-openroad-cts"))
 
     def test_find_render_falls_back_to_the_newest_step_directory(self):
         run = os.path.join(self.test_dir, "runs", "blinky_run")
@@ -913,7 +921,7 @@ class TestEntrypoint(unittest.TestCase):
             os.makedirs(os.path.join(run, step))
             open(os.path.join(run, step, "blinky.png"), "w").close()
 
-        found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+        found = runs.find_render(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(run, "79-klayout-render", "blinky.png"))
 
@@ -927,7 +935,7 @@ class TestEntrypoint(unittest.TestCase):
         open(os.path.join(other, "irdrop.png"), "w").close()
 
         self.assertIsNone(
-            entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+            runs.find_render(os.path.join(run, "final", "metrics.json"))
         )
 
     def test_find_render_returns_none_when_the_flow_rendered_nothing(self):
@@ -935,7 +943,7 @@ class TestEntrypoint(unittest.TestCase):
         os.makedirs(os.path.join(run, "final"))
 
         self.assertIsNone(
-            entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+            runs.find_render(os.path.join(run, "final", "metrics.json"))
         )
 
     def test_find_render_ignores_a_metrics_file_outside_a_run(self):
@@ -947,7 +955,7 @@ class TestEntrypoint(unittest.TestCase):
         open(os.path.join(stray, "blinky.png"), "w").close()
 
         self.assertIsNone(
-            entrypoint.find_render(os.path.join(stray, "metrics.json"))
+            runs.find_render(os.path.join(stray, "metrics.json"))
         )
 
     def test_find_metrics_picks_the_newest_run(self):
@@ -962,9 +970,9 @@ class TestEntrypoint(unittest.TestCase):
                     f.write("{}")
                 os.utime(metrics, (mtime, mtime))
 
-            self.assertIn("new_run", entrypoint.find_metrics(None))
+            self.assertIn("new_run", runs.find_metrics(None))
             # An explicit path always wins.
-            self.assertEqual(entrypoint.find_metrics("named.json"), "named.json")
+            self.assertEqual(runs.find_metrics("named.json"), "named.json")
         finally:
             os.chdir(cwd)
 
@@ -973,7 +981,7 @@ class TestEntrypoint(unittest.TestCase):
         os.chdir(self.test_dir)
         try:
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.find_metrics(None)
+                runs.find_metrics(None)
 
             self.assertEqual(cm.exception.code, 1)
         finally:
@@ -991,7 +999,7 @@ class TestEntrypoint(unittest.TestCase):
         path = self._results(
             '<testsuites><testsuite><testcase name="ok"/></testsuite></testsuites>'
         )
-        entrypoint.check_cocotb_results(path)  # must not exit
+        sim.check_cocotb_results(path)  # must not exit
 
     def test_cocotb_results_failure_exits_nonzero(self):
         # This is the whole reason the function exists: the simulator reports
@@ -1003,7 +1011,7 @@ class TestEntrypoint(unittest.TestCase):
             '</testsuite></testsuites>'
         )
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.check_cocotb_results(path)
+            sim.check_cocotb_results(path)
         self.assertEqual(cm.exception.code, 1)
 
     def test_cocotb_results_error_element_also_fails(self):
@@ -1013,24 +1021,24 @@ class TestEntrypoint(unittest.TestCase):
             '</testsuite></testsuites>'
         )
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.check_cocotb_results(path)
+            sim.check_cocotb_results(path)
         self.assertEqual(cm.exception.code, 1)
 
     def test_cocotb_missing_results_is_a_failure(self):
         # A run that died before writing results must not read as success.
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.check_cocotb_results(os.path.join(self.test_dir, "absent.xml"))
+            sim.check_cocotb_results(os.path.join(self.test_dir, "absent.xml"))
         self.assertEqual(cm.exception.code, 1)
 
     def test_cocotb_malformed_results_is_a_failure(self):
         path = self._results("<testsuites><not closed")
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.check_cocotb_results(path)
+            sim.check_cocotb_results(path)
         self.assertEqual(cm.exception.code, 1)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_cocotb_errors_without_tests(self, mock_ensure, mock_load, mock_run):
         config = {"VERILOG_FILES": ["src/**/*.v"], "DESIGN_NAME": "top"}
         cwd = os.getcwd()
@@ -1039,16 +1047,16 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_cocotb(args, config)
+                sim.cmd_cocotb(args, config)
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.cocotb_config', return_value="/no/such/libpython.so")
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('sim.cocotb_config', return_value="/no/such/libpython.so")
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_cocotb_errors_when_libpython_is_missing(
         self, mock_ensure, mock_load, mock_run, mock_cfg
     ):
@@ -1068,7 +1076,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_cocotb(args, config)
+                sim.cmd_cocotb(args, config)
             self.assertEqual(cm.exception.code, 1)
             # It must stop before handing anything to the simulator.
             self.assertEqual(
@@ -1077,11 +1085,11 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('sim.check_cocotb_results')
+    @patch('sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_cocotb_hands_the_module_and_toplevel_to_the_simulator(
         self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check
     ):
@@ -1102,7 +1110,7 @@ class TestEntrypoint(unittest.TestCase):
             # command down the gate-level path argparse would never pick here.
             args.netlist = None
 
-            entrypoint.cmd_cocotb(args, config)
+            sim.cmd_cocotb(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertEqual(compile_cmd[0], "iverilog")
@@ -1121,12 +1129,12 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.log_warn')
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.log_warn')
+    @patch('sim.check_cocotb_results')
+    @patch('sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_cocotb_warns_when_no_rtl_declares_a_timescale(
         self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check, mock_warn
     ):
@@ -1143,13 +1151,13 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
             args.netlist = None
 
-            entrypoint.cmd_cocotb(args, config)
+            sim.cmd_cocotb(args, config)
             self.assertIn("`timescale 1ns/1ps", mock_warn.call_args[0][0])
 
             mock_warn.reset_mock()
             with open("src/top.v", "w") as f:
                 f.write("`timescale 1ns/1ps\nmodule top; endmodule")
-            entrypoint.cmd_cocotb(args, config)
+            sim.cmd_cocotb(args, config)
             mock_warn.assert_not_called()
         finally:
             os.chdir(cwd)
@@ -1162,11 +1170,11 @@ class TestEntrypoint(unittest.TestCase):
         config["//COCOTB_TESTS"] = ["dir::pytests/*.py"]
         return config
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('sim.check_cocotb_results')
+    @patch('sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_cocotb_drives_the_netlist_when_asked(
         self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check
     ):
@@ -1181,7 +1189,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
             args.netlist = ""  # what argparse stores for a bare --netlist
 
-            entrypoint.cmd_cocotb(args, config)
+            sim.cmd_cocotb(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertIn("-DFUNCTIONAL", compile_cmd)
@@ -1197,11 +1205,11 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('sim.check_cocotb_results')
+    @patch('sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_cocotb_gate_level_does_not_overwrite_the_rtl_verdict(
         self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check
     ):
@@ -1215,7 +1223,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
             args.netlist = ""
 
-            entrypoint.cmd_cocotb(args, config)
+            sim.cmd_cocotb(args, config)
 
             self.assertEqual(
                 mock_check.call_args[0][0], os.path.join("build", "cocotb-gl-results.xml")
@@ -1246,9 +1254,9 @@ class TestEntrypoint(unittest.TestCase):
             "DESIGN_NAME": "top",
         }
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_gatesim_builds_the_netlist_against_the_cell_models(
         self, mock_ensure, mock_load, mock_run
     ):
@@ -1259,7 +1267,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.netlist = None
 
-            entrypoint.cmd_gatesim(args, config)
+            sim.cmd_gatesim(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertEqual(compile_cmd[0], "iverilog")
@@ -1276,9 +1284,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_gatesim_errors_without_a_gate_testbench(self, mock_ensure, mock_load, mock_run):
         config = self._gl_workspace()
         del config["//GATE_TESTS"]
@@ -1288,15 +1296,15 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.netlist = None
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_gatesim(args, config)
+                sim.cmd_gatesim(args, config)
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.load_config')
+    @patch('common.ensure_build_dir')
     def test_gatesim_errors_when_the_cell_models_are_absent(
         self, mock_ensure, mock_load, mock_run
     ):
@@ -1308,7 +1316,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.netlist = None
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_gatesim(args, config)
+                sim.cmd_gatesim(args, config)
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
         finally:
@@ -1320,7 +1328,7 @@ class TestEntrypoint(unittest.TestCase):
         os.chdir(self.test_dir)
         try:
             self._gl_workspace()
-            models = entrypoint.cell_models(
+            models = sim.cell_models(
                 {"PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd"}
             )
             self.assertTrue(models[0].endswith("sky130A/libs.ref/sky130_fd_sc_hd/verilog/primitives.v"))
@@ -1332,9 +1340,9 @@ class TestEntrypoint(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            self.assertEqual(entrypoint.find_netlist("named.v"), "named.v")
+            self.assertEqual(runs.find_netlist("named.v"), "named.v")
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.find_netlist(None)
+                runs.find_netlist(None)
             self.assertEqual(cm.exception.code, 1)
         finally:
             os.chdir(cwd)
@@ -1342,16 +1350,16 @@ class TestEntrypoint(unittest.TestCase):
     def test_root_args_is_shared_by_sim_and_gatesim(self):
         # Both commands hit the same silent-truncation trap, so both use the
         # same rule rather than one of them growing its own copy.
-        self.assertEqual(entrypoint.root_args({}, ["only.v"], "SIM_TOP"), [])
+        self.assertEqual(sim.root_args({}, ["only.v"], "SIM_TOP"), [])
         self.assertEqual(
-            entrypoint.root_args({"//GATE_TOP": "tb"}, ["a.v", "b.v"], "GATE_TOP"),
+            sim.root_args({"//GATE_TOP": "tb"}, ["a.v", "b.v"], "GATE_TOP"),
             ["-s", "tb"],
         )
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.root_args({}, ["a.v", "b.v"], "GATE_TOP")
+            sim.root_args({}, ["a.v", "b.v"], "GATE_TOP")
         self.assertEqual(cm.exception.code, 1)
 
-    @patch('entrypoint.run_command')
+    @patch('common.run_command')
     def test_pdk_installs_where_the_readers_look(self, mock_run):
         # The install path used to be a fixed ./pdks while every reader honoured
         # PDK_ROOT, so PDK_ROOT could only ever name a PDK this command had not
@@ -1382,7 +1390,7 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
+    @patch('common.run_command')
     def test_every_command_reads_the_same_language(self, mock_run):
         # One .sv file used to pass two commands and fail two: sim called
         # iverilog with no -g2012 and synth read with no -sv, while cocotb,
@@ -1394,12 +1402,12 @@ class TestEntrypoint(unittest.TestCase):
             config = {"DESIGN_NAME": "top", "VERILOG_FILES": ["dir::src/top.v"],
                       "//TEST_FILES": ["dir::test/top_tb.v"]}
 
-            entrypoint.cmd_sim(MagicMock(files=None, test_files=None), config)
+            sim.cmd_sim(MagicMock(files=None, test_files=None), config)
             argv = mock_run.call_args_list[0][0][0]
             self.assertEqual(argv[0], "iverilog")
             self.assertIn("-g2012", argv)
 
-            for cmd in (entrypoint.cmd_synth, entrypoint.cmd_schematic):
+            for cmd in (rtl.cmd_synth, rtl.cmd_schematic):
                 mock_run.reset_mock()
                 cmd(MagicMock(files=None), config)
                 script = mock_run.call_args[0][0][-1]
@@ -1424,7 +1432,7 @@ class TestEntrypoint(unittest.TestCase):
     def _site(self, config=None):
         """Runs cmd_site in test_dir and returns the page it wrote."""
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), config or {"DESIGN_NAME": "blinky"})
+            site_cmd.cmd_site(MagicMock(), config or {"DESIGN_NAME": "blinky"})
         with open(os.path.join("build", "site", "index.html")) as f:
             return f.read()
 
@@ -1694,7 +1702,7 @@ class TestEntrypoint(unittest.TestCase):
                           "<code>max_ss_100C_1v60</code>, <code>nom_ss_100C_1v60</code></td></tr>", timing)
             self.assertIn('<tr><td>max&nbsp;capacitance</td><td class="num PASS">0</td><td class="src">none</td></tr>', timing)
             self.assertIn('<tr><td>max&nbsp;fanout</td><td class="num PASS">0</td>', timing)
-            rows = dict(entrypoint.report_rows(json.load(open("runs/blinky_run/final/metrics.json")),
+            rows = dict(report.report_rows(json.load(open("runs/blinky_run/final/metrics.json")),
                                                "runs/blinky_run/final/metrics.json"))
             self.assertEqual(rows["limit violations"],
                              "11 max slew, 0 max capacitance, 0 max fanout  (max_ss_100C_1v60, nom_ss_100C_1v60)")
@@ -1983,7 +1991,7 @@ class TestEntrypoint(unittest.TestCase):
                     f.write(text)
                 with self.assertRaises(SystemExit) as raised, contextlib.redirect_stdout(io.StringIO()) as err:
                     shutil.copytree(self.RUN_FIXTURE, "runs")
-                    entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "blinky"})
+                    site_cmd.cmd_site(MagicMock(), {"DESIGN_NAME": "blinky"})
                 self.assertEqual(raised.exception.code, 1)
                 self.assertIn("build/history.json", err.getvalue())
 
@@ -2051,7 +2059,7 @@ class TestEntrypoint(unittest.TestCase):
                          ["(ns)", "(ns)", "(µm²)", "(mW)", "(% of supply)"])
         self.assertTrue(all(t in "".join(labels) for t in ("µm²", "mW", "ns", "%")))
         # The unit is not inside the text the capitals reach, and the rule turns them off.
-        self.assertRegex(entrypoint.site_page.CSS, r"\.hist \.label \.unit \{[^}]*text-transform: none")
+        self.assertRegex(site_cmd.site_page.CSS, r"\.hist \.label \.unit \{[^}]*text-transform: none")
         for label in labels:
             self.assertRegex(label, r'^[^<]*( <span class="unit">\([^<]*\)</span>)?$')
 
@@ -2063,9 +2071,9 @@ class TestEntrypoint(unittest.TestCase):
         for cls in ("seg-ff", "seg-logic", "seg-flow", "seg-synthesis"):
             self.assertIn(f'<polygon points', fold)
             self.assertRegex(fold, rf'class="{cls}"')
-            self.assertIn(f".hist svg .{cls}", entrypoint.site_page.CSS)
+            self.assertIn(f".hist svg .{cls}", site_cmd.site_page.CSS)
         self.assertNotIn("opacity", fold)
-        self.assertNotRegex(entrypoint.site_page.CSS.split("/* History")[1], r"opacity")
+        self.assertNotRegex(site_cmd.site_page.CSS.split("/* History")[1], r"opacity")
         # Hover on a commit: every layer and the total.
         self.assertIn("0000000: flip-flops 680.0 µm²; combinational logic 680.0 µm²; "
                       "added or resized by place and route 540.0 µm² (total 1,900.0 µm²)", fold)
@@ -2106,7 +2114,7 @@ class TestEntrypoint(unittest.TestCase):
         page = self._history_site(self._rows(4, setup_ws=-0.5, hold_ws=2.0))
         timing = self._section(page, "timing")
         self.assertEqual(timing.count('class="zero"'), 2)
-        self.assertRegex(entrypoint.site_page.CSS, r"\.hist svg \.zero \{[^}]*stroke: var\(--fail\)")
+        self.assertRegex(site_cmd.site_page.CSS, r"\.hist svg \.zero \{[^}]*stroke: var\(--fail\)")
         self.assertNotIn('class="zero"', self._section(page, "area"))
 
     def test_the_history_is_escaped_and_a_stray_value_is_a_gap(self):
@@ -2220,7 +2228,7 @@ class TestEntrypoint(unittest.TestCase):
         shutil.copy("runs/blinky_run/final/metrics.json", "runs/other/metrics.json")
         os.makedirs("runs/other/nl")
         open("runs/other/nl/blinky.nl.v", "w").close()
-        with patch.object(entrypoint, "METRICS_GLOBS", ["runs/other/metrics.json"]):
+        with patch.object(runs, "METRICS_GLOBS", ["runs/other/metrics.json"]):
             page = self._site()
         self.assertNotIn("blinky.nl.v", page)
         self.assertFalse(os.path.exists("build/site/blinky.nl.v"))
@@ -2257,7 +2265,7 @@ class TestEntrypoint(unittest.TestCase):
             "sky130_fd_sc_hd__clkdlybuf4s25_1": 4,
             "sky130_fd_sc_hd__inv_2": 17,
         }
-        self.assertEqual(entrypoint.drive_strengths(cells), {1: 18, 2: 33, 16: 3})
+        self.assertEqual(report.drive_strengths(cells), {1: 18, 2: 33, 16: 3})
 
     def test_drive_strength_leaves_out_cells_with_no_logic_function(self):
         cells = {
@@ -2271,18 +2279,18 @@ class TestEntrypoint(unittest.TestCase):
             "my_macro_8": 1,  # a macro is not a standard cell
             "$_AND_": 5,      # nor is a Yosys-internal type
         }
-        self.assertEqual(entrypoint.drive_strengths(cells), {2: 3})
+        self.assertEqual(report.drive_strengths(cells), {2: 3})
 
     def test_drive_strength_counts_the_routed_netlist_of_a_real_run(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
             self._real_run()
-            cells = entrypoint.routed_cells(self.REAL_METRICS)
+            cells = report.routed_cells(self.REAL_METRICS)
             # Every instance, physical ones too: 113 standard cells + 161 fill.
             self.assertEqual(sum(cells.values()), 274)
             self.assertEqual(cells["sky130_fd_sc_hd__tapvpwrvgnd_1"], 27)
-            self.assertEqual(entrypoint.drive_table(self.REAL_METRICS),
+            self.assertEqual(report.drive_table(self.REAL_METRICS),
                              [(1, 0, 18), (2, 65, 65), (16, 0, 3)])
         finally:
             os.chdir(cwd)
@@ -2366,9 +2374,9 @@ class TestEntrypoint(unittest.TestCase):
 
     def test_site_drive_strength_reading_says_what_routing_added_and_removed(self):
         # Hand-made rows: a real run only ever added.
-        text = entrypoint.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
+        text = site_cmd.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
         self.assertIn("Place and route added 2 X1 instances. It removed 2 X2 instances.", text)
-        text = entrypoint.site_page.drive_table([(2, 3, 3)])
+        text = site_cmd.site_page.drive_table([(2, 3, 3)])
         self.assertIn("Place and route did not change the mix.", text)
 
     def test_site_names_the_library_and_says_a_sky130_one_is_single_vt(self):
@@ -2455,7 +2463,7 @@ class TestEntrypoint(unittest.TestCase):
     def test_the_layout_keeps_its_shape_up_to_a_height_cap(self):
         # The render is 1000 px wide and as tall as the die makes it. Squeezed
         # into a square it shrank, and uncapped a tall die pushes the page down.
-        css = entrypoint.site_page.CSS
+        css = site_cmd.site_page.CSS
         self.assertNotIn("aspect-ratio: 1", css)
         self.assertIn(".hero-art img { display: block; width: 100%; height: auto; "
                       "max-height: min(70vh, 560px); object-fit: contain; }", css)
@@ -2488,7 +2496,7 @@ class TestEntrypoint(unittest.TestCase):
             self.assertNotIn("UTC</", page)
             self.assertNotIn("2026-09-21", page)
             # Off a pinned epoch the clock is read in the same offset.
-            site_page = entrypoint.site_page
+            site_page = site_cmd.site_page
             fixed = site_page.datetime(2026, 1, 1, 16, 0, tzinfo=site_page.timezone.utc)
 
             class FakeClock(site_page.datetime):
@@ -2796,29 +2804,29 @@ class TestEntrypoint(unittest.TestCase):
         args.if_configured = if_configured
         return args
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_sim_if_configured_skips_when_only_cocotb_is_configured(self, mock_ensure, mock_run):
         config = self._no_testbench_config(**{"//COCOTB_TESTS": ["dir::pytests/*.py"]})
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            with patch("entrypoint.log_info") as info:
-                entrypoint.cmd_sim(self._sim_args(True), config)
+            with patch("common.log_info") as info:
+                sim.cmd_sim(self._sim_args(True), config)
             mock_run.assert_not_called()
             self.assertIn("TEST_FILES is not set", info.call_args[0][0])
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_sim_if_configured_fails_when_nothing_is_configured(self, mock_ensure, mock_run):
         config = self._no_testbench_config()
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(self._sim_args(True), config)
+            with patch("common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                sim.cmd_sim(self._sim_args(True), config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("TEST_FILES", error.call_args[0][0])
             self.assertIn("COCOTB_TESTS", error.call_args[0][0])
@@ -2826,36 +2834,36 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_sim_if_configured_runs_when_the_testbench_is_configured(self, mock_ensure, mock_run):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            entrypoint.cmd_sim(self._sim_args(True), self.config)
+            sim.cmd_sim(self._sim_args(True), self.config)
             self.assertEqual(mock_run.call_args_list[0][0][0][0], "iverilog")
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_sim_asked_for_by_name_still_fails_without_a_testbench(self, mock_ensure, mock_run):
         # Even with the Python tests configured: `make sim` named sim.
         config = self._no_testbench_config(**{"//COCOTB_TESTS": ["dir::pytests/*.py"]})
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(self._sim_args(False), config)
+            with patch("common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                sim.cmd_sim(self._sim_args(False), config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("sim has no testbench", error.call_args[0][0])
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('sim.check_cocotb_results')
+    @patch('sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_cocotb_if_configured_skips_when_only_a_testbench_is_configured(
         self, mock_ensure, mock_run, mock_cfg, mock_check
     ):
@@ -2865,16 +2873,16 @@ class TestEntrypoint(unittest.TestCase):
         try:
             args = self._sim_args(True)
             args.netlist = None
-            with patch("entrypoint.log_info") as info:
-                entrypoint.cmd_cocotb(args, config)
+            with patch("common.log_info") as info:
+                sim.cmd_cocotb(args, config)
             mock_run.assert_not_called()
             mock_check.assert_not_called()
             self.assertIn("COCOTB_TESTS is not set", info.call_args[0][0])
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_cocotb_if_configured_fails_when_nothing_is_configured(self, mock_ensure, mock_run):
         config = self._no_testbench_config()
         cwd = os.getcwd()
@@ -2882,8 +2890,8 @@ class TestEntrypoint(unittest.TestCase):
         try:
             args = self._sim_args(True)
             args.netlist = None
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_cocotb(args, config)
+            with patch("common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                sim.cmd_cocotb(args, config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("TEST_FILES", error.call_args[0][0])
             self.assertIn("COCOTB_TESTS", error.call_args[0][0])
@@ -2891,8 +2899,8 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_cocotb_asked_for_by_name_still_fails_without_tests(self, mock_ensure, mock_run):
         config = self._no_testbench_config(**{"TEST_FILES": ["test/*.v"]})
         cwd = os.getcwd()
@@ -2900,8 +2908,8 @@ class TestEntrypoint(unittest.TestCase):
         try:
             args = self._sim_args(False)
             args.netlist = None
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_cocotb(args, config)
+            with patch("common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                sim.cmd_cocotb(args, config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("No cocotb tests", error.call_args[0][0])
         finally:
@@ -2915,10 +2923,10 @@ class TestEntrypoint(unittest.TestCase):
 
     # --- gatesim: the Verilog testbench, else the cocotb tests ---
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('sim.check_cocotb_results')
+    @patch('sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_gatesim_runs_the_cocotb_tests_when_there_is_no_gate_testbench(
         self, mock_ensure, mock_run, mock_cfg, mock_check
     ):
@@ -2931,7 +2939,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
             args.netlist = None
 
-            entrypoint.cmd_gatesim(args, config)
+            sim.cmd_gatesim(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertTrue(any("top.nl.v" in a for a in compile_cmd))
@@ -2944,9 +2952,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.cmd_cocotb')
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('sim.cmd_cocotb')
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_gatesim_prefers_the_gate_testbench_to_the_cocotb_tests(
         self, mock_ensure, mock_run, mock_cocotb
     ):
@@ -2957,7 +2965,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.netlist = None
 
-            entrypoint.cmd_gatesim(args, config)
+            sim.cmd_gatesim(args, config)
 
             mock_cocotb.assert_not_called()
             compile_cmd = mock_run.call_args_list[0][0][0]
@@ -2965,8 +2973,8 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('common.run_command')
+    @patch('common.ensure_build_dir')
     def test_gatesim_error_names_both_keys(self, mock_ensure, mock_run):
         config = self._gl_workspace()
         del config["//GATE_TESTS"]
@@ -2975,8 +2983,8 @@ class TestEntrypoint(unittest.TestCase):
         try:
             args = MagicMock()
             args.netlist = None
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_gatesim(args, config)
+            with patch("common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                sim.cmd_gatesim(args, config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("GATE_TESTS", error.call_args[0][0])
             self.assertIn("COCOTB_TESTS", error.call_args[0][0])
@@ -2991,11 +2999,11 @@ class TestEntrypoint(unittest.TestCase):
         args = MagicMock()
         args.files = None
         args.netlist = netlist
-        with patch('entrypoint.check_cocotb_results'), \
-             patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__)), \
-             patch('entrypoint.ensure_build_dir'), \
-             patch('entrypoint.run_command') as run:
-            entrypoint.cmd_cocotb(args, config)
+        with patch('sim.check_cocotb_results'), \
+             patch('sim.cocotb_config', return_value=os.path.dirname(__file__)), \
+             patch('common.ensure_build_dir'), \
+             patch('common.run_command') as run:
+            sim.cmd_cocotb(args, config)
         return run.call_args_list[0][0][0]
 
     def _rtl_cocotb_config(self):
@@ -3265,7 +3273,7 @@ class TestEntrypoint(unittest.TestCase):
                           '<div class="detail">hold &middot; 1 violation</div>', page)
             # `report` says the same words as the card: one reading of the checks.
             with open("runs/blinky_run/final/metrics.json") as f:
-                self.assertEqual(entrypoint.signoff_row(json.load(f)),
+                self.assertEqual(report.signoff_row(json.load(f)),
                                  ("signoff", "3 DRC (KLayout), 1 LVS"))
         finally:
             os.chdir(cwd)
@@ -3277,7 +3285,7 @@ class TestEntrypoint(unittest.TestCase):
         # A long test name breaks anywhere, and the result columns are narrow
         # at 600px and below, so RTL and GATES stay in view. Measured in a
         # browser at 390px: the table's scrollWidth equals its clientWidth.
-        css = entrypoint.site_page.CSS
+        css = site_cmd.site_page.CSS
         self.assertRegex(css, re.compile(
             r"@media \(max-width: 600px\).*?table\.tests th:not\(:first-child\), "
             r"table\.tests td:not\(:first-child\) \{ width: 56px; \}", re.S))
@@ -3301,14 +3309,14 @@ class TestEntrypoint(unittest.TestCase):
             os.chdir(cwd)
 
     def test_hero_caption_labels_the_count_when_only_synthesis_gave_one(self):
-        text = entrypoint.site_page.hero_art(
+        text = site_cmd.site_page.hero_art(
             "layout.png", "d", [("instances", "110 after synthesis")], None)
         self.assertIn("110 instances after synthesis", text)
-        text = entrypoint.site_page.hero_art("layout.png", "d", [], None)
+        text = site_cmd.site_page.hero_art("layout.png", "d", [], None)
         self.assertNotIn("<figcaption>", text)
 
     def test_corner_words_write_the_temperature_as_a_number(self):
-        words = entrypoint.site_page.corner_words
+        words = site_cmd.site_page.corner_words
         self.assertIn(", 25&nbsp;&deg;C, 1.80&nbsp;V", words("nom_tt_025C_1v80"))
         self.assertIn(", -40&nbsp;&deg;C, 1.95&nbsp;V", words("max_ff_n40C_1v95"))
         self.assertIn(", 100&nbsp;&deg;C, 1.60&nbsp;V", words("max_ss_100C_1v60"))
@@ -3352,10 +3360,10 @@ class TestEntrypoint(unittest.TestCase):
             os.chdir(cwd)
 
     def test_a_details_label_counts_the_rows_inside(self):
-        text = entrypoint.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
+        text = site_cmd.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
         self.assertIn("(3 sizes)</summary>", text)
         self.assertEqual(text.count("<tr><td>X"), 3)
-        text = entrypoint.site_page.drive_table([(2, 3, 3)])
+        text = site_cmd.site_page.drive_table([(2, 3, 3)])
         self.assertIn("(1 size)</summary>", text)
         cwd = os.getcwd()
         os.chdir(self.test_dir)
@@ -3413,13 +3421,13 @@ class TestEntrypoint(unittest.TestCase):
             os.chdir(cwd)
 
     def test_a_test_name_breaks_after_an_underscore_and_copies_whole(self):
-        name = entrypoint.site_page.test_name("reset_in_the_middle_restarts")
+        name = site_cmd.site_page.test_name("reset_in_the_middle_restarts")
         self.assertEqual(name, "reset_<wbr>in_<wbr>the_<wbr>middle_<wbr>restarts")
         # <wbr> adds no character: the text a reader copies is the name.
         self.assertEqual(re.sub(r"<[^>]*>", "", name), "reset_in_the_middle_restarts")
         # The name is escaped before the breaks go in.
-        self.assertEqual(entrypoint.site_page.test_name("a<b_c"), "a&lt;b_<wbr>c")
-        css = entrypoint.site_page.CSS
+        self.assertEqual(site_cmd.site_page.test_name("a<b_c"), "a&lt;b_<wbr>c")
+        css = site_cmd.site_page.CSS
         self.assertNotIn("overflow-wrap: anywhere", css.split("td code")[1][:40] if "td code" in css else "")
         self.assertNotIn("td code { overflow-wrap: anywhere; }", css)
         cwd = os.getcwd()
@@ -3479,7 +3487,7 @@ class TestCoverage(unittest.TestCase):
         return os.path.join(self.FIXTURES, name)
 
     def summary(self, **extra):
-        types, modules, files = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        types, modules, files = regress.parse_coverage_dat(self.fixture("run-a.dat"))
         out = {"tests": {"total": 5, "passed": 5}, "files": files, "types": types,
                "modules": [{"name": n, "types": t} for n, t in modules.items()],
                "uncovered": [{"file": "src/top.v", "line": 6, "text": "q <= d;"}]}
@@ -3487,24 +3495,24 @@ class TestCoverage(unittest.TestCase):
         return out
 
     def page(self, coverage, **kwargs):
-        return entrypoint.site_page.render("top", [], None, [], {}, coverage=coverage, **kwargs)
+        return site_cmd.site_page.render("top", [], None, [], {}, coverage=coverage, **kwargs)
 
     # --- the numbers ---------------------------------------------------------
 
     def test_each_kind_is_counted_from_its_own_records(self):
-        types, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        types, _, _ = regress.parse_coverage_dat(self.fixture("run-a.dat"))
         got = {k: (v["hit"], v["total"], v["percent"]) for k, v in types.items()}
         # Not lcov's: those take the smallest of line, branch and toggle per source line.
         self.assertEqual(got, {"line": (3, 5, 60.0), "branch": (1, 2, 50.0), "toggle": (5, 8, 62.5)})
 
     def test_user_coverage_is_there_only_when_the_design_has_some(self):
-        a, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
-        b, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-b.dat"))
+        a, _, _ = regress.parse_coverage_dat(self.fixture("run-a.dat"))
+        b, _, _ = regress.parse_coverage_dat(self.fixture("run-b.dat"))
         self.assertNotIn("user", a)
         self.assertEqual((b["user"]["hit"], b["user"]["total"]), (1, 1))
 
     def test_each_module_is_counted_apart_and_none_of_a_kind_is_not_zero_percent(self):
-        _, modules, files = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        _, modules, files = regress.parse_coverage_dat(self.fixture("run-a.dat"))
         self.assertEqual(list(modules), ["sub", "top"])
         self.assertEqual((modules["top"]["line"]["hit"], modules["top"]["line"]["total"]), (2, 4))
         self.assertEqual((modules["sub"]["toggle"]["hit"], modules["sub"]["toggle"]["total"]), (2, 2))
@@ -3514,8 +3522,8 @@ class TestCoverage(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("verilator_coverage"), "needs verilator_coverage")
     def test_two_runs_are_merged_by_adding_their_counts(self):
-        entrypoint.merge_coverage([self.fixture("run-a.dat"), self.fixture("run-b.dat")], "merged.dat")
-        types, _, _ = entrypoint.parse_coverage_dat("merged.dat")
+        regress.merge_coverage([self.fixture("run-a.dat"), self.fixture("run-b.dat")], "merged.dat")
+        types, _, _ = regress.parse_coverage_dat("merged.dat")
         # A point either run hit is hit. Neither alone has 4/5 lines.
         self.assertEqual({k: (v["hit"], v["total"]) for k, v in types.items()},
                          {"line": (4, 5), "branch": (2, 2), "toggle": (6, 8), "user": (1, 1)})
@@ -3524,7 +3532,7 @@ class TestCoverage(unittest.TestCase):
         os.makedirs("src")
         with open("src/top.v", "w") as f:
             f.write("".join(f"line {n}\n" for n in range(1, 15)))
-        got = entrypoint.uncovered_lines(self.fixture("run-a.dat"))
+        got = regress.uncovered_lines(self.fixture("run-a.dat"))
         # Blocks at lines 6 and 12 and the else branch of line 6 are not hit.
         # Lines 1, 2, 4 and 5 have toggle holes only, and are not listed.
         self.assertEqual(got, [{"file": "src/top.v", "line": 6, "text": "line 6"},
@@ -3537,10 +3545,10 @@ class TestCoverage(unittest.TestCase):
             f.write("# SystemC::Coverage-3\n")
             f.write("C '\x01f\x02src/top.v\x01l\x021\x01page\x02v_line/top\x01o\x02block\x01S\x021,3-4\x01h\x02.top' 0\n")
             f.write("C '\x01f\x02src/top.v\x01l\x025\x01page\x02v_line/top\x01o\x02block\x01S\x025\x01h\x02.top' 1\n")
-        self.assertEqual([m["line"] for m in entrypoint.uncovered_lines("blocks.dat")], [1, 3, 4])
+        self.assertEqual([m["line"] for m in regress.uncovered_lines("blocks.dat")], [1, 3, 4])
 
     def test_the_text_of_an_unreadable_source_is_empty_not_an_error(self):
-        got = entrypoint.uncovered_lines(self.fixture("run-a.dat"))
+        got = regress.uncovered_lines(self.fixture("run-a.dat"))
         self.assertEqual([m["text"] for m in got], ["", ""])
 
     # --- the page ------------------------------------------------------------
@@ -3573,15 +3581,15 @@ class TestCoverage(unittest.TestCase):
 
     def test_the_page_says_which_seed_the_coverage_run_used(self):
         runs = [("cocotb, RTL", "1789965785", [("t", "PASS", 1.0)])]
-        same = entrypoint.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="1789965785"))
+        same = site_cmd.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="1789965785"))
         self.assertIn("This run used seed <code>1789965785</code>, the seed of the RTL run in Tests.", same)
-        other = entrypoint.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="7"))
+        other = site_cmd.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="7"))
         self.assertIn("This run used seed <code>7</code>. It is not the seed of the RTL run in Tests.", other)
-        none = entrypoint.site_page.render("top", [], None, runs, {}, coverage=self.summary())
+        none = site_cmd.site_page.render("top", [], None, runs, {}, coverage=self.summary())
         self.assertNotIn("This run used seed", none)
 
     def test_user_coverage_gets_a_row_when_there_is_some(self):
-        types, modules, files = entrypoint.parse_coverage_dat(self.fixture("run-b.dat"))
+        types, modules, files = regress.parse_coverage_dat(self.fixture("run-b.dat"))
         self.assertIn("<td>User cover</td>", self.page(self.summary(types=types)))
 
     def test_the_summary_card_has_a_line_for_each_kind_and_no_total(self):
@@ -3599,9 +3607,9 @@ class TestCoverage(unittest.TestCase):
         self.assertNotIn("expression", summary)
 
     def test_the_summary_card_adds_a_user_line_and_a_dash_for_a_kind_with_nothing(self):
-        types, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-b.dat"))
+        types, _, _ = regress.parse_coverage_dat(self.fixture("run-b.dat"))
         types["branch"] = {"hit": 0, "total": 0, "percent": None}
-        card = entrypoint.site_page.coverage_card(self.summary(types=types))
+        card = site_cmd.site_page.coverage_card(self.summary(types=types))
         self.assertEqual(re.findall(r'<div class="value">([^<]*)</div><div class="detail">([^<]*)</div>', card),
                          [("40.0%", "Block"), ("n/a", "Branch"), ("12.5%", "Toggle"), ("100.0%", "User cover")])
 
@@ -3614,7 +3622,7 @@ class TestCoverage(unittest.TestCase):
 
     def test_coverage_comes_after_the_tests_and_before_timing(self):
         runs = [("cocotb, RTL", "1", [("t", "PASS", 1.0)])]
-        page = entrypoint.site_page.render(
+        page = site_cmd.site_page.render(
             "top", [], None, runs, {}, coverage=self.summary(),
             physical={"setup": (1.0, 0), "hold": (1.0, 0)})
         ids = re.findall(r'<section id="([a-z0-9-]*)"', page)
@@ -3623,7 +3631,7 @@ class TestCoverage(unittest.TestCase):
 
     def test_without_coverage_there_is_no_section_and_no_card(self):
         runs = [("cocotb, RTL", "1", [("t", "PASS", 1.0)])]
-        page = entrypoint.site_page.render("top", [], None, runs, {}, physical={"setup": (1.0, 0)})
+        page = site_cmd.site_page.render("top", [], None, runs, {}, physical={"setup": (1.0, 0)})
         self.assertNotIn("Coverage", page)
         self.assertNotIn("code coverage", page)
         self.assertNotIn('id="coverage"', page)
@@ -3633,12 +3641,12 @@ class TestCoverage(unittest.TestCase):
         with open("build/cocotb-results.xml", "w") as f:
             f.write(self.COCOTB_XML)
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+            site_cmd.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
         self.assertNotIn("Coverage", open("build/site/index.html").read())
         with open("build/coverage/summary.json", "w") as f:
             json.dump(self.summary(), f)
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+            site_cmd.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
         page = open("build/site/index.html").read()
         self.assertIn("<h2>Coverage</h2>", page)
         self.assertIn('<div class="stat"><div class="value">60.0%</div><div class="detail">Block</div></div>', page)
@@ -3651,7 +3659,7 @@ class TestCoverage(unittest.TestCase):
         physical = dict(physical, constraints={"clock_period": (10.0, True)}, core=(40.0, 50.0))
         power = ("nom_tt_025C_1v80", [("Total", 0.0, 0.0, 0.0, 0.001)])
         signoff = [("DRC", 0, "Magic", "")]
-        return entrypoint.site_page.summary_cards(
+        return site_cmd.site_page.summary_cards(
             numbers, physical, power, signoff, self.summary() if coverage else None)
 
     def test_the_cards_come_three_to_a_row_with_coverage_first_in_the_third(self):
@@ -3714,8 +3722,8 @@ class TestCoverage(unittest.TestCase):
 
     def coverage(self, config=None, **fake):
         out = io.StringIO()
-        with patch("entrypoint.subprocess.run", self.fake(**fake)), contextlib.redirect_stdout(out):
-            entrypoint.cmd_coverage(MagicMock(files=None, if_configured=False), config or self.CONFIG)
+        with patch("regress.subprocess.run", self.fake(**fake)), contextlib.redirect_stdout(out):
+            regress.cmd_coverage(MagicMock(files=None, if_configured=False), config or self.CONFIG)
         return out.getvalue()
 
     # --- over a test list ----------------------------------------------------
@@ -3738,7 +3746,7 @@ class TestCoverage(unittest.TestCase):
         sims = [kw["env"] for c, kw in calls if c[0] == "make" and not c[-1].endswith("Vtop")]
         self.assertEqual(len(builds), 1)
         self.assertEqual(len(sims), 5)
-        expect = entrypoint.derive_seeds(31, "test_top", 3) + entrypoint.derive_seeds(31, "test_top.f", 2)
+        expect = regress.derive_seeds(31, "test_top", 3) + regress.derive_seeds(31, "test_top.f", 2)
         self.assertEqual([e["RANDOM_SEED"] for e in sims], [str(x) for x in expect])
         self.assertEqual([e.get("TESTCASE") for e in sims], [None] * 3 + ["f"] * 2)
         self.assertTrue(all(e["MODULE"] == "test_top" for e in sims))
@@ -3765,15 +3773,15 @@ class TestCoverage(unittest.TestCase):
     def test_the_merge_takes_every_runs_counts(self):
         config = self.listed()
         merged = []
-        real = entrypoint.merge_coverage
-        with patch("entrypoint.merge_coverage", side_effect=lambda d, m: (merged.append(list(d)), real(d, m))):
+        real = regress.merge_coverage
+        with patch("regress.merge_coverage", side_effect=lambda d, m: (merged.append(list(d)), real(d, m))):
             self.coverage(config)
         self.assertEqual(merged, [[f"build/coverage/run-{n}.dat" for n in range(1, 6)]])
 
     def test_a_bad_list_stops_before_the_build(self):
         config = self.listed("- test: test_nope\n")
         calls = []
-        with patch("entrypoint.log_error"), self.assertRaises(SystemExit) as cm:
+        with patch("common.log_error"), self.assertRaises(SystemExit) as cm:
             self.coverage(config, calls=calls)
         self.assertEqual(cm.exception.code, 1)
         self.assertEqual([c for c, _ in calls if c[0] == "make"], [])
@@ -3841,13 +3849,13 @@ class TestCoverage(unittest.TestCase):
         config = {"DESIGN_NAME": "top", "VERILOG_FILES": ["src/top.v"], "TEST_FILES": ["test/tb.v"]}
         self.project()
         open("test/tb.v", "w").write("x")
-        with patch("entrypoint.subprocess.run", side_effect=AssertionError("must not run")):
+        with patch("regress.subprocess.run", side_effect=AssertionError("must not run")):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                entrypoint.cmd_coverage(MagicMock(files=None, if_configured=True), config)
+                regress.cmd_coverage(MagicMock(files=None, if_configured=True), config)
             self.assertIn("coverage skipped: COCOTB_TESTS is not set", out.getvalue())
             with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
-                entrypoint.cmd_coverage(MagicMock(files=None, if_configured=False), config)
+                regress.cmd_coverage(MagicMock(files=None, if_configured=False), config)
 
     def test_each_run_starts_from_an_empty_directory(self):
         self.project()
@@ -3915,12 +3923,12 @@ class TestRegress(unittest.TestCase):
             return MagicMock(returncode=0)
 
         out, code = io.StringIO(), None
-        with patch("entrypoint.run_command") as run_command, \
-             patch("entrypoint.cocotb_config", return_value=os.path.dirname(__file__)), \
-             patch("entrypoint.subprocess.run", side_effect=fake_vvp), \
+        with patch("common.run_command") as run_command, \
+             patch("sim.cocotb_config", return_value=os.path.dirname(__file__)), \
+             patch("regress.subprocess.run", side_effect=fake_vvp), \
              contextlib.redirect_stdout(out):
             try:
-                entrypoint.cmd_regress(self.args(**kw), self.config)
+                regress.cmd_regress(self.args(**kw), self.config)
             except SystemExit as e:
                 code = e.code
         return runs, run_command, code, out.getvalue()
@@ -3933,16 +3941,16 @@ class TestRegress(unittest.TestCase):
 
     def test_a_module_a_function_and_the_default_of_one_seed(self):
         self.listing("- test: test_a\n  seeds: 20\n- test: test_b.f\n  seeds: 3\n")
-        got = entrypoint.load_regression(self.config, ["tb/test_a.py", "tb/test_b.py"])
+        got = regress.load_regression(self.config, ["tb/test_a.py", "tb/test_b.py"])
         self.assertEqual(got, [("test_a", "test_a", None, 20), ("test_b.f", "test_b", "f", 3)])
         self.listing("- test: test_a\n")
-        got = entrypoint.load_regression(self.config, ["tb/test_a.py"])
+        got = regress.load_regression(self.config, ["tb/test_a.py"])
         self.assertEqual(got, [("test_a", "test_a", None, 1)])
 
     def assertRejected(self, text, message):
         """The list is refused with `message` in the log, before anything is compiled."""
         self.listing(text)
-        with patch("entrypoint.log_error") as log:
+        with patch("common.log_error") as log:
             runs, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertIn(message, " ".join(str(c[0][0]) for c in log.call_args_list))
@@ -3980,7 +3988,7 @@ class TestRegress(unittest.TestCase):
         self.assertRejected("- test: [unclosed\n", "Failed to parse")
 
     def test_a_missing_list_file_is_refused(self):
-        with patch("entrypoint.log_error") as log:
+        with patch("common.log_error") as log:
             runs, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertIn("Could not read the test list tb/regression.yaml", log.call_args[0][0])
@@ -3988,7 +3996,7 @@ class TestRegress(unittest.TestCase):
 
     def test_every_problem_is_reported_not_only_the_first(self):
         self.listing("- test: test_x\n- test: test_a\n  seeds: 0\n")
-        with patch("entrypoint.log_error") as log:
+        with patch("common.log_error") as log:
             _, _, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertEqual(log.call_count, 2)
@@ -3996,13 +4004,13 @@ class TestRegress(unittest.TestCase):
     # --- the seeds -----------------------------------------------------------
 
     def test_the_same_base_seed_gives_the_same_seeds(self):
-        self.assertEqual(entrypoint.derive_seeds(1234, "test_a", 20),
-                         entrypoint.derive_seeds(1234, "test_a", 20))
-        self.assertNotEqual(entrypoint.derive_seeds(1234, "test_a", 20),
-                            entrypoint.derive_seeds(1235, "test_a", 20))
+        self.assertEqual(regress.derive_seeds(1234, "test_a", 20),
+                         regress.derive_seeds(1234, "test_a", 20))
+        self.assertNotEqual(regress.derive_seeds(1234, "test_a", 20),
+                            regress.derive_seeds(1235, "test_a", 20))
 
     def test_the_seeds_of_an_entry_are_distinct_and_positive(self):
-        seeds = entrypoint.derive_seeds(7, "test_a", 500)
+        seeds = regress.derive_seeds(7, "test_a", 500)
         self.assertEqual(len(set(seeds)), 500)
         self.assertTrue(all(0 < s < 2**31 for s in seeds))
 
@@ -4025,7 +4033,7 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(again["seed"], 4242)
         self.regress()
         self.assertEqual(self.summary()["runs"], again["runs"])
-        self.assertEqual([r["seed"] for r in again["runs"]], entrypoint.derive_seeds(4242, "test_a", 4))
+        self.assertEqual([r["seed"] for r in again["runs"]], regress.derive_seeds(4242, "test_a", 4))
 
     def test_without_random_seed_the_base_seed_is_new_each_time(self):
         self.listing("- test: test_a\n")
@@ -4037,7 +4045,7 @@ class TestRegress(unittest.TestCase):
     def test_a_base_seed_that_is_not_a_number_is_refused(self):
         self.listing("- test: test_a\n")
         os.environ["RANDOM_SEED"] = "abc"
-        with patch("entrypoint.log_error") as log:
+        with patch("common.log_error") as log:
             runs, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertIn("RANDOM_SEED must be a whole number", log.call_args[0][0])
@@ -4055,7 +4063,7 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(len(runs), 5)
         a = [r for r in runs if r["MODULE"] == "test_a"]
         b = [r for r in runs if r["MODULE"] == "test_b"]
-        self.assertEqual([r["RANDOM_SEED"] for r in a], [str(s) for s in entrypoint.derive_seeds(11, "test_a", 3)])
+        self.assertEqual([r["RANDOM_SEED"] for r in a], [str(s) for s in regress.derive_seeds(11, "test_a", 3)])
         # TESTCASE only for the entry that names a function.
         self.assertTrue(all("TESTCASE" not in r for r in a))
         self.assertTrue(all(r["TESTCASE"] == "f" for r in b))
@@ -4086,7 +4094,7 @@ class TestRegress(unittest.TestCase):
         runs, _, code, out = self.regress({("test_a", None): self.FAIL_XML})
         self.assertEqual(code, 1)
         self.assertEqual(len(runs), 4)  # the failure stopped nothing
-        seed = entrypoint.derive_seeds(5, "test_a", 2)[0]
+        seed = regress.derive_seeds(5, "test_a", 2)[0]
         self.assertIn(f"make cocotb SEED={seed} TEST=test_a", out)
         self.assertIn("test_b", out)
         self.assertIn("2/4 runs passed", out)
@@ -4103,13 +4111,13 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_unreadable_results_are_a_failure(self):
-        self.assertEqual(entrypoint.run_verdict("absent.xml"), "fail")
+        self.assertEqual(regress.run_verdict("absent.xml"), "fail")
         open("bad.xml", "w").write("<testsuites><not closed")
-        self.assertEqual(entrypoint.run_verdict("bad.xml"), "fail")
+        self.assertEqual(regress.run_verdict("bad.xml"), "fail")
 
     def test_an_error_element_also_fails_a_run(self):
         open("e.xml", "w").write('<testsuites><testsuite><testcase name="x"><error message="b"/></testcase></testsuite></testsuites>')
-        self.assertEqual(entrypoint.run_verdict("e.xml"), "fail")
+        self.assertEqual(regress.run_verdict("e.xml"), "fail")
 
     def test_the_table_has_a_row_per_entry(self):
         self.listing("- test: test_a\n  seeds: 2\n- test: test_b\n")
@@ -4123,7 +4131,7 @@ class TestRegress(unittest.TestCase):
         open("build/regress/summary.json", "w").write('{"stale": true}')
         open("build/regress/old-1.xml", "w").write("x")
         self.listing("- test: test_nope\n")  # stops after clearing
-        with patch("entrypoint.log_error"):
+        with patch("common.log_error"):
             self.regress()
         self.assertFalse(os.path.exists("build/regress/summary.json"))
         self.assertFalse(os.path.exists("build/regress/old-1.xml"))
@@ -4132,7 +4140,7 @@ class TestRegress(unittest.TestCase):
 
     def test_without_the_key_if_configured_skips_with_a_message(self):
         del self.config["//REGRESSION"]
-        with patch("entrypoint.log_info") as info:
+        with patch("common.log_info") as info:
             runs, run_command, code, _ = self.regress(if_configured=True)
         self.assertIsNone(code)
         self.assertIn("regress skipped: REGRESSION is not set", info.call_args[0][0])
@@ -4141,7 +4149,7 @@ class TestRegress(unittest.TestCase):
 
     def test_without_the_key_and_without_the_flag_it_is_an_error(self):
         del self.config["//REGRESSION"]
-        with patch("entrypoint.log_error") as log:
+        with patch("common.log_error") as log:
             _, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertIn("No test list", log.call_args[0][0])
@@ -4173,12 +4181,12 @@ class TestRegress(unittest.TestCase):
                 open(os.path.join(kw["cwd"], "coverage.dat"), "w").write("")
             return MagicMock(returncode=0, stdout="/x", stderr="")
 
-        with patch("entrypoint.subprocess.run", side_effect=fake), \
-             patch("entrypoint.merge_coverage"), \
-             patch("entrypoint.parse_coverage_dat", return_value=({}, {}, [])), \
-             patch("entrypoint.uncovered_lines", return_value=[]), \
+        with patch("regress.subprocess.run", side_effect=fake), \
+             patch("regress.merge_coverage"), \
+             patch("regress.parse_coverage_dat", return_value=({}, {}, [])), \
+             patch("regress.uncovered_lines", return_value=[]), \
              contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_coverage(self.args(), self.config)
+            regress.cmd_coverage(self.args(), self.config)
         key = lambda e: (e["MODULE"], e.get("TESTCASE"), e["RANDOM_SEED"])
         self.assertEqual([key(e) for e in sims], [key(e) for e in regress_runs])
         self.assertEqual(len(sims), 6)
@@ -4188,13 +4196,13 @@ class TestRegress(unittest.TestCase):
     def cocotb(self, test=None, **kw):
         if test is not None:
             os.environ["TEST"] = test
-        with patch("entrypoint.run_command") as run_command, \
-             patch("entrypoint.cocotb_config", return_value=os.path.dirname(__file__)), \
-             patch("entrypoint.check_cocotb_results"), \
+        with patch("common.run_command") as run_command, \
+             patch("sim.cocotb_config", return_value=os.path.dirname(__file__)), \
+             patch("sim.check_cocotb_results"), \
              contextlib.redirect_stdout(io.StringIO()):
             code = None
             try:
-                entrypoint.cmd_cocotb(self.args(**kw), self.config)
+                sim.cmd_cocotb(self.args(**kw), self.config)
             except SystemExit as e:
                 code = e.code
         return run_command, code
@@ -4221,7 +4229,7 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(run_command.call_args_list[1][1]["env"]["MODULE"], "test_a,test_b")
 
     def test_an_unknown_test_is_refused_before_anything_is_compiled(self):
-        with patch("entrypoint.log_error") as log:
+        with patch("common.log_error") as log:
             run_command, code = self.cocotb("test_nope")
         self.assertEqual(code, 1)
         self.assertIn("'test_nope' names no module of COCOTB_TESTS. The modules are: test_a, test_b", log.call_args[0][0])
@@ -4232,8 +4240,8 @@ class TestRegress(unittest.TestCase):
         open("runs/x/final/nl/top.nl.v", "w").write("module top; endmodule")
         self.config["PDK"] = "sky130A"
         self.config["STD_CELL_LIBRARY"] = "sky130_fd_sc_hd"
-        with patch("entrypoint.find_netlist", return_value="runs/x/final/nl/top.nl.v"), \
-             patch("entrypoint.cell_models", return_value=[]):
+        with patch("runs.find_netlist", return_value="runs/x/final/nl/top.nl.v"), \
+             patch("sim.cell_models", return_value=[]):
             run_command, code = self.cocotb("test_b", netlist="")
         self.assertIsNone(code)
         self.assertEqual(run_command.call_args_list[1][1]["env"]["MODULE"], "test_a,test_b")
@@ -4251,7 +4259,7 @@ class TestRegress(unittest.TestCase):
         with open("build/cocotb-results.xml", "w") as f:
             f.write(self.PASS_XML)
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+            site_cmd.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
         with open("build/site/index.html") as f:
             return f.read()
 
@@ -4309,7 +4317,7 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(self.site(), plain)
 
     def test_the_regression_chip_is_red_when_a_run_failed(self):
-        page = entrypoint.site_page.render("top", [], None, [], {"SOURCE_DATE_EPOCH": "0"}, regression=self.SUMMARY)
+        page = site_cmd.site_page.render("top", [], None, [], {"SOURCE_DATE_EPOCH": "0"}, regression=self.SUMMARY)
         self.assertIn('class="chip FAIL">2/4 regression runs', page)
 
     def test_a_page_with_only_a_regression_is_not_empty(self):
@@ -4317,12 +4325,12 @@ class TestRegress(unittest.TestCase):
         with open("build/regress/summary.json", "w") as f:
             json.dump(self.SUMMARY, f)
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+            site_cmd.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
         self.assertTrue(os.path.exists("build/site/index.html"))
 
     def test_the_page_escapes_what_it_did_not_write(self):
         summary = dict(self.SUMMARY, runs=[{"entry": "<b>x</b>", "seed": 1, "verdict": "fail"}])
-        page = entrypoint.site_page.render("top", [], None, [], {}, regression=summary)
+        page = site_cmd.site_page.render("top", [], None, [], {}, regression=summary)
         self.assertNotIn("<b>x</b>", page)
 
 class TestLogColor(unittest.TestCase):
@@ -4336,9 +4344,9 @@ class TestLogColor(unittest.TestCase):
             if no_color is not None:
                 os.environ["NO_COLOR"] = no_color
             with contextlib.redirect_stdout(out):
-                entrypoint.log_info("a")
-                entrypoint.log_error("b")
-                entrypoint.log_warn("c")
+                common.log_info("a")
+                common.log_error("b")
+                common.log_warn("c")
         return out.getvalue()
 
     def test_a_terminal_without_no_color_gets_codes(self):
@@ -4363,11 +4371,11 @@ class TestLoadConfigVersion(unittest.TestCase):
     def load(self, version):
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as d, patch("os.getcwd", return_value=d), \
-                patch.object(entrypoint, "c4o_version", return_value=version), \
+                patch.object(common, "c4o_version", return_value=version), \
                 contextlib.redirect_stdout(out):
             with open(os.path.join(d, "config.yaml"), "w") as f:
                 f.write("DESIGN_NAME: demo\n")
-            entrypoint.load_config()
+            common.load_config()
         return out.getvalue()
 
     def test_the_config_line_names_the_release(self):
@@ -5062,7 +5070,7 @@ class TestProgressDoesNotBreakTheFlow(unittest.TestCase):
         out = io.StringIO()
         with patch.object(progress, "watch_flow", side_effect=RuntimeError("boom")), \
                 contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
-            entrypoint.cmd_progress(args, {"DESIGN_NAME": "demo"})
+            sim.cmd_progress(args, {"DESIGN_NAME": "demo"})
         self.assertEqual(cm.exception.code, 0)
         self.assertIn("The progress display stopped (boom). LibreLane goes on. Its output: build/log/librelane.log", out.getvalue())
 
@@ -5329,7 +5337,7 @@ class TestAllCommand(unittest.TestCase):
         parser = entrypoint.build_parser()
         self.assertIs(parser.parse_args(["all"]).func, entrypoint.cmd_all)
         args = parser.parse_args(["progress", "--run-dir", "r", "--status", "s", "--log", "l", "--plan", "p"])
-        self.assertIs(args.func, entrypoint.cmd_progress)
+        self.assertIs(args.func, sim.cmd_progress)
         self.assertFalse(args.partial)
 
     def test_the_config_line_is_left_to_the_ledger(self):
@@ -5338,7 +5346,7 @@ class TestAllCommand(unittest.TestCase):
                 f.write("DESIGN_NAME: demo\n")
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                config = entrypoint.load_config(quiet=True)
+                config = common.load_config(quiet=True)
         self.assertEqual(out.getvalue(), "")
         self.assertEqual(config["DESIGN_NAME"], "demo")
 
@@ -5564,7 +5572,7 @@ class TestStagesCommand(StageCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
             args = entrypoint.build_parser().parse_args(["stages", "--run-dir", self.run, *argv])
-            entrypoint.cmd_stages(args, {"DESIGN_NAME": "demo"})
+            sim.cmd_stages(args, {"DESIGN_NAME": "demo"})
         return cm.exception.code, out.getvalue()
 
     def test_it_names_the_directory_and_how_many_pictures_there_are(self):
@@ -5620,7 +5628,7 @@ class TestSiteStages(StageCase):
         with open("build/cocotb-results.xml", "w") as f:
             f.write('<testsuites><testsuite><testcase name="t" sim_time_ns="1"/></testsuite></testsuites>')
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), config or {"DESIGN_NAME": "demo"})
+            site_cmd.cmd_site(MagicMock(), config or {"DESIGN_NAME": "demo"})
         with open("build/site/index.html") as f:
             return f.read()
 
