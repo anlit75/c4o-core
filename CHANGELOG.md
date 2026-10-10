@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.26.1](https://github.com/anlit75/c4o-core/compare/v2.26.0...v2.26.1) (2026-10-10)
+
+
+### Fixes
+
+* name the make sim ledger after make sim ([#102](https://github.com/anlit75/c4o-core/issues/102)) ([310c113](https://github.com/anlit75/c4o-core/commit/310c11379724db7e9275144fae77110f14879e75))
+
 ## [2.26.0](https://github.com/anlit75/c4o-core/compare/v2.25.0...v2.26.0) (2026-10-10)
 
 
