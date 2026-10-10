@@ -36,8 +36,8 @@ def skip_unconfigured(config, command, key, other_key):
     """
     What `--if-configured` does when its key is absent: skip and say so, unless
     the other kind of test is absent too. A repository with no test at all must
-    not pass `make all` in silence. Asked for and missing is an error, and only
-    `make all` asks for neither by name.
+    not pass `make sim` in silence. Asked for and missing is an error, and only
+    `make sim` asks for neither by name.
     """
     if not common.config_get(config, other_key):
         common.log_error(
@@ -46,6 +46,19 @@ def skip_unconfigured(config, command, key, other_key):
         )
         sys.exit(1)
     common.log_info(f"{command} skipped: {key} is not set.")
+
+def warn_waves_without_dump(test_files):
+    """
+    WAVES=1 asks for a waveform, and a Verilog testbench writes one only through
+    its own $dumpfile. Without one in TEST_FILES the run is silent about it
+    and leaves no file, so say so.
+    """
+    if os.environ.get("WAVES") == "1" and not any("$dumpfile" in common.read_text(f) for f in test_files):
+        common.log_warn(
+            "WAVES=1 writes no waveform from a Verilog testbench, and none of TEST_FILES "
+            "calls $dumpfile. Add $dumpfile and $dumpvars to the testbench. "
+            "cocotb tests write build/<DESIGN_NAME>.vcd on their own."
+        )
 
 def cmd_sim(args, config):
     # Sim needs RTL + TEST
@@ -67,6 +80,7 @@ def cmd_sim(args, config):
             )
             sys.exit(1)
         files = rtl_files + test_files
+        warn_waves_without_dump(test_files)
 
     common.ensure_build_dir()
     # iverilog -o build/sim.vvp <files> && vvp build/sim.vvp

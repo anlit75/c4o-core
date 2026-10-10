@@ -51,7 +51,13 @@ docker image inspect "$image" >/dev/null 2>&1 \
 host="$work/host"
 new_repo "$host" "$image"
 
-check "host: a bare make is 'all'" 0 "$image all" in_repo "$host" make -n
+check "host: a bare make is 'check'" 0 "$image check" in_repo "$host" make -n
+out=$(in_repo "$host" make -n 2>&1)
+if grep -qE "$image (rtl|all|lint|sim|cocotb|regress|gatesim)" <<<"$out"; then
+  fail "host: a bare make must check the config and run no tool" "$out"
+else
+  ok "host: a bare make runs no tool"
+fi
 copied=$(ls "$host"/.c4o/*.mk 2>/dev/null | wc -l)
 [ "$copied" -eq 1 ] && ok "host: one rules file in .c4o/" || fail "host: $copied rules files in .c4o/, expected 1"
 id=$(docker image inspect -f '{{.Id}}' "$image" | sed 's/sha256://')
@@ -61,11 +67,28 @@ cmp -s "$host/.c4o/$id.mk" "$repo/rules.mk" && ok "host: it is this checkout's r
 
 before=$(stat -c %Y "$host/.c4o/$id.mk")
 sleep 1
-check "host: a second make" 0 "$image lint" in_repo "$host" make -n lint
+check "host: a second make" 0 "$image rtl" in_repo "$host" make -n rtl
 [ "$(stat -c %Y "$host/.c4o/$id.mk")" = "$before" ] && ok "host: ... does not copy the rules again" \
   || fail "host: the rules were copied again on the second make"
 
 check "host: make help" 0 "Available targets:" in_repo "$host" make help
+# The new names are listed. The old ones are aliases, and the help leaves them out.
+for t in check rtl sim regress gatesim gds; do
+  check "host: make help lists $t" 0 "make $t " in_repo "$host" make help
+done
+for t in all lint synth coverage cocotb; do
+  out=$(in_repo "$host" make help 2>&1)
+  if grep -qE "^  make $t( |$)" <<<"$out"; then fail "host: make help lists the alias $t" "$out"; else ok "host: make help leaves out the alias $t"; fi
+done
+check "host: make help says how to run one test" 0 "make sim SEED=<n> TEST=<entry>" in_repo "$host" make help
+check "host: make help says how to leave out coverage" 0 "make regress COVERAGE=0" in_repo "$host" make help
+check "host: gds checks the config of the physical design flow first" 0 "$image check --for gds" in_repo "$host" make -n gds
+out=$(in_repo "$host" make -n gds 2>&1)
+if [ "$(grep -n -m1 -e 'check --for gds' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -m1 -e 'make pdk' <<<"$out" | cut -d: -f1)" ]; then
+  ok "host: ... before the PDK is installed"
+else
+  fail "host: the check of the config must come before make pdk" "$out"
+fi
 check "host: gds starts from an empty run" 0 "--overwrite" in_repo "$host" make -n gds
 check "host: gds names the run after DESIGN_NAME" 0 "--run-tag demo_run" in_repo "$host" make -n gds
 out=$(in_repo "$host" make -n gds LIBRELANE_ARGS="--from OpenROAD.Floorplan --with-initial-state x.json" 2>&1)
@@ -95,42 +118,56 @@ else
 fi
 check "host: SEED reaches the cocotb tests that gatesim runs" 0 "-e RANDOM_SEED=7 $image gatesim" \
   in_repo "$host" make -n gatesim SEED=7
-# all asks for no test kind by name, so it skips the one that is not configured.
-# Named by themselves, sim and cocotb must keep failing without their key.
-check "host: all runs sim only if configured" 0 "$image sim --if-configured" in_repo "$host" make -n all PROGRESS=raw
-check "host: all runs cocotb only if configured" 0 "$image cocotb --if-configured" in_repo "$host" make -n all PROGRESS=raw
-check "host: PROGRESS=raw runs the four commands in order" 0 "$image lint" in_repo "$host" make -n all PROGRESS=raw
-check "host: ... ending with synth" 0 "$image synth" in_repo "$host" make -n all PROGRESS=raw
-out=$(in_repo "$host" make -n sim cocotb 2>&1)
-if grep -qF "$image sim" <<<"$out" && grep -qF "$image cocotb" <<<"$out" && ! grep -qF -- "--if-configured" <<<"$out"; then
-  ok "host: sim and cocotb named by themselves do not skip"
+# gatesim reads the cell models of the PDK, wherever PDK_ROOT says the PDK is.
+check "host: gatesim mounts the PDK_ROOT it is given" 0 "-v /x:/pdks -e PDK_ROOT=/pdks" in_repo "$host" make -n gatesim PDK_ROOT=/x
+check "host: ... and mounts pdks/ of the checkout without one" 0 "-v $host/pdks:/pdks -e PDK_ROOT=/pdks" in_repo "$host" make -n gatesim
+check "host: ... and makes it first, so Docker does not make it as root" 0 "mkdir -p /x" in_repo "$host" make -n gatesim PDK_ROOT=/x
+check "host: ... and still passes SEED" 0 "-v /x:/pdks -e PDK_ROOT=/pdks -e RANDOM_SEED=7 $image gatesim" in_repo "$host" make -n gatesim PDK_ROOT=/x SEED=7
+# A run of the cocotb tests on the netlist, in a target of your own, finds the PDK
+# when it is there. When it is not, nothing is mounted, and Docker makes no directory.
+out=$(in_repo "$host" make -n cocotb 2>&1)
+if grep -qF -- ":/pdks" <<<"$out"; then fail "host: make cocotb mounts a PDK_ROOT that is not there" "$out"; else ok "host: make cocotb mounts no PDK_ROOT that is not there"; fi
+mkdir -p "$host/pdks"
+check "host: C4O_COCOTB mounts a PDK_ROOT that is there" 0 "-v $host/pdks:/pdks -e PDK_ROOT=/pdks" in_repo "$host" make -n cocotb
+rmdir "$host/pdks"
+# sim is the ledger: rtl, the config of the tests, then each kind the config lists.
+# The kinds that are not configured are skipped inside it, so make passes no flag.
+check "host: sim is one container that prints the ledger" 0 "$image all" in_repo "$host" make -n sim
+check "host: all is sim" 0 "$image all" in_repo "$host" make -n all
+out=$(in_repo "$host" make -n sim 2>&1)
+if grep -qF -- "--if-configured" <<<"$out"; then fail "host: make sim passes no --if-configured" "$out"; else ok "host: make sim passes no --if-configured"; fi
+check "host: lint is rtl" 0 "$image rtl" in_repo "$host" make -n lint
+check "host: synth is rtl" 0 "$image rtl" in_repo "$host" make -n synth
+out=$(in_repo "$host" make -n lint synth 2>&1)
+if [ "$(grep -c "$image rtl" <<<"$out")" -eq 1 ]; then ok "host: lint and synth together run rtl once"; else fail "host: make lint synth should run rtl once" "$out"; fi
+check "host: rtl runs the rtl command" 0 "$image rtl" in_repo "$host" make -n rtl
+check "host: check runs the check command" 0 "$image check" in_repo "$host" make -n check
+out=$(in_repo "$host" make -n cocotb 2>&1)
+if grep -qF "$image cocotb" <<<"$out" && ! grep -qF -- "--if-configured" <<<"$out"; then
+  ok "host: cocotb is still the Python tests alone, and does not skip"
 else
-  fail "host: make sim and make cocotb must not pass --if-configured" "$out"
+  fail "host: make cocotb should run '$image cocotb' and not pass --if-configured" "$out"
 fi
 
 # The progress ledger: make all and make gds print one line for each command or
 # stage, with the tools' own output in build/log/. Only those two.
-out=$(in_repo "$host" make -n all 2>&1)
-if grep -qF "$image all" <<<"$out" && ! grep -qE "$image (lint|sim|cocotb|synth)" <<<"$out"; then
-  ok "host: all is one container that prints the ledger"
+out=$(in_repo "$host" make -n sim 2>&1)
+if grep -qF "$image all" <<<"$out" && ! grep -qE "$image (rtl|check|sim|cocotb)" <<<"$out"; then
+  ok "host: sim is one container that prints the ledger"
 else
-  fail "host: make all should run '$image all' and not the four commands" "$out"
+  fail "host: make sim should run '$image all' and not the four commands" "$out"
 fi
-out=$(in_repo "$host" make -n all PROGRESS=raw 2>&1)
-if grep -qE "$image all( |$)" <<<"$out"; then
-  fail "host: PROGRESS=raw must run the four commands, not the ledger" "$out"
-else
-  ok "host: PROGRESS=raw does not start the ledger"
-fi
-out=$(C4O_PROGRESS=raw in_repo "$host" make -n all 2>&1)
-if grep -qF "$image lint" <<<"$out"; then ok "host: C4O_PROGRESS=raw in the environment is PROGRESS=raw"
-else fail "host: C4O_PROGRESS=raw in the environment did not give the raw output" "$out"; fi
+check "host: PROGRESS=raw reaches the ledger, which streams the tools" 0 "-e C4O_PROGRESS=raw" in_repo "$host" make -n sim PROGRESS=raw
+out=$(C4O_PROGRESS=raw in_repo "$host" make -n sim 2>&1)
+if grep -qF -- "-e C4O_PROGRESS=raw" <<<"$out"; then ok "host: C4O_PROGRESS=raw in the environment is PROGRESS=raw"
+else fail "host: C4O_PROGRESS=raw in the environment did not reach the ledger" "$out"; fi
 check "host: PROGRESS reaches the container as C4O_PROGRESS" 0 "-e C4O_PROGRESS=plain" in_repo "$host" make -n all PROGRESS=plain
-check "host: the terminal's own variables reach the container" 0 "-e NO_COLOR -e CI -e TERM -e GITHUB_ACTIONS" in_repo "$host" make -n all
-check "host: the container gets -t when make's output is a terminal" 0 'if [ -t 1 ]; then T=-t; else T=; fi' in_repo "$host" make -n all
-check "host: SEED reaches the ledger run" 0 "-e RANDOM_SEED=7" in_repo "$host" make -n all SEED=7
-check "host: TEST reaches the ledger run" 0 "-e TEST=test_a" in_repo "$host" make -n all TEST=test_a
-for t in lint sim cocotb synth regress coverage gatesim; do
+check "host: the terminal's own variables reach the container" 0 "-e NO_COLOR -e CI -e TERM -e GITHUB_ACTIONS" in_repo "$host" make -n sim
+check "host: the container gets -t when make's output is a terminal" 0 'if [ -t 1 ]; then T=-t; else T=; fi' in_repo "$host" make -n sim
+check "host: SEED reaches the ledger run" 0 "-e RANDOM_SEED=7" in_repo "$host" make -n sim SEED=7
+check "host: TEST reaches the ledger run" 0 "-e TEST=test_a" in_repo "$host" make -n sim TEST=test_a
+check "host: WAVES reaches the ledger run" 0 "-e WAVES=1" in_repo "$host" make -n sim WAVES=1
+for t in check rtl lint synth cocotb regress coverage gatesim; do
   out=$(in_repo "$host" make -n $t 2>&1)
   if grep -qF "C4O_PROGRESS" <<<"$out"; then fail "host: make $t must not start the ledger" "$out"; else ok "host: make $t prints what it always did"; fi
 done
@@ -321,26 +358,29 @@ else
   echo "skip  all: no script(1) here to give make a terminal"
 fi
 
-# coverage is a target of its own and is not part of all.
-check "host: make help lists coverage" 0 "make coverage" in_repo "$host" make help
+# coverage keeps its meaning: the coverage run alone, not regress. It is not part of sim.
 check "host: coverage runs the coverage command" 0 "$image coverage" in_repo "$host" make -n coverage
 check "host: SEED reaches the coverage run" 0 "-e RANDOM_SEED=7 $image coverage" in_repo "$host" make -n coverage SEED=7
 out=$(in_repo "$host" make -n coverage 2>&1)
+if grep -qE "$image regress" <<<"$out"; then fail "host: make coverage must not run regress" "$out"; else ok "host: make coverage does not run regress"; fi
 if grep -qF -- "--if-configured" <<<"$out"; then
   fail "host: make coverage by itself must not skip" "$out"
 else
   ok "host: make coverage by itself does not skip"
 fi
-out=$(in_repo "$host" make -n all 2>&1)
+out=$(in_repo "$host" make -n sim 2>&1)
 if grep -qF "coverage" <<<"$out"; then
-  fail "host: make all must not run coverage" "$out"
+  fail "host: make sim must not run coverage" "$out"
 else
-  ok "host: make all does not run coverage"
+  ok "host: make sim does not run coverage"
 fi
 
 # The last line of a target says what to run next. -n prints the echo, so the
 # hint shows without running anything.
+check "host: make sim points to make gds" 0 "Next: make gds turns the design into a GDSII layout" in_repo "$host" make -n sim
 check "host: make all points to make gds" 0 "Next: make gds turns the design into a GDSII layout" in_repo "$host" make -n all
+out=$(in_repo "$host" make -n all 2>&1)
+if [ "$(grep -c 'Next:' <<<"$out")" -eq 1 ]; then ok "host: make all says what comes next once"; else fail "host: make all should print one Next: hint" "$out"; fi
 check "host: make gds points to make site" 0 "Next: make site puts the results on one page" in_repo "$host" make -n gds
 out=$(in_repo "$host" make -n gds 2>&1)
 if [ "$(grep -n 'Next:' <<<"$out" | tail -1 | cut -d: -f1)" = "$(grep -c '' <<<"$out")" ]; then
@@ -348,29 +388,40 @@ if [ "$(grep -n 'Next:' <<<"$out" | tail -1 | cut -d: -f1)" = "$(grep -c '' <<<"
 else
   fail "host: the make site hint is not last in make gds" "$out"
 fi
-out=$(in_repo "$host" make -n lint 2>&1)
+out=$(in_repo "$host" make -n rtl 2>&1)
 if grep -qF "Next:" <<<"$out"; then
-  fail "host: make lint must not print a Next: hint" "$out"
+  fail "host: make rtl must not print a Next: hint" "$out"
 else
-  ok "host: make lint prints no Next: hint"
+  ok "host: make rtl prints no Next: hint"
 fi
 
-# regress is a target of its own and is not part of all.
-check "host: make help lists regress" 0 "make regress" in_repo "$host" make help
-check "host: make help says how to run one test" 0 "make cocotb SEED=<n> TEST=<entry>" in_repo "$host" make help
-check "host: regress runs the regress command" 0 "$image regress" in_repo "$host" make -n regress
-check "host: SEED reaches the regress run" 0 "-e RANDOM_SEED=7 $image regress" in_repo "$host" make -n regress SEED=7
+# regress is a target of its own and is not part of sim.
+check "host: regress runs the regress command, then coverage" 0 "$image regress --coverage" in_repo "$host" make -n regress
+check "host: SEED reaches the regress run" 0 "-e RANDOM_SEED=7 $image regress --coverage" in_repo "$host" make -n regress SEED=7
+out=$(in_repo "$host" make -n regress COVERAGE=0 2>&1)
+if grep -qF "$image regress" <<<"$out" && ! grep -qF -- "--coverage" <<<"$out"; then
+  ok "host: COVERAGE=0 leaves the coverage run out"
+else
+  fail "host: make regress COVERAGE=0 should run regress without --coverage" "$out"
+fi
+out=$(in_repo "$host" make -n regress COVERAGE=1 2>&1)
+if grep -qF -- "--coverage" <<<"$out"; then ok "host: COVERAGE=1 keeps it"; else fail "host: make regress COVERAGE=1 should keep --coverage" "$out"; fi
+if grep -qF "COVERAGE" <<<"$(in_repo "$host" make -n regress COVERAGE=0 2>&1)"; then
+  fail "host: COVERAGE is make's, and must not reach the container"
+else
+  ok "host: COVERAGE does not reach the container"
+fi
 out=$(in_repo "$host" make -n regress 2>&1)
 if grep -qF -- "--if-configured" <<<"$out"; then
   fail "host: make regress by itself must not skip" "$out"
 else
   ok "host: make regress by itself does not skip"
 fi
-out=$(in_repo "$host" make -n all 2>&1)
+out=$(in_repo "$host" make -n sim 2>&1)
 if grep -qF "regress" <<<"$out"; then
-  fail "host: make all must not run regress" "$out"
+  fail "host: make sim must not run regress" "$out"
 else
-  ok "host: make all does not run regress"
+  ok "host: make sim does not run regress"
 fi
 
 # --- what a repository adds below the include ---------------------------------
@@ -390,31 +441,40 @@ ral:
 cocotb-gl:
 	$(C4O_COCOTB) cocotb --netlist
 EOF
-check "own: a target above the include is not the default" 0 "$image all" in_repo "$own" make -n
+check "own: a target above the include is not the default" 0 "$image check" in_repo "$own" make -n
 check "own: help:: adds a line" 0 "a target of this repository" in_repo "$own" make help
 check "own: ... after the standard ones" 0 "Available targets:" in_repo "$own" make help
 check "own: c4o_tool runs an image tool" 0 "--entrypoint peakrdl $image pyuvm regs/x.rdl" in_repo "$own" make -n ral
 check "own: C4O_COCOTB is usable" 0 "$image cocotb --netlist" in_repo "$own" make -n cocotb-gl
+# A cocotb run on the netlist of its own finds the PDK when it is there.
+mkdir -p "$own/pdks"
+check "own: ... and mounts the PDK for a run on the netlist" 0 "-v $own/pdks:/pdks -e PDK_ROOT=/pdks" in_repo "$own" make -n cocotb-gl
+check "own: ... wherever PDK_ROOT is" 0 "-v $own/pdks:/pdks" in_repo "$own" make -n cocotb-gl PDK_ROOT=$own/pdks
+rmdir "$own/pdks"
 
 # --- inside the image: the rules are a local file -----------------------------
 inside="$work/inside"
 new_repo "$inside" "$image"
 chmod -R a+rwX "$inside"
 dmake() { docker run --rm -v "$inside:/w" -w /w --entrypoint make "$image" "$@"; }
-check "inside: commands call the entrypoint directly" 0 "python3 /opt/c4o-core/scripts/entrypoint.py lint" dmake -n lint
+check "inside: commands call the entrypoint directly" 0 "python3 /opt/c4o-core/scripts/entrypoint.py rtl" dmake -n lint
+check "inside: check is the entrypoint's check" 0 "python3 /opt/c4o-core/scripts/entrypoint.py check" dmake -n check
+check "inside: gds checks its own scope first" 0 "python3 /opt/c4o-core/scripts/entrypoint.py check --for gds" dmake -n gds
+check "inside: gatesim gets the PDK_ROOT of make" 0 "env PDK_ROOT=/w/pdks RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py gatesim" dmake -n gatesim SEED=7
+check "inside: ... and the one it was given" 0 "env PDK_ROOT=/x python3 /opt/c4o-core/scripts/entrypoint.py gatesim" dmake -n gatesim PDK_ROOT=/x
 check "inside: WAVES reaches the entrypoint" 0 "env WAVES=1 python3 /opt/c4o-core/scripts/entrypoint.py cocotb" dmake -n cocotb WAVES=1
 check "inside: SEED and WAVES reach the entrypoint" 0 "env RANDOM_SEED=7 WAVES=1 python3 /opt/c4o-core/scripts/entrypoint.py cocotb" \
   dmake -n cocotb SEED=7 WAVES=1
 check "inside: TEST reaches the entrypoint" 0 "env TEST=test_a.f python3 /opt/c4o-core/scripts/entrypoint.py cocotb" dmake -n cocotb TEST=test_a.f
 check "inside: SEED, WAVES and TEST reach the entrypoint" 0 "env RANDOM_SEED=7 WAVES=1 TEST=test_a python3 /opt/c4o-core/scripts/entrypoint.py cocotb" \
   dmake -n cocotb SEED=7 WAVES=1 TEST=test_a
-check "inside: SEED reaches regress" 0 "env RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py regress" dmake -n regress SEED=7
+check "inside: SEED reaches regress" 0 "env RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py regress --coverage" dmake -n regress SEED=7
 check "inside: all is the ledger, called directly" 0 "env C4O_PROGRESS= python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all
 check "inside: PROGRESS reaches the entrypoint" 0 "env C4O_PROGRESS=plain python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all PROGRESS=plain
 check "inside: SEED reaches the ledger run" 0 "env C4O_PROGRESS= RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all SEED=7
-check "inside: PROGRESS=raw runs the four commands" 0 "python3 /opt/c4o-core/scripts/entrypoint.py synth" dmake -n all PROGRESS=raw
+check "inside: PROGRESS=raw reaches the ledger" 0 "env C4O_PROGRESS=raw python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n sim PROGRESS=raw
 check "inside: gds follows the run with the entrypoint, not a second container" 0 "python3 /opt/c4o-core/scripts/entrypoint.py progress --run-dir runs/demo_run" dmake -n gds
-check "inside: coverage calls the entrypoint directly" 0 "python3 /opt/c4o-core/scripts/entrypoint.py coverage" dmake -n coverage
+check "inside: coverage calls the entrypoint's coverage" 0 "python3 /opt/c4o-core/scripts/entrypoint.py coverage" dmake -n coverage
 [ ! -e "$inside/.c4o" ] && ok "inside: nothing is copied to .c4o/" || fail "inside: .c4o/ was written inside the image"
 cat >> "$inside/Makefile" <<'EOF'
 
@@ -430,12 +490,12 @@ moving="$work/moving"
 tag="c4o-rules-test:moving-$$"
 docker tag "$image" "$tag"
 new_repo "$moving" "$tag"
-in_repo "$moving" make -n lint >/dev/null 2>&1
+in_repo "$moving" make -n rtl >/dev/null 2>&1
 first=$(ls "$moving"/.c4o/*.mk)
 # Another image under the same name: the first one plus a marker in its rules.
 printf 'FROM %s\nRUN echo "# marker-of-the-newer-image" >> /opt/c4o-core/rules.mk\n' "$image" \
   | docker build -q -t "$tag" - >/dev/null
-check "moving: make still works after the image changed" 0 "$tag lint" in_repo "$moving" make -n lint
+check "moving: make still works after the image changed" 0 "$tag rtl" in_repo "$moving" make -n rtl
 now=$(ls "$moving"/.c4o/*.mk)
 if [ "$(wc -l <<<"$now")" -eq 1 ] && [ "$now" != "$first" ] && grep -q "marker-of-the-newer-image" $now; then
   ok "moving: the rules are the newer image's, and the old copy is gone"
@@ -464,8 +524,8 @@ docker rmi -f "$oldtag" >/dev/null 2>&1
 # --- C4O_RULES: a rules file, and no Docker ------------------------------------
 override="$work/override"
 new_repo "$override" "c4o-rules-test.invalid/nope:0"
-check "C4O_RULES: works with an image that cannot be had" 0 "c4o-rules-test.invalid/nope:0 lint" \
-  in_repo "$override" make -n lint C4O_RULES="$repo/rules.mk"
+check "C4O_RULES: works with an image that cannot be had" 0 "c4o-rules-test.invalid/nope:0 rtl" \
+  in_repo "$override" make -n rtl C4O_RULES="$repo/rules.mk"
 [ ! -e "$override/.c4o" ] && ok "C4O_RULES: nothing is copied" || fail "C4O_RULES: .c4o/ was written"
 
 # --- rules.mk refuses to be included without the two image names --------------

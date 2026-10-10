@@ -72,6 +72,23 @@ def cmd_lint(args, config):
     cmd += files
     common.run_command(cmd)
 
+def cmd_compile(args, config):
+    """
+    Compiles the RTL with Icarus and runs nothing. It is the first thing in
+    `rtl` that reads the design the way the tests do: the same -g2012 as `sim`
+    and `cocotb`, so a file that fails here would have failed there.
+    """
+    files = common.get_files(args, config, key="VERILOG_FILES")
+    common.ensure_build_dir()
+
+    cmd = ["iverilog", "-g2012", "-o", "build/rtl.vvp"]
+    top = common.config_get(config, "DESIGN_NAME")
+    if top:
+        cmd += ["-s", top]
+    cmd += [f"-I{inc}" for inc in common.get_include_dirs(config)]
+    cmd += files
+    common.run_command(cmd)
+
 def cmd_synth(args, config):
     # Synth only checks RTL
     files = common.get_files(args, config, key="VERILOG_FILES")

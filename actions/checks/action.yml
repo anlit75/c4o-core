@@ -1,45 +1,78 @@
 name: c4o-core checks
 description: >
-  The checks of a push: lint, the Verilog testbenches and the Python
-  (cocotb) testbenches when config.yaml asks for them, synthesis, and the
-  schematic. Fails when config.yaml asks for neither kind of test. The cocotb
-  output is kept in build/cocotb-rtl.log. With "//REGRESSION" it also runs the
-  test list over its seeds, and keeps the output in build/regress.log.
+  The checks of a push: the config, the RTL (compile, lint, synthesis), the
+  Verilog testbenches and the Python (cocotb) testbenches when config.yaml asks
+  for them, and the schematic. Fails when config.yaml asks for neither kind of
+  test. The test output is kept in build/cocotb-rtl.log. With "//REGRESSION" it
+  also runs the test list over its seeds, and keeps the output in
+  build/regress.log. Works with the images of 2.25 and older too: it asks the
+  image which commands it has.
 runs:
   using: composite
   steps:
-    - name: Lint
+    # An image from before 2.26 has no `make check` and `make rtl`, and its
+    # `make sim` runs the Verilog testbenches only. The steps below call what
+    # the image has: the commands of 2.26 when it has them, else the ones that
+    # 2.25 and older have, as this action always did.
+    - name: Which commands the image has
+      id: image
       shell: bash
-      run: make lint
+      run: bash "$GITHUB_ACTION_PATH/image-commands.sh"
 
-    - name: Some test is configured
+    # New: `make check` is the config of every part that config.yaml asks for,
+    # and it fails when no test is configured. Old: that is tests-configured.sh.
+    - name: Configuration
       shell: bash
-      run: bash "$GITHUB_ACTION_PATH/tests-configured.sh"
-
-    # Skipped when config.yaml names no Verilog testbench, the way the cocotb
-    # step is. With the key there and no file matching it, `make sim` fails.
-    - name: Simulation
-      shell: bash
+      env:
+        NEW_COMMANDS: ${{ steps.image.outputs.new }}
       run: |
-        if ! grep -q '^"//TEST_FILES":' config.yaml; then
-          echo "config.yaml has no //TEST_FILES, so there are no Verilog testbenches to run."
-          exit 0
+        if [ "$NEW_COMMANDS" = true ]; then
+          make check
+        else
+          bash "$GITHUB_ACTION_PATH/tests-configured.sh"
         fi
-        make sim
 
-    # Skipped when config.yaml does not ask for Python testbenches: the key's
-    # presence is the opt-in. If it is there and matches no files, `make
-    # cocotb` fails, which is correct.
-    - name: cocotb tests
+    # New: `make rtl` is the compile, lint and synthesis. Old: the same three
+    # things were `make lint` and `make synth`.
+    - name: RTL
       shell: bash
+      env:
+        NEW_COMMANDS: ${{ steps.image.outputs.new }}
       run: |
-        if ! grep -q '^"//COCOTB_TESTS":' config.yaml; then
-          echo "config.yaml has no //COCOTB_TESTS, so there are no Python testbenches to run."
-          exit 0
+        if [ "$NEW_COMMANDS" = true ]; then
+          make rtl
+        else
+          make lint
+          make synth
         fi
+
+    # New: `make sim` runs both kinds of test and skips the kind that
+    # config.yaml does not list. PROGRESS=raw, so that the cocotb summary line
+    # the report action reads is in the log. Old: a Verilog testbench and the
+    # Python testbenches were two steps, each skipped without its key. The key's
+    # presence is the opt-in, and with the key there and no file matching it the
+    # command fails, which is correct.
+    - name: Tests
+      shell: bash
+      env:
+        NEW_COMMANDS: ${{ steps.image.outputs.new }}
+      run: |
         mkdir -p build
         set -o pipefail
-        make cocotb 2>&1 | tee build/cocotb-rtl.log
+        if [ "$NEW_COMMANDS" = true ]; then
+          make sim PROGRESS=raw 2>&1 | tee build/cocotb-rtl.log
+        else
+          if grep -q '^"//TEST_FILES":' config.yaml; then
+            make sim
+          else
+            echo "config.yaml has no //TEST_FILES, so there are no Verilog testbenches to run."
+          fi
+          if grep -q '^"//COCOTB_TESTS":' config.yaml; then
+            make cocotb 2>&1 | tee build/cocotb-rtl.log
+          else
+            echo "config.yaml has no //COCOTB_TESTS, so there are no Python testbenches to run."
+          fi
+        fi
 
     # always() so a failing test is shown too: that is when the table is worth
     # opening. Gated on the file, so a run that crashed before writing it has
@@ -52,6 +85,9 @@ runs:
 
     # Skipped when config.yaml names no test list, the way the cocotb step is.
     # With the key there, `make regress` fails on a bad list or a failed run.
+    # COVERAGE=0: the report action runs the coverage when a caller asks for it
+    # in `sections`, and a new image alone changes nothing in a caller's CI. An
+    # image that does not know COVERAGE ignores it.
     - name: Regression
       shell: bash
       run: |
@@ -61,17 +97,13 @@ runs:
         fi
         mkdir -p build
         set -o pipefail
-        make regress 2>&1 | tee build/regress.log
+        make regress COVERAGE=0 2>&1 | tee build/regress.log
 
     # always() for the same reason: a failed run is when the table matters.
     - name: Regression results on the summary page
       if: always() && hashFiles('build/regress/summary.json') != ''
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/regress-summary.sh"
-
-    - name: Logic synthesis
-      shell: bash
-      run: make synth
 
     - name: Schematic
       shell: bash

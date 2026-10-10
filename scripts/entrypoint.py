@@ -13,10 +13,21 @@ from c4o import runs
 from c4o import sim
 from c4o import site
 
+def cmd_rtl(args, config):
+    """
+    The checks of the RTL, in the order a mistake costs the least: the config
+    for the RTL, an Icarus compile, Verilator lint, then Yosys generic synthesis.
+    """
+    check.cmd_check(argparse.Namespace(files=getattr(args, "files", None), scope="rtl"), config)
+    rtl.cmd_compile(args, config)
+    rtl.cmd_lint(args, config)
+    rtl.cmd_synth(args, config)
+
 def cmd_all(args, config):
     """
-    lint, sim, cocotb and synth, one line each, and the reason when one fails.
-    Their own output is in build/log/<command>.log; PROGRESS=raw streams it.
+    rtl, the config for the tests, sim and cocotb, one line each, and the reason
+    when one fails. `make sim` runs this. Their own output is in
+    build/log/<command>.log; PROGRESS=raw streams it.
     """
     design = common.config_get(config, "DESIGN_NAME") or "design"
     try:
@@ -62,13 +73,20 @@ def build_parser():
     sim_parser.add_argument("--files", nargs="*", help="Verilog files to simulate")
     sim_parser.add_argument(
         "--if-configured", action="store_true",
-        help="Skip, with a message, when TEST_FILES is not set (used by make all)",
+        help="Skip, with a message, when TEST_FILES is not set (used by make sim)",
     )
     sim_parser.set_defaults(func=sim.cmd_sim)
 
+    # Rtl command
+    rtl_parser = subparsers.add_parser(
+        "rtl", help="Check the RTL: config, Icarus compile, Verilator lint, Yosys synthesis"
+    )
+    rtl_parser.add_argument("--files", nargs="*", help="Verilog files to check")
+    rtl_parser.set_defaults(func=cmd_rtl)
+
     # All command
     all_parser = subparsers.add_parser(
-        "all", help="Run lint, sim, cocotb and synth and print one line for each"
+        "all", help="Run rtl, then the Verilog and cocotb tests the config lists, and print one line for each"
     )
     all_parser.set_defaults(func=cmd_all)
 
@@ -120,7 +138,7 @@ def build_parser():
     )
     cocotb_parser.add_argument(
         "--if-configured", action="store_true",
-        help="Skip, with a message, when COCOTB_TESTS is not set (used by make all)",
+        help="Skip, with a message, when COCOTB_TESTS is not set (used by make sim)",
     )
     cocotb_parser.set_defaults(func=sim.cmd_cocotb)
 
@@ -131,6 +149,10 @@ def build_parser():
     regress_parser.add_argument(
         "--if-configured", action="store_true",
         help="Skip, with a message, when REGRESSION is not set",
+    )
+    regress_parser.add_argument(
+        "--coverage", action="store_true",
+        help="After the runs passed, measure coverage of the same list (the coverage command)",
     )
     regress_parser.set_defaults(func=regress.cmd_regress)
 
@@ -163,9 +185,6 @@ def build_parser():
     synth_parser.add_argument("--files", nargs="*", help="Verilog files to synthesize")
     synth_parser.set_defaults(func=rtl.cmd_synth)
 
-    # Check command. 'gds' is kept as an alias: it is what this command was
-    # called before, and dropping it would break every pinned caller for a
-    # rename.
     schematic_parser = subparsers.add_parser(
         "schematic",
         help="Draw the circuit as build/schematic.svg (RTL level, not the netlist)",
@@ -175,8 +194,11 @@ def build_parser():
 
     check_parser = subparsers.add_parser(
         "check",
-        aliases=["gds"],
-        help="Validate the config for the physical design flow (pre-flight only)",
+        help="Validate the config (pre-flight only): every scope the config asks for, or one",
+    )
+    check_parser.add_argument(
+        "--for", dest="scope", choices=list(check.SCOPES),
+        help="Only the checks that this command needs: rtl, sim, regress, gatesim or gds",
     )
     check_parser.set_defaults(func=check.cmd_check)
 

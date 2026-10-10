@@ -1,5 +1,5 @@
 """
-The progress ledger of `make all` and `make gds`.
+The progress ledger of `make sim` and `make gds`.
 
 Both commands used to be the raw output of their tools: 510 lines for `all`,
 9,500 for `gds`, with the verdicts somewhere inside. Here the raw output goes to
@@ -150,7 +150,7 @@ def fmt_time(x):
 # ---------------------------------------------------------------- the rows
 
 def ledger_row(style, kind, name, text, name_width=7):
-    """`  ok    lint    verilator, no warnings`: one command of `make all`."""
+    """`  ok    rtl     verilator, no warnings`: one command of `make sim`."""
     return f"  {style.mark(kind)} {name.ljust(name_width)} {text}".rstrip()
 
 def stage_row(style, kind, stage, count, secs, width, extra=""):
@@ -291,9 +291,11 @@ def group_raw(env, title, path, out):
     out.write("::endgroup::\n")
     out.flush()
 
-# ---------------------------------------------------------------- make all
+# ---------------------------------------------------------------- make sim
 
-ALL_STEPS = ("lint", "sim", "cocotb", "synth")
+# What `make sim` runs: the RTL checks, the config of the tests, then each kind
+# of test the config lists. `check` here is `check --for sim`.
+ALL_STEPS = ("rtl", "check", "sim", "cocotb")
 
 def summarize_cocotb(log_text, results_path, cwd=None):
     """
@@ -405,10 +407,10 @@ def error_lines(log_text):
 
 def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sleep=time.sleep):
     """
-    lint, sim, cocotb and synth in this order, each as the command it is on its
+    rtl, check, sim and cocotb in this order, each as the command it is on its
     own, with its output in build/log/<command>.log. Returns the exit status of
-    the first that failed, or 0. A command that is not configured says so and
-    counts as passed, as `make all` always has.
+    the first that failed, or 0. A kind of test that is not configured says so
+    and counts as passed. Neither kind configured is `check`'s error.
     """
     env = dict(os.environ if env is None else env)
     out = out or sys.stdout
@@ -472,6 +474,8 @@ def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sl
 
 def command_of(entry, step):
     cmd = [sys.executable, entry, step]
+    if step == "check":
+        cmd += ["--for", "sim"]
     if step in ("sim", "cocotb"):
         cmd.append("--if-configured")
     return cmd
@@ -486,8 +490,10 @@ def read_text(path):
 def summarize_step(step, text, spent, style):
     """(state, what the ledger says) for a command that exited 0."""
     sep = style.sep
-    if step == "lint":
-        return "ok", f"{lint_text(text)}{sep}{fmt_time(spent)}"
+    if step == "rtl":
+        return "ok", sep.join(p for p in (lint_text(text), synth_text(text), fmt_time(spent)) if p)
+    if step == "check":
+        return "ok", f"tests configured{sep}{fmt_time(spent)}"
     if step in ("sim", "cocotb"):
         why = skip_reason(text, step)
         if why:
@@ -501,7 +507,6 @@ def summarize_step(step, text, spent, style):
             parts.append(f"seed {info['seed']}")
         parts.append(fmt_time(spent))
         return "ok", sep.join(parts)
-    return "ok", sep.join(p for p in (synth_text(text), fmt_time(spent)) if p)
 
 def failed_text(step, text, spent, style):
     """What the ledger says of a command that failed: for cocotb, how many tests did."""

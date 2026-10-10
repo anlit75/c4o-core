@@ -41,17 +41,20 @@ The Python entrypoint of the engine has these commands:
 | `lint` | Runs the Verilator lint checks on `VERILOG_FILES` with the flags of LibreLane's lint step, so both report the same warnings. A warning does not fail it. A latch or a signal with more than one driver does. |
 | `sim` | Compiles `VERILOG_FILES` and `TEST_FILES` with Icarus Verilog and runs the simulation. |
 | `cocotb` | Runs cocotb tests on `VERILOG_FILES` and `COCOTB_TESTS`. The tests are Python coroutines that drive the RTL. `--netlist` runs the same tests on the synthesised gates. `WAVES=1` also writes `build/<DESIGN_NAME>.vcd`. |
-| `regress` | Runs the tests of the `//REGRESSION` list over many seeds. Prints the command that replays each failed run. Writes `build/regress/`. |
+| `regress` | Runs the tests of the `//REGRESSION` list over many seeds. Prints the command that replays each failed run. Writes `build/regress/`. `--coverage` then runs `coverage` on the same list, when every run passed. |
 | `coverage` | Runs the `COCOTB_TESTS` again on Verilator and measures block, branch and toggle coverage. Writes `build/coverage/`. It does not decide pass or fail. |
 | `gatesim` | Simulates the **synthesised netlist** with the PDK cell models, on `GATE_TESTS`. Without `GATE_TESTS`, it runs the `COCOTB_TESTS` on the netlist. |
 | `synth` | Runs logic synthesis with Yosys on `VERILOG_FILES` only. Writes `build/synthesis.json`. The script is fixed: see [docs/commands.md](docs/commands.md#synth-and-systemverilog-in-every-command). |
 | `schematic` | Draws the circuit as `build/schematic.svg`. It shows the RTL as written, not the synthesised netlist. |
 | `pdk` | Installs and enables the Sky130 PDK with Ciel, into `$PDK_ROOT`. Without `$PDK_ROOT`, it uses `./pdks`. |
-| `check` | Checks the configuration for the physical design flow, values included. It makes no layout: LibreLane does that. `gds` is an alias. |
+| `rtl` | Checks the RTL. It runs `check --for rtl`, an Icarus compile, `lint` and `synth`, in that order. Writes `build/rtl.vvp` and `build/synthesis.json`. |
+| `check` | Checks the configuration, values included. It builds nothing and runs no tool. `--for rtl`, `sim`, `regress`, `gatesim` or `gds` checks one part. Without `--for`, it checks every part that the config asks for. |
 | `report` | Prints a summary of the last LibreLane run: area, timing, power and the signoff result. |
 | `site` | Writes `build/site/`, one results page for GitHub Pages. The page shows the tests, timing, area, power and signoff of what was run before it. |
 
 [docs/commands.md](docs/commands.md) tells you more about each command, and the reasons.
+
+A repository made from the template calls them through `make`: `make check`, `make rtl`, `make sim`, `make regress` and `make gds`. [docs/makefile.md](docs/makefile.md) lists the targets and the older names that still work.
 
 The CI of a repository made from the ChipForAll template is here too, as actions that its workflow calls: [docs/actions.md](docs/actions.md). The rules of its Makefile are here too: [docs/makefile.md](docs/makefile.md).
 

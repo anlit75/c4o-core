@@ -236,21 +236,39 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test synth
           ls -l build/synthesis.json
 
+      # `rtl` is the config, an Icarus compile, Verilator lint and Yosys, one
+      # after the other. Its compile is the one that wrote build/rtl.vvp.
+      - name: Run RTL check (Config)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace \
+            --entrypoint rm c4o-core:test -f build/rtl.vvp build/synthesis.json
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test rtl
+          ls -l build/rtl.vvp build/synthesis.json
+
+      # No test is configured in this config.json, so a check of every scope
+      # stops at the tests, and a check of the RTL alone does not.
+      - name: A check without a scope asks for a test
+        run: |
+          out=$(! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check)
+          echo "$out"
+          echo "$out" | grep -qF "No tests to run" || { echo "check did not ask for a test"; exit 1; }
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check --for rtl
+
       - name: Run pre-flight check (Config)
         run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check --for gds
 
       # The checks that make 'check' worth running before a three-minute
       # LibreLane run rather than after it. Each is the mistake it names.
       - name: A DESIGN_NAME that names no module fails the pre-flight check
         run: |
           echo '{"DESIGN_NAME": "my_cpu", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
-          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check --for gds
 
       - name: A DIE_AREA with no area fails the pre-flight check
         run: |
           echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 0", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
-          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
+          ! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check --for gds
 
       # The sizing swap, both halves. Relative sizing is what a newcomer wants
       # -- the die resizes itself around whatever design they put in -- and
@@ -258,10 +276,10 @@ jobs:
       - name: Relative sizing needs FP_CORE_UTIL, not DIE_AREA
         run: |
           echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "FP_CORE_UTIL": 40, "FP_SIZING": "relative", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
-          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check --for gds
 
           echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "FP_SIZING": "relative", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
-          out=$(! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check)
+          out=$(! docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check --for gds)
           echo "$out"
           echo "$out" | grep -qF "FP_CORE_UTIL" || { echo "the refusal did not name the key that is missing"; exit 1; }
 
@@ -270,7 +288,7 @@ jobs:
       - name: A CLOCK_PORT absent from the RTL warns but still passes
         run: |
           echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "wall_clock", "CLOCK_PERIOD": 10.0}' > config.json
-          out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check)
+          out=$(docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check --for gds)
           echo "$out"
           echo "$out" | grep -qF "wall_clock" || { echo "no warning named the port"; exit 1; }
           echo "$out" | grep -qF "verified" || { echo "a warning must not fail the check"; exit 1; }
@@ -279,11 +297,14 @@ jobs:
         run: |
           echo '{"DESIGN_NAME": "counter", "VERILOG_FILES": ["tests/smoke/counter.v"], "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": "0 0 100 100", "FP_CORE_UTIL": 40, "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}' > config.json
 
-      # 'check' was called 'gds' until it was renamed for not producing one.
-      # The old name stays reachable so pinned callers keep working.
-      - name: The gds alias still reaches the same command
+      # `check` was called `gds` until 2.26. The name is gone, so a caller
+      # that still runs it learns that, and the same check is `check --for gds`.
+      - name: The gds alias is gone, and check --for gds is what replaced it
         run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gds
+          if docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test gds >/dev/null 2>&1; then
+            echo "gds still runs, but the alias was removed"; exit 1
+          fi
+          docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test check --for gds
 
       - name: Verify PDK Command Interface
         run: |
@@ -327,7 +348,7 @@ jobs:
 
       - name: Run all checks (YAML config)
         run: |
-          for cmd in lint synth sim check; do
+          for cmd in lint synth sim "check --for gds"; do
             docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test $cmd
           done
 
@@ -761,8 +782,8 @@ jobs:
           echo "$out" | grep -qF "GATE_TESTS" || { echo "the message does not name GATE_TESTS"; exit 1; }
           echo "$out" | grep -qF "COCOTB_TESTS" || { echo "the message does not name COCOTB_TESTS"; exit 1; }
 
-      # What `make all` runs, one command at a time, because there is no make in
-      # the image. tests/test_rules.sh checks that `make all` passes these flags.
+      # What `make sim` runs, one command at a time, because there is no make in
+      # the image. The ledger passes these flags to the same commands.
       - name: all runs the Python tests alone, skips the missing kind, fails on neither
         run: |
           run() { docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/gl2 "$@"; }

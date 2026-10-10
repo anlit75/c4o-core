@@ -43,7 +43,7 @@ async def reset_clears_the_count(dut):
 
 `DESIGN_NAME` is the module cocotb drives, so no testbench wrapper is needed.
 
-`sim` and `cocotb` both accept `--if-configured`. The command then skips, with a message, when its own key is not set. `make all` uses it. It fails when neither `"//TEST_FILES"` nor `"//COCOTB_TESTS"` is set. Without the flag, a missing key is always an error.
+`sim` and `cocotb` both accept `--if-configured`. The command then skips, with a message, when its own key is not set. `make sim` uses it. It fails when neither `"//TEST_FILES"` nor `"//COCOTB_TESTS"` is set. Without the flag, a missing key is always an error.
 
 ### Running one module or one test
 
@@ -92,7 +92,9 @@ The two runs keep separate verdicts, `build/cocotb-results.xml` and
 
 ### The waveform of a cocotb run
 
-`make cocotb WAVES=1` writes `build/<DESIGN_NAME>.vcd` from the RTL run. The signal names start at the design: `counter.count`. Without `WAVES=1` nothing is dumped. The `--netlist` run never dumps. `site` does not read the file.
+`make sim WAVES=1` writes `build/<DESIGN_NAME>.vcd` from the RTL run, and so does `make cocotb WAVES=1`. The signal names start at the design: `counter.count`. Without `WAVES=1` nothing is dumped. The `--netlist` run never dumps. `site` does not read the file.
+
+A Verilog testbench writes a waveform only when it calls `$dumpfile` itself. With `WAVES=1` and no `$dumpfile` in any file of `"//TEST_FILES"`, `sim` prints a warning and writes no file.
 
 ## Many seeds (regress)
 
@@ -129,13 +131,15 @@ make cocotb SEED=910098751 TEST=test_blinky_random
 | `<entry>-<seed>.xml` | The cocotb results of one run. |
 | `summary.json` | The base seed, each run with its entry, seed and verdict (`pass` or `fail`), and the totals. |
 
-The directory is emptied at the start of every run. `--if-configured` skips, with a message, when `"//REGRESSION"` is not set. Without the flag, a missing key is an error. `make all` does not run `regress`. `site` adds a Regression section when `summary.json` exists.
+The directory is emptied at the start of every run. `--if-configured` skips, with a message, when `"//REGRESSION"` is not set. Without the flag, a missing key is an error. `make sim` does not run `regress`. `site` adds a Regression section when `summary.json` exists.
+
+`--coverage` runs `coverage` on the same list after the last run, when every run passed. It sets the base seed of the list for that run, so both use the same seeds. A failed run skips it. `make regress` passes the flag, and `make regress COVERAGE=0` does not.
 
 ## Code coverage (coverage)
 
 `coverage` shows how much of the RTL the Python tests run. It runs the `"//COCOTB_TESTS"` again on Verilator, with coverage counters in the model. Icarus has no code coverage.
 
-It reads the same config as `cocotb`. It also applies `LINTER_DISABLE_WARNINGS`, because Verilator stops at a warning when it builds the design. It accepts `--if-configured`, as `cocotb` does. `make all` does not run it.
+It reads the same config as `cocotb`. It also applies `LINTER_DISABLE_WARNINGS`, because Verilator stops at a warning when it builds the design. It accepts `--if-configured`, as `cocotb` does. `make sim` does not run it. `make regress` runs it after the list, and `make coverage` runs it alone.
 
 | Kind | What it counts |
 |---|---|
@@ -150,7 +154,7 @@ The verdict stays with `cocotb`, which runs on Icarus. Verilator is 2-state, so 
 
 A line counts as not reached when a line point or a branch point on it was not hit. A signal that never toggled does not add a line. The Toggle row and the module table show it.
 
-`make coverage SEED=<n>` sets the seed, as `make cocotb SEED=<n>` does. The `report` action passes the base seed of the regression when `build/regress/summary.json` exists, and the seed of the RTL run otherwise. The page says which seed the coverage run used.
+`make coverage SEED=<n>` sets the seed, as `make cocotb SEED=<n>` does. `make regress SEED=<n>` sets the seed of both parts. The `report` action passes the base seed of the regression when `build/regress/summary.json` exists, and the seed of the RTL run otherwise. The page says which seed the coverage run used.
 
 With `"//REGRESSION"` set, the command measures the runs of `regress` instead. Verilator builds the design once. Then it simulates each entry and seed, with the same list and the same seeds as `regress` for one base seed. The runs are `run-<n>.dat` in the order of the list, and the command merges them. Failed tests still do not fail the command. `summary.json` then holds the base seed as `seed` and the number of runs as `runs`.
 
@@ -178,7 +182,7 @@ STD_CELL_LIBRARY: sky130_fd_sc_hd
 
 Without `"//GATE_TESTS"`, `gatesim` runs the `"//COCOTB_TESTS"` on the netlist. That is the run of `cocotb --netlist`, with the same verdict file. With neither key it fails and names both.
 
-It reads the netlist of `runs/<DESIGN_NAME>_run/`, and [fails when that run is older than the RTL](#is-it-the-run-of-this-rtl). It derives the cell models from `PDK` and `STD_CELL_LIBRARY`, so there is no third key to disagree with those two. Set `PDK_ROOT` if the PDK lives outside `./pdks`. The `pdk` command installs where it points, so one copy can serve several checkouts.
+It reads the netlist of `runs/<DESIGN_NAME>_run/`, and [fails when that run is older than the RTL](#is-it-the-run-of-this-rtl). It derives the cell models from `PDK` and `STD_CELL_LIBRARY`, so there is no third key to disagree with those two. Set `PDK_ROOT` if the PDK lives outside `./pdks`. The `pdk` command installs where it points, so one copy can serve several checkouts. `make gatesim` mounts `PDK_ROOT` into its container, wherever it is. A target of your own can use `$(C4O_GATES)` for the same mount.
 
 **The gate-level testbench has to be a separate file from the RTL one.**
 Synthesis resolves parameters. So a testbench that shrinks the design by overriding a parameter has nothing left to override. Overriding a parameter is the usual trick for keeping simulations short. Drive the real ports at their real width.
@@ -221,20 +225,20 @@ one of them instead, run yosys yourself and name it.
 
 `schematic` writes SVG and not the JSON, on purpose. A file that every browser and editor opens beats one that needs a particular extension installed.
 
-## The progress ledger (all and gds)
+## The progress ledger (sim and gds)
 
-`make all` and `make gds` do not show the output of the tools. They show a ledger, one line for each command or stage, and write the output to `build/log/`. [The Makefile rules](makefile.md#what-make-all-and-make-gds-print) say how to choose between `raw`, `plain` and `tty`.
+`make sim` and `make gds` do not show the output of the tools. They show a ledger, one line for each command or stage, and write the output to `build/log/`. [The Makefile rules](makefile.md#what-make-sim-and-make-gds-print) say how to choose between `raw`, `plain` and `tty`.
 
 ```console
-$ make all PROGRESS=plain
-c4o all, blinky, c4o-core 2.24.0
-  ok   lint    verilator, no warnings, 0.3 s
+$ make sim PROGRESS=plain
+c4o all, blinky, c4o-core 2.26.0
+  ok   rtl     verilator, no warnings, yosys 0.33, 54 cells, 0.5 s
+  ok   check   tests configured, 0.3 s
   skip sim     skipped: TEST_FILES is not set
-  ok   cocotb  5/5 passed, seed 1791475212, 23.0 s
-  ok   synth   yosys 0.33, 54 cells, 2.3 s
+  ok   cocotb  5/5 passed, seed 1791614587, 17.8 s
 ```
 
-`c4o-core all` runs the four commands and times them itself. A command that is not configured says so and counts as passed. The first command that fails stops the run, and the commands after it are listed as not run.
+`c4o-core all` is what `make sim` runs. It runs `rtl`, `check --for sim`, `sim` and `cocotb`, and times them itself. A kind of test that is not configured says so and counts as passed. The first command that fails stops the run, and the commands after it are listed as not run.
 
 A failed cocotb test gets its name, the file and line of the assertion, and the message. It also gets a command that runs only that test with the same seed. The line `[ERROR] cocotb tests failed: <names>` stays in the output. `build/cocotb-results.xml` has the verdicts.
 
@@ -258,49 +262,47 @@ A stage is `failed` when one of its steps never wrote its `state_out.json`. That
 
 The ledger ends with one line, `Stages      build/stages/ (5 renders)`. `PROGRESS=raw` prints no such line.
 
-## Before the physical flow (check)
+## Checking the config (check)
 
-`check` is the pre-flight for the physical design flow. It reads values, not
-just key names, because the mistakes worth catching are all in the values:
+`check` reads `config.yaml` and the files it names, and runs no tool. It reads values, not just key names, because the mistakes worth catching are all in the values:
 
 ```console
-$ c4o-core check
+$ c4o-core check --for rtl
 [ERROR] DESIGN_NAME is 'my_cpu', but no module by that name is declared in
         VERILOG_FILES. Declared there: counter.
 ```
 
-That is the first wall anyone hits after putting their own design into a
-template. Without this it surfaces minutes later, as a Yosys error about a
-module it cannot find, or as a LibreLane run that dies partway through.
+That is the first wall anyone hits after putting their own design into a template. Without this check it surfaces later. It is a Yosys error about a module it cannot find, or a LibreLane run that dies partway through.
 
-Three checks, and the third is deliberately weaker than the other two:
+`--for` limits the check to the part that one command needs. Without it, `check` covers every part that the config asks for. `make rtl`, `make sim` and `make gds` each run their own part first.
 
-| Check | On failure |
-|---|---|
-| `DESIGN_NAME` names a module declared in `VERILOG_FILES` | **error** |
-| `DIE_AREA` is four numbers, second corner larger | **error** |
-| `CLOCK_PORT` appears somewhere in `VERILOG_FILES` | **warning** |
+| Part | What it checks | Includes |
+|---|---|---|
+| `rtl` | `VERILOG_FILES` matches files. `DESIGN_NAME` is set and is a module declared there. `CLOCK_PORT` appears in the RTL, as a **warning**. | |
+| `sim` | At least one of `"//TEST_FILES"` and `"//COCOTB_TESTS"` is set. Every pattern of both matches a file. | `rtl` |
+| `regress` | `"//REGRESSION"` is set and `"//COCOTB_TESTS"` too. The list file reads, parses and names tests of `"//COCOTB_TESTS"`. | `sim` |
+| `gatesim` | `"//GATE_TESTS"` or `"//COCOTB_TESTS"` is set, and its patterns match files. | |
+| `gds` | The keys of the physical design flow are set, and `DIE_AREA` is four numbers. | `rtl` |
 
-Which floorplan key is *required* follows `FP_SIZING`: `absolute` needs
-`DIE_AREA`, `relative` needs `FP_CORE_UTIL` and never reads `DIE_AREA`.
-Demanding both refused a config LibreLane would have run. `DIE_AREA` is still
-checked whenever it is present, since LibreLane checks its shape either way.
+Without `--for`, a part is left out when the config does not ask for it. `regress` is left out without `"//REGRESSION"`. `gatesim` is left out without either gate-level key. `gds` is left out when the config has none of `PDK`, `STD_CELL_LIBRARY`, `FP_SIZING`, `CLOCK_PERIOD`, `DIE_AREA` and `FP_CORE_UTIL`. With one of them, `gds` checks them all. Each skip prints a line that says why.
 
-**A false alarm here is worse than no check**, because it blocks a design that
-would have built. So only the two things decidable without parsing Verilog
-properly are errors. Proving a name really *is* a port means reading a port
-list. A port list spans lines, carries attributes, and can come out of a macro. Without a parser, one thing can be said: a name that is absent from the RTL entirely is not
-a port of it. That is the typo that the warning catches:
+`check --for gds` was called `gds` until 2.26. The old name is gone.
+
+Which floorplan key is *required* follows `FP_SIZING`: `absolute` needs `DIE_AREA`, `relative` needs `FP_CORE_UTIL` and never reads `DIE_AREA`. Demanding both refused a config LibreLane would have run. `DIE_AREA` is still checked whenever it is present, since LibreLane checks its shape either way.
+
+**A false alarm here is worse than no check**, because it blocks a design that would have built. So only what is decidable without parsing Verilog is an error. Proving a name really *is* a port means reading a port list. A port list spans lines, carries attributes, and can come out of a macro. Without a parser, one thing can be said: a name that is absent from the RTL entirely is not a port of it. That is the typo that the warning catches:
 
 ```console
 [WARN] CLOCK_PORT is 'wall_clock', which does not appear anywhere in
        VERILOG_FILES. The flow will not find a clock to constrain.
-[INFO] Configuration verified for the physical design flow.
-[INFO] This step builds no layout. LibreLane does that.
+[INFO] Configuration verified for the RTL.
 ```
 
-Module detection strips comments first, so a commented-out module does not
-count as one.
+Module detection strips comments first, so a commented-out module does not count as one.
+
+## Checking the RTL (rtl)
+
+`rtl` runs `check --for rtl`, then an Icarus compile of `VERILOG_FILES`, then `lint`, then `synth`. It stops at the first one that fails. The compile uses `-g2012`, as `sim` does, and writes `build/rtl.vvp`. It runs no simulation. The lint and the synthesis are the commands of the same names, with their own rules.
 
 ## Reading a finished run
 
