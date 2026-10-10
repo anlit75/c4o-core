@@ -371,7 +371,7 @@ jobs:
       # "Permission denied", because build/ is created inside the container as
       # root by the earlier steps, so the stub netlist never existed and
       # gatesim refused for having no netlist rather than no cell models.
-      # Hence runs/ rather than build/runs/ -- gatesim searches both, and this
+      # Hence runs/ rather than build/runs/ -- gatesim reads <DESIGN_NAME>_run in both, and this
       # one the runner can actually create.
       # A gate test key is set, so the refusal can only be about the netlist:
       # with no key at all, gatesim stops earlier and names the keys instead.
@@ -395,7 +395,7 @@ jobs:
 
       - name: gatesim refuses when the cell models are absent
         run: |
-          mkdir -p runs/r/final/nl && touch runs/r/final/nl/counter.nl.v
+          mkdir -p runs/counter_run/final/nl && touch runs/counter_run/final/nl/counter.nl.v
           mkdir -p gate && printf 'module tb_gl; endmodule\n' > gate/tb_gl.v
           cat > config.yaml <<'EOF'
           DESIGN_NAME: counter
