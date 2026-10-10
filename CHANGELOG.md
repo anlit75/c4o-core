@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.25.0](https://github.com/anlit75/c4o-core/compare/v2.24.0...v2.25.0) (2026-10-10)
+
+
+### Features
+
+* render each stage of the flow and show it on the results page ([#97](https://github.com/anlit75/c4o-core/issues/97)) ([75ce308](https://github.com/anlit75/c4o-core/commit/75ce308a26bfe3e44d9ed58b5295d931bc22aa78))
+* show a progress ledger for make all and make gds ([#95](https://github.com/anlit75/c4o-core/issues/95)) ([faad779](https://github.com/anlit75/c4o-core/commit/faad779f581df90025b045a56ebdadbbf8f0c08e))
+
 ## [2.24.0](https://github.com/anlit75/c4o-core/compare/v2.23.0...v2.24.0) (2026-10-08)
 
 
