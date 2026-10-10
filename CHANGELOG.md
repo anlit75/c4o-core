@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.26.0](https://github.com/anlit75/c4o-core/compare/v2.25.0...v2.26.0) (2026-10-10)
+
+
+### Features
+
+* catch results from a run older than the RTL ([#100](https://github.com/anlit75/c4o-core/issues/100)) ([4355c41](https://github.com/anlit75/c4o-core/commit/4355c41589b2861c15ae1bfbc6bda2388dad854e))
+* regroup the make commands around check, rtl, sim and gds ([#101](https://github.com/anlit75/c4o-core/issues/101)) ([9667b7c](https://github.com/anlit75/c4o-core/commit/9667b7c992c4a41fe0453e0d8b2e87e71580bd59))
+
+
+### Refactoring
+
+* split entrypoint.py into a c4o package ([#98](https://github.com/anlit75/c4o-core/issues/98)) ([01608ab](https://github.com/anlit75/c4o-core/commit/01608ab2e36393a5dcc6338bd643f86678fefc6e))
+
 ## [2.25.0](https://github.com/anlit75/c4o-core/compare/v2.24.0...v2.25.0) (2026-10-10)
 
 
