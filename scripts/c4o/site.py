@@ -7,12 +7,12 @@ import sys
 from datetime import timezone
 from xml.etree import ElementTree
 
-import site_page
-import stage_renders
-import common
-import regress
-import report
-import runs
+from c4o import site_page
+from c4o import stage_renders
+from c4o import common
+from c4o import regress
+from c4o import report
+from c4o import runs
 
 # One page with what `report` prints, the layout and every
 # cocotb verdict, for publishing on GitHub Pages. Everything it needs is copied

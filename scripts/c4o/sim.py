@@ -4,11 +4,11 @@ import subprocess
 import sys
 from xml.etree import ElementTree
 
-import progress
-import stage_renders
-import common
-import report
-import runs
+from c4o import progress
+from c4o import stage_renders
+from c4o import common
+from c4o import report
+from c4o import runs
 
 def root_args(config, test_files, key):
     """

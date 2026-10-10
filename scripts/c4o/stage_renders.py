@@ -21,8 +21,8 @@ import json
 import os
 import shutil
 
-import progress
-import stages
+from c4o import progress
+from c4o import stages
 
 OUT = os.path.join("build", "stages")
 RENDER_KEYS = (("KLAYOUT_RENDER_GRID_VISBLE", "--grid-visible", False),

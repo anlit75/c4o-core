@@ -242,7 +242,7 @@ A failed cocotb test gets its name, the file and line of the assertion, and the 
 
 The total in `step 24 of 76` is the number of steps LibreLane will run for your config. `make gds` asks for it before the flow, with `gating_config_vars` of LibreLane's `Classic` flow. That is not a documented interface. When it fails, the ledger counts steps and shows no total. It shows no total when `LIBRELANE_ARGS` has `--from`, `--to`, `--skip`, `-F`, `-T` or `--only`.
 
-The seven stages are in `scripts/stages.py`. A stage starts at its first step. A step that the table does not know belongs to the stage that is running.
+The seven stages are in `scripts/c4o/stages.py`. A stage starts at its first step. A step that the table does not know belongs to the stage that is running.
 
 Ctrl-C stops LibreLane. The ledger then says at which step it stopped and prints the command that resumes there.
 
@@ -252,7 +252,7 @@ After the flow, `make gds` draws one picture of each stage that has a layout. Th
 
 This also runs after a flow that failed, and draws what is there. A picture that cannot be drawn is a stage without one. It does not fail `make gds`.
 
-`build/stages/stages.json` has one entry for each stage. It holds the name and description from `scripts/stages.py`, the first and last step, the picture or `null`, the step the picture follows and a short explanation for the page. The seconds are the sum of the `runtime.txt` of the steps. The status is `ok`, `failed` or `not reached`.
+`build/stages/stages.json` has one entry for each stage. It holds the name and description from `scripts/c4o/stages.py`, the first and last step, the picture or `null`, the step the picture follows and a short explanation for the page. The seconds are the sum of the `runtime.txt` of the steps. The status is `ok`, `failed` or `not reached`.
 
 A stage is `failed` when one of its steps never wrote its `state_out.json`. That includes a signoff check that fails with a deferred error. There the flow runs to the end and `final/` exists.
 

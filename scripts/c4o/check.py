@@ -1,7 +1,7 @@
 import re
 import sys
 
-import common
+from c4o import common
 
 def declared_modules(paths):
     """

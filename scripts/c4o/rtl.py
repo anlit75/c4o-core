@@ -1,6 +1,6 @@
 import sys
 
-import common
+from c4o import common
 
 def disable_warnings(config):
     """

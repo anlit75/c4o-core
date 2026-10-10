@@ -10,10 +10,10 @@ from xml.etree import ElementTree
 
 import yaml
 
-import site_page
-import common
-import rtl
-import sim
+from c4o import site_page
+from c4o import common
+from c4o import rtl
+from c4o import sim
 
 # What `coverage` writes. Everything under here is rebuilt on each run.
 COVERAGE_DIR = "build/coverage"

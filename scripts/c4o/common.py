@@ -167,7 +167,7 @@ def c4o_version():
     /opt/c4o-core, or None. Found from this file, not from the working directory,
     which is the user's design.
     """
-    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
     try:
         with open(os.path.join(root, "version.txt")) as f:
             return f.read().strip() or None

@@ -3,14 +3,14 @@ import argparse
 import os
 import sys
 
-import progress
-import check
-import common
-import regress
-import report
-import rtl
-import sim
-import site_cmd
+from c4o import progress
+from c4o import check
+from c4o import common
+from c4o import regress
+from c4o import report
+from c4o import rtl
+from c4o import sim
+from c4o import site
 
 def cmd_all(args, config):
     """
@@ -182,7 +182,7 @@ def build_parser():
     site_parser = subparsers.add_parser(
         "site", help="Write build/site/index.html: cocotb results, timing, area, power, signoff"
     )
-    site_parser.set_defaults(func=site_cmd.cmd_site)
+    site_parser.set_defaults(func=site.cmd_site)
 
     # PDK command
     pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via Ciel")

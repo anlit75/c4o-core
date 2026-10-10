@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-import common
+from c4o import common
 
 # LibreLane writes the synthesised netlist under final/nl/. ChipForAll then
 # moves the whole run into build/, so look in both places.

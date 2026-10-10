@@ -4,9 +4,9 @@ import os
 import re
 import sys
 
-import site_page
-import common
-import runs
+from c4o import site_page
+from c4o import common
+from c4o import runs
 
 # The manufacturability checks LibreLane's Classic flow runs after routing.
 # Every one of them errors the flow by default (ERROR_ON_MAGIC_DRC and friends

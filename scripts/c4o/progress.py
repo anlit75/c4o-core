@@ -40,7 +40,7 @@ import sys
 import time
 from xml.etree import ElementTree
 
-import stages
+from c4o import stages
 
 LOG_DIR = os.path.join("build", "log")
 
