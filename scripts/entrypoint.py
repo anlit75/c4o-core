@@ -9,6 +9,7 @@ from c4o import common
 from c4o import regress
 from c4o import report
 from c4o import rtl
+from c4o import runs
 from c4o import sim
 from c4o import site
 
@@ -109,12 +110,23 @@ def build_parser():
     stages_parser.add_argument("--quiet", action="store_true", help="Print nothing (PROGRESS=raw)")
     stages_parser.set_defaults(func=sim.cmd_stages)
 
+    # Stamp and fresh: what `make gds` runs to know whether a run is current
+    stamp_parser = subparsers.add_parser(
+        "stamp", help="Record the hash of the RTL and config in the run (started by make gds)"
+    )
+    stamp_parser.set_defaults(func=runs.cmd_stamp)
+
+    fresh_parser = subparsers.add_parser(
+        "fresh", help="Exit 0 when the run was made from this RTL and config (started by make gds)"
+    )
+    fresh_parser.set_defaults(func=runs.cmd_fresh)
+
     # Cocotb command
     cocotb_parser = subparsers.add_parser(
         "cocotb", help="Run cocotb (Python) tests against the RTL"
     )
     cocotb_parser.add_argument("--files", nargs="*", help="Verilog RTL files")
-    # Bare --netlist means "the newest one", the same default gatesim takes.
+    # Bare --netlist means "this design's run", the same default gatesim takes.
     # Absent is RTL; present with no value is the empty string, which find_netlist
     # reads as "go and look".
     cocotb_parser.add_argument(
@@ -122,7 +134,7 @@ def build_parser():
         nargs="?",
         const="",
         help="Drive the synthesised netlist instead of the RTL "
-             "(default: the newest under runs/ or build/runs/)",
+             "(default: the one in runs/<DESIGN_NAME>_run)",
     )
     cocotb_parser.add_argument(
         "--if-configured", action="store_true",
@@ -164,7 +176,7 @@ def build_parser():
     gatesim_parser.add_argument(
         "netlist",
         nargs="?",
-        help="Path to the netlist (default: the newest under runs/ or build/runs/)",
+        help="Path to the netlist (default: the one in runs/<DESIGN_NAME>_run)",
     )
     gatesim_parser.set_defaults(func=sim.cmd_gatesim)
 
@@ -197,7 +209,7 @@ def build_parser():
     report_parser.add_argument(
         "metrics",
         nargs="?",
-        help="Path to metrics.json (default: the newest under runs/ or build/runs/)",
+        help="Path to metrics.json (default: the one in runs/<DESIGN_NAME>_run)",
     )
     report_parser.set_defaults(func=report.cmd_report)
 
@@ -222,7 +234,7 @@ def main():
     args = parser.parse_args()
     # The ledger opens with the release and the design, so it does not need the
     # line that says which config was read.
-    args.func(args, common.load_config(quiet=args.command in ("all", "progress", "stages")))
+    args.func(args, common.load_config(quiet=args.command in ("all", "progress", "stages", "fresh", "stamp")))
 
 if __name__ == "__main__":
     main()

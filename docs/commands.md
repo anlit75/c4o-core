@@ -182,7 +182,7 @@ STD_CELL_LIBRARY: sky130_fd_sc_hd
 
 Without `"//GATE_TESTS"`, `gatesim` runs the `"//COCOTB_TESTS"` on the netlist. That is the run of `cocotb --netlist`, with the same verdict file. With neither key it fails and names both.
 
-It finds the newest netlist under `runs/` or `build/runs/`. It derives the cell models from `PDK` and `STD_CELL_LIBRARY`, so there is no third key to disagree with those two. Set `PDK_ROOT` if the PDK lives outside `./pdks`. The `pdk` command installs where it points, so one copy can serve several checkouts. `make gatesim` mounts `PDK_ROOT` into its container, wherever it is. A target of your own can use `$(C4O_GATES)` for the same mount.
+It reads the netlist of `runs/<DESIGN_NAME>_run/`, and [fails when that run is older than the RTL](#is-it-the-run-of-this-rtl). It derives the cell models from `PDK` and `STD_CELL_LIBRARY`, so there is no third key to disagree with those two. Set `PDK_ROOT` if the PDK lives outside `./pdks`. The `pdk` command installs where it points, so one copy can serve several checkouts. `make gatesim` mounts `PDK_ROOT` into its container, wherever it is. A target of your own can use `$(C4O_GATES)` for the same mount.
 
 **The gate-level testbench has to be a separate file from the RTL one.**
 Synthesis resolves parameters. So a testbench that shrinks the design by overriding a parameter has nothing left to override. Overriding a parameter is the usual trick for keeping simulations short. Drive the real ports at their real width.
@@ -332,8 +332,19 @@ $ c4o-core report
 Those are one example design's numbers, from one PDK version. The lines are
 what to read.
 
-With no argument it takes the newest `metrics.json` under `runs/` or
-`build/runs/`. Name a file to pick a different run. It leaves out a row that it has no metric for. It does not print a blank or a zero.
+With no argument it takes the `metrics.json` of `runs/<DESIGN_NAME>_run/`, the run that `make gds` makes. A run of another design in `runs/` is not read, however new it is. Name a file to pick a different run. It leaves out a row that it has no metric for. It does not print a blank or a zero.
+
+### Is it the run of this RTL?
+
+After a full run, `make gds` writes `c4o-inputs.sha256` into `runs/<DESIGN_NAME>_run/`. Its first line is a hash of `config.yaml`, of the files in `VERILOG_FILES` and of the files in `VERILOG_INCLUDE_DIRS`. It also covers every file that a key of `config.yaml` points at with `dir::`, such as an SDC file or a macro. A directory counts as the files under it. Keys that start with `//` are left out, so editing a testbench does not make a layout stale. The modification time does not count, so `git checkout` does not change the answer.
+
+`report` and `gatesim` compare that hash with the files in your directory before they read the run. When the two differ, they fail and tell you to run `make gds`. A run made by an older c4o-core has no hash. That is a warning, not an error, because the run may well be current.
+
+`gatesim <path>` and `report <path>` do not compare anything. You named the file, so they use it. `site` never fails on an old run. It builds the page and marks the layout as older than the RTL. The mark is a chip and a line that names `make gds`.
+
+`make gds` uses the same hash. When it matches, `make gds` skips LibreLane and prints the report. `make gds FORCE=1` runs the flow anyway. The stamp also names the LibreLane image and the c4o-core release that made the run. Only `make gds` compares those two, because `report` and `gatesim` do not see the image name. When either one changed, `make gds` runs the flow.
+
+A partial run (`LIBRELANE_ARGS` with `--from`, `--to`, `--skip` or `--only`) always runs. It removes the hash and does not write a new one. The run is then a mix of old and new steps that no input set describes. `report` and `gatesim` warn about it until the next full `make gds`. After `make clean`, `make gds` runs again, because `build/<DESIGN_NAME>.gds` is gone.
 
 ### Can it be made?
 
@@ -384,7 +395,7 @@ It is informational and never fails, because closing timing is iterative and Lib
 
 `site` puts the cocotb results, the run's numbers and the layout render on one page, `build/site/index.html`. The cocotb results are `build/cocotb-results.xml`, and `build/cocotb-gl-results.xml` from a `--netlist` run. The directory is the whole site. Upload it with `actions/upload-pages-artifact` and GitHub Pages serves it.
 
-Each part appears when the file behind it exists, so the page works after `cocotb` alone. Until a run directory exists, the heading says what `make gds` adds. The directory is emptied first, so a render from an earlier run cannot be published under a later one.
+`site` reads the run of `runs/<DESIGN_NAME>_run/`. Each part appears when the file behind it exists, so the page works after `cocotb` alone. Until a run directory exists, the heading says what `make gds` adds. The directory is emptied first, so a render from an earlier run cannot be published under a later one.
 
 Each cocotb table carries the run's seed, which reproduces a failure the page shows. The heading says when the page was built (`SOURCE_DATE_EPOCH` pins it). On GitHub Actions it also links the commit and the run. That needs `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY`, `GITHUB_SHA` and `GITHUB_RUN_ID` in the container, which `docker run` passes only with `-e`.
 

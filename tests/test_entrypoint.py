@@ -974,34 +974,194 @@ class TestEntrypoint(unittest.TestCase):
             c4o.runs.find_render(os.path.join(stray, "metrics.json"))
         )
 
-    def test_find_metrics_picks_the_newest_run(self):
+    def _run_of(self, tag, rtl="module a; endmodule\n", stamp=True, config=None):
+        """A finished run of `tag` under runs/, stamped with the inputs written here."""
+        config = config or {"DESIGN_NAME": "a", "VERILOG_FILES": ["dir::rtl/a.v"]}
+        os.makedirs("rtl", exist_ok=True)
+        with open("rtl/a.v", "w") as f:
+            f.write(rtl)
+        with open("config.yaml", "w") as f:
+            f.write("DESIGN_NAME: a\n")
+        run = os.path.join("runs", tag)
+        os.makedirs(os.path.join(run, "final", "nl"))
+        for name in ("final/metrics.json", "final/nl/a.nl.v"):
+            with open(os.path.join(run, name), "w") as f:
+                f.write("{}")
+        if stamp:
+            with patch("c4o.common.log_info"):
+                c4o.runs.cmd_stamp(MagicMock(), config)
+        return config, run
+
+    def _in_test_dir(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
-        try:
-            for tag, mtime in (("old_run", 1_000_000), ("new_run", 2_000_000)):
-                path = os.path.join("build", "runs", tag, "final")
-                os.makedirs(path)
-                metrics = os.path.join(path, "metrics.json")
-                with open(metrics, "w") as f:
-                    f.write("{}")
-                os.utime(metrics, (mtime, mtime))
+        self.addCleanup(os.chdir, cwd)
 
-            self.assertIn("new_run", c4o.runs.find_metrics(None))
-            # An explicit path always wins.
-            self.assertEqual(c4o.runs.find_metrics("named.json"), "named.json")
-        finally:
-            os.chdir(cwd)
+    def test_find_metrics_takes_the_run_of_this_design_not_the_newest(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        other = os.path.join("runs", "b_run", "final")
+        os.makedirs(other)
+        with open(os.path.join(other, "metrics.json"), "w") as f:
+            f.write("{}")
+        os.utime(os.path.join(other, "metrics.json"), (4_000_000_000, 4_000_000_000))
+
+        self.assertEqual(c4o.runs.find_metrics(None, config), os.path.join(run, "final", "metrics.json"))
+        # An explicit path always wins, and is not checked.
+        self.assertEqual(c4o.runs.find_metrics("named.json", config), "named.json")
 
     def test_find_metrics_errors_when_no_run_exists(self):
-        cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        try:
-            with self.assertRaises(SystemExit) as cm:
-                c4o.runs.find_metrics(None)
+        self._in_test_dir()
+        with self.assertRaises(SystemExit) as cm:
+            c4o.runs.find_metrics(None, {"DESIGN_NAME": "a"})
+        self.assertEqual(cm.exception.code, 1)
 
+    def test_a_run_made_from_other_rtl_is_an_error_that_names_make_gds(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        with open("rtl/a.v", "w") as f:
+            f.write("module a; wire x; endmodule\n")
+        for find, explicit in ((c4o.runs.find_metrics, "m.json"), (c4o.runs.find_netlist, "n.v")):
+            with patch("c4o.common.log_error") as log, self.assertRaises(SystemExit) as cm:
+                find(None, config)
             self.assertEqual(cm.exception.code, 1)
-        finally:
-            os.chdir(cwd)
+            self.assertIn("make gds", log.call_args[0][0])
+            # Named on the command line: not checked.
+            self.assertEqual(find(explicit, config), explicit)
+
+    def test_a_run_made_from_other_config_is_stale_too(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        with open("config.yaml", "a") as f:
+            f.write("CLOCK_PERIOD: 5\n")
+        self.assertEqual(c4o.runs.freshness(run, config), "stale")
+
+    def test_a_run_made_from_these_inputs_is_found_without_a_word(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        with patch("c4o.common.log_warn") as warn, patch("c4o.common.log_error") as error:
+            found = c4o.runs.find_netlist(None, config)
+        self.assertEqual(found, os.path.join(run, "final", "nl", "a.nl.v"))
+        warn.assert_not_called()
+        error.assert_not_called()
+
+    def test_a_run_without_a_hash_is_a_warning_not_an_error(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run", stamp=False)
+        with patch("c4o.common.log_warn") as warn:
+            found = c4o.runs.find_metrics(None, config)
+        self.assertTrue(found.endswith("metrics.json"))
+        self.assertIn("make gds", warn.call_args[0][0])
+
+    def test_the_hash_does_not_depend_on_modification_time(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        os.utime("rtl/a.v", (4_000_000_000, 4_000_000_000))
+        self.assertEqual(c4o.runs.freshness(run, config), "fresh")
+
+    def test_a_file_a_key_points_at_is_an_input(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        os.makedirs("pnr/inc")
+        for path in ("pnr/a.sdc", "pnr/inc/h.vh", "tb_x.py"):
+            open(path, "w").write("1")
+        config.update({"PNR_SDC_FILE": "dir::pnr/a.sdc", "VERILOG_INCLUDE_DIRS": ["dir::pnr/inc"],
+                       "//COCOTB_TESTS": ["dir::tb_*.py"]})
+        with patch("c4o.common.log_info"):
+            c4o.runs.cmd_stamp(MagicMock(), config)
+        self.assertEqual(c4o.runs.freshness(run, config), "fresh")
+        # (a) a constraint file, and a file in an include directory
+        for path in ("pnr/a.sdc", "pnr/inc/h.vh"):
+            open(path, "w").write("2")
+            self.assertEqual(c4o.runs.freshness(run, config), "stale", path)
+            open(path, "w").write("1")
+            self.assertEqual(c4o.runs.freshness(run, config), "fresh", path)
+        # (b) a file of a '//' key is the testbench's, not the layout's
+        open("tb_x.py", "w").write("changed")
+        self.assertEqual(c4o.runs.freshness(run, config), "fresh")
+
+    def test_a_directory_a_key_points_at_counts_as_the_files_under_it(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        os.makedirs("macros/sub")
+        open("macros/sub/m.lef", "w").write("1")
+        config["MACROS"] = {"m": {"lef": ["dir::macros"]}}
+        with patch("c4o.common.log_info"):
+            c4o.runs.cmd_stamp(MagicMock(), config)
+        open("macros/sub/m.lef", "w").write("2")
+        self.assertEqual(c4o.runs.freshness(run, config), "stale")
+
+    def test_another_librelane_image_or_release_reruns_the_flow_but_not_report(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run", stamp=False)
+        os.makedirs("build")
+        open("build/a.gds", "w").close()
+        with patch.dict(os.environ, {"LIBRELANE_IMAGE": "librelane:3.0.14"}), \
+             patch("c4o.common.c4o_version", return_value="2.26.0"), patch("c4o.common.log_info"):
+            c4o.runs.cmd_stamp(MagicMock(), config)
+            self.assertTrue(open(os.path.join(run, c4o.runs.INPUTS_FILE)).read().endswith(
+                "librelane_image=librelane:3.0.14\nc4o_core=2.26.0\n"))
+            c4o.runs.cmd_fresh(MagicMock(), config)  # the same flow: nothing to redo
+        # (c) the image moved: fresh says rerun. report reads the file hash only.
+        with patch.dict(os.environ, {"LIBRELANE_IMAGE": "librelane:3.0.15"}), \
+             patch("c4o.common.c4o_version", return_value="2.26.0"), patch("c4o.common.log_info"):
+            with self.assertRaises(SystemExit):
+                c4o.runs.cmd_fresh(MagicMock(), config)
+        with patch.dict(os.environ, {}, clear=False) as env, patch("c4o.common.log_warn") as warn, \
+             patch("c4o.common.log_error") as error:
+            env.pop("LIBRELANE_IMAGE", None)
+            self.assertTrue(c4o.runs.find_metrics(None, config).endswith("metrics.json"))
+        warn.assert_not_called()
+        error.assert_not_called()
+        # the release moved
+        with patch.dict(os.environ, {"LIBRELANE_IMAGE": "librelane:3.0.14"}), \
+             patch("c4o.common.c4o_version", return_value="2.27.0"), patch("c4o.common.log_info"):
+            with self.assertRaises(SystemExit):
+                c4o.runs.cmd_fresh(MagicMock(), config)
+
+    def test_a_stamp_of_one_line_still_reads_and_does_not_force_a_rerun(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")  # stamped; keep only the hash line
+        path = os.path.join(run, c4o.runs.INPUTS_FILE)
+        first = open(path).readline()
+        open(path, "w").write(first)
+        os.makedirs("build")
+        open("build/a.gds", "w").close()
+        with patch.dict(os.environ, {"LIBRELANE_IMAGE": "x"}), patch("c4o.common.log_info"):
+            c4o.runs.cmd_fresh(MagicMock(), config)
+        self.assertEqual(c4o.runs.freshness(run, config), "fresh")
+
+    def test_fresh_needs_the_stamp_and_the_gds_in_build(self):
+        self._in_test_dir()
+        config, run = self._run_of("a_run")
+        with self.assertRaises(SystemExit) as cm:  # no build/a.gds: make clean ran
+            c4o.runs.cmd_fresh(MagicMock(), config)
+        self.assertEqual(cm.exception.code, 1)
+        os.makedirs("build")
+        open("build/a.gds", "w").close()
+        c4o.runs.cmd_fresh(MagicMock(), config)  # returns: exit 0
+        with open("rtl/a.v", "w") as f:
+            f.write("module a; wire x; endmodule\n")
+        with self.assertRaises(SystemExit):
+            c4o.runs.cmd_fresh(MagicMock(), config)
+
+    def test_a_stale_run_is_marked_on_the_page_and_the_site_still_builds(self):
+        self._in_test_dir()
+        shutil.copytree(self.RUN_FIXTURE, "runs")
+        os.makedirs("rtl")
+        with open("rtl/blinky.v", "w") as f:
+            f.write("module blinky; endmodule\n")
+        config = {"DESIGN_NAME": "blinky", "VERILOG_FILES": ["dir::rtl/blinky.v"]}
+        with patch("c4o.common.log_info"):
+            c4o.runs.cmd_stamp(MagicMock(), config)
+        self.assertNotIn("older than the RTL", self._site(config))
+        shutil.rmtree("build/site")
+        with open("rtl/blinky.v", "w") as f:
+            f.write("module blinky; wire changed; endmodule\n")
+        page = self._site(config)
+        self.assertIn("Layout is older than the RTL", page)
+        self.assertIn("make gds", page)
+
 
     # --- cocotb: vvp exits 0 even when every test failed ---
 
@@ -1253,7 +1413,7 @@ class TestEntrypoint(unittest.TestCase):
 
     def _gl_workspace(self):
         """A workspace with a netlist and the two cell-model files."""
-        nl = os.path.join(self.test_dir, "build/runs/r/final/nl")
+        nl = os.path.join(self.test_dir, "build/runs/top_run/final/nl")
         models = os.path.join(self.test_dir, "pdks/sky130A/libs.ref/sky130_fd_sc_hd/verilog")
         gate = os.path.join(self.test_dir, "gate")
         for d in (nl, models, gate):
@@ -1356,9 +1516,9 @@ class TestEntrypoint(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            self.assertEqual(c4o.runs.find_netlist("named.v"), "named.v")
+            self.assertEqual(c4o.runs.find_netlist("named.v", {}), "named.v")
             with self.assertRaises(SystemExit) as cm:
-                c4o.runs.find_netlist(None)
+                c4o.runs.find_netlist(None, {"DESIGN_NAME": "top"})
             self.assertEqual(cm.exception.code, 1)
         finally:
             os.chdir(cwd)
@@ -2244,7 +2404,7 @@ class TestEntrypoint(unittest.TestCase):
         shutil.copy("runs/blinky_run/final/metrics.json", "runs/other/metrics.json")
         os.makedirs("runs/other/nl")
         open("runs/other/nl/blinky.nl.v", "w").close()
-        with patch.object(c4o.runs, "METRICS_GLOBS", ["runs/other/metrics.json"]):
+        with patch.object(c4o.runs, "locate", return_value=("runs/other", "runs/other/metrics.json")):
             page = self._site()
         self.assertNotIn("blinky.nl.v", page)
         self.assertFalse(os.path.exists("build/site/blinky.nl.v"))

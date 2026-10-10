@@ -333,7 +333,7 @@ def cmd_report(args, config):
     Informational only. It does not fail on a timing violation: closing timing
     is iterative, and LibreLane does not treat it as fatal either.
     """
-    path = runs.find_metrics(getattr(args, "metrics", None))
+    path = runs.find_metrics(getattr(args, "metrics", None), config)
     rows = report_rows(read_metrics(path), path)
 
     if not rows:

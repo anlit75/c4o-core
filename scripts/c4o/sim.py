@@ -168,7 +168,7 @@ def cmd_gatesim(args, config):
         )
         sys.exit(1)
 
-    netlist = runs.find_netlist(getattr(args, "netlist", None))
+    netlist = runs.find_netlist(getattr(args, "netlist", None), config)
     common.log_info(f"Netlist: {netlist}")
 
     common.ensure_build_dir()
@@ -265,7 +265,7 @@ def cmd_cocotb(args, config):
     if os.path.exists(results):
         os.remove(results)  # never report a previous run's verdict
 
-    netlist = runs.find_netlist(args.netlist or None) if gate_level else None
+    netlist = runs.find_netlist(args.netlist or None, config) if gate_level else None
     compile_cocotb(args, config, toplevel, vvp_file, netlist)
 
     env, lib_dir = cocotb_env(test_files, toplevel, results)
