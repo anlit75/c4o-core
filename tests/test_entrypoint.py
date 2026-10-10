@@ -12,11 +12,20 @@ import html
 from unittest.mock import patch, MagicMock
 
 # Add scripts/ to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
 import entrypoint
-import progress
-import stage_renders
-import stages
+import c4o.check
+import c4o.common
+import c4o.progress
+import c4o.regress
+import c4o.report
+import c4o.rtl
+import c4o.runs
+import c4o.sim
+import c4o.site
+import c4o.site_page
+import c4o.stage_renders
+import c4o.stages
 
 class TestEntrypoint(unittest.TestCase):
     def setUp(self):
@@ -48,9 +57,9 @@ class TestEntrypoint(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_lint(self, mock_ensure, mock_load, mock_run):
         mock_load.return_value = self.config
 
@@ -60,7 +69,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_lint(args, self.config)
+            c4o.rtl.cmd_lint(args, self.config)
 
             call_args = mock_run.call_args[0][0]
             self.assertEqual(call_args[0], "verilator")
@@ -75,9 +84,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim(self, mock_ensure, mock_load, mock_run):
         mock_load.return_value = self.config
         cwd = os.getcwd()
@@ -86,7 +95,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_sim(args, self.config)
+            c4o.sim.cmd_sim(args, self.config)
 
             calls = mock_run.call_args_list
             compile_cmd = calls[0][0][0]
@@ -104,9 +113,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_synth(self, mock_ensure, mock_load, mock_run):
         mock_load.return_value = self.config
         cwd = os.getcwd()
@@ -115,7 +124,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_synth(args, self.config)
+            c4o.rtl.cmd_synth(args, self.config)
 
             call_args = mock_run.call_args[0][0]
             self.assertEqual(call_args[0], "yosys")
@@ -133,9 +142,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim_librelane_dialect(self, mock_ensure, mock_load, mock_run):
         # A config written the way LibreLane expects: 'dir::' paths, and the
         # key LibreLane does not own hidden behind a '//' prefix so that its
@@ -153,7 +162,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_sim(args, config)
+            c4o.sim.cmd_sim(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertTrue(any("src/top.v" in arg for arg in compile_cmd))
@@ -164,9 +173,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_blank_cli_files_does_not_shadow_config(self, mock_ensure, mock_load, mock_run):
         # An empty --files used to win over the config file, leaving the tool
         # with no inputs at all.
@@ -176,7 +185,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = [""]
 
-            entrypoint.cmd_lint(args, self.config)
+            c4o.rtl.cmd_lint(args, self.config)
 
             call_args = mock_run.call_args[0][0]
             self.assertTrue(any("src/top.v" in arg for arg in call_args))
@@ -184,9 +193,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_lint_silences_the_warnings_the_config_names(self, mock_ensure, mock_load, mock_run):
         # Generated RTL trips warnings that are about the generator, not the
         # design. Without this the config could say so and lint would refuse
@@ -200,7 +209,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_lint(args, config)
+            c4o.rtl.cmd_lint(args, config)
 
             call_args = mock_run.call_args[0][0]
             self.assertIn("-Wno-WIDTHEXPAND", call_args)
@@ -209,9 +218,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_lint_runs_with_librelanes_flags_and_default_waivers(self, mock_ensure, mock_load, mock_run):
         # make lint and LibreLane's lint step must report the same warnings.
         # LibreLane runs -Wall without failing on a warning, waives
@@ -225,7 +234,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_lint(args, self.config)
+            c4o.rtl.cmd_lint(args, self.config)
 
             call_args = mock_run.call_args[0][0]
             for flag in ("--Wall", "--Wno-fatal", "-Wno-DECLFILENAME", "-Wno-EOFNEWLINE",
@@ -236,9 +245,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_lint_does_not_turn_a_waived_code_back_into_an_error(self, mock_ensure, mock_load, mock_run):
         # -Werror-LATCH after -Wno-LATCH would bring the warning back. A config
         # that waives LATCH (third-party RTL) or turns the error off gets
@@ -252,7 +261,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_lint(args, config)
+            c4o.rtl.cmd_lint(args, config)
 
             call_args = mock_run.call_args[0][0]
             self.assertIn("-Wno-LATCH", call_args)
@@ -264,9 +273,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_lint_rejects_one_warning_written_without_its_brackets(self, mock_ensure, mock_load, mock_run):
         # A bare string is iterable, so this would otherwise spell out
         # -Wno-W -Wno-I -Wno-D ... and verilator would reject flags nobody
@@ -283,7 +292,7 @@ class TestEntrypoint(unittest.TestCase):
             # log_error prints to stdout, so that is where the refusal lands.
             out = io.StringIO()
             with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
-                entrypoint.cmd_lint(args, config)
+                c4o.rtl.cmd_lint(args, config)
 
             self.assertIn("LINTER_DISABLE_WARNINGS", out.getvalue())
             mock_run.assert_not_called()
@@ -300,19 +309,19 @@ class TestEntrypoint(unittest.TestCase):
             with open("config.yaml", "w") as f:
                 f.write("DESIGN_NAME: from_yaml\nVERILOG_FILES:\n  - dir::src/*.v\n")
 
-            config = entrypoint.load_config()
+            config = c4o.common.load_config()
             self.assertEqual(config["DESIGN_NAME"], "from_yaml")
             self.assertEqual(config["VERILOG_FILES"], ["dir::src/*.v"])
 
             os.remove("config.yaml")
-            self.assertEqual(entrypoint.load_config()["DESIGN_NAME"], "from_json")
+            self.assertEqual(c4o.common.load_config()["DESIGN_NAME"], "from_json")
 
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_check_missing_rtl(self, mock_ensure, mock_load, mock_run):
         # Config with required GDS keys but missing RTL files
         gds_config = {
@@ -345,7 +354,7 @@ class TestEntrypoint(unittest.TestCase):
 
             # Should exit with code 1 due to no matching files
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_check(args, gds_config)
+                c4o.check.cmd_check(args, gds_config)
 
             self.assertEqual(cm.exception.code, 1)
 
@@ -354,9 +363,9 @@ class TestEntrypoint(unittest.TestCase):
 
     # --- sim must never pass without actually simulating something ---
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim_errors_when_test_files_match_nothing(self, mock_ensure, mock_load, mock_run):
         # This used to be a warning: sim compiled the RTL alone and exited 0,
         # so a renamed directory or a typo left CI green with nothing verified.
@@ -370,7 +379,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
 
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(args, config)
+                c4o.sim.cmd_sim(args, config)
 
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
@@ -378,9 +387,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim_errors_without_a_testbench(self, mock_ensure, mock_load, mock_run):
         config = {k: v for k, v in self.config.items() if k != "TEST_FILES"}
         mock_load.return_value = config
@@ -392,7 +401,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
 
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(args, config)
+                c4o.sim.cmd_sim(args, config)
 
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
@@ -400,9 +409,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim_requires_a_top_for_several_testbenches(self, mock_ensure, mock_load, mock_run):
         # Icarus roots every uninstantiated module, and the first $finish ends
         # the run -- so the second testbench was cut off mid-way, silently.
@@ -417,7 +426,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
 
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(args, self.config)
+                c4o.sim.cmd_sim(args, self.config)
 
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
@@ -425,9 +434,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim_top_selects_the_root(self, mock_ensure, mock_load, mock_run):
         with open(os.path.join(self.test_dir, "test/other_tb.v"), "w") as f:
             f.write("module other_tb; endmodule")
@@ -442,7 +451,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
 
-            entrypoint.cmd_sim(args, config)
+            c4o.sim.cmd_sim(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertIn("-s", compile_cmd)
@@ -462,9 +471,9 @@ class TestEntrypoint(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            with patch("entrypoint.run_command") as run:
+            with patch("c4o.common.run_command") as run:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    entrypoint.cmd_schematic(args, config)
+                    c4o.rtl.cmd_schematic(args, config)
             cmd = run.call_args[0][0]
         finally:
             os.chdir(cwd)
@@ -505,7 +514,7 @@ class TestEntrypoint(unittest.TestCase):
         script = self._schematic_script(self.config)
 
         self.assertIn("-viewer none", script)
-        self.assertIn(f"-prefix {entrypoint.SCHEMATIC_PREFIX}", script)
+        self.assertIn(f"-prefix {c4o.rtl.SCHEMATIC_PREFIX}", script)
 
     def test_schematic_ignores_testbenches(self):
         # A testbench in the picture is noise, and TEST_FILES is in the config
@@ -541,7 +550,7 @@ class TestEntrypoint(unittest.TestCase):
         out = io.StringIO()
         try:
             with contextlib.redirect_stdout(out):
-                entrypoint.cmd_check(args, config)
+                c4o.check.cmd_check(args, config)
         finally:
             os.chdir(cwd)
             # Kept on the instance so a test that expects a refusal can still
@@ -624,7 +633,7 @@ class TestEntrypoint(unittest.TestCase):
         with open(path, "w") as f:
             f.write("// module ghost;\n/* module phantom; */\nmodule real_one; endmodule\n")
 
-        self.assertEqual(entrypoint.declared_modules([path]), {"real_one"})
+        self.assertEqual(c4o.check.declared_modules([path]), {"real_one"})
 
     def test_check_says_it_built_no_layout(self):
         # `gds` is an alias of check and exits 0. Without this line a passing
@@ -633,9 +642,9 @@ class TestEntrypoint(unittest.TestCase):
 
     def test_check_is_reachable_under_both_names(self):
         parser_args = entrypoint.build_parser().parse_args(["gds"])
-        self.assertIs(parser_args.func, entrypoint.cmd_check)
+        self.assertIs(parser_args.func, c4o.check.cmd_check)
         parser_args = entrypoint.build_parser().parse_args(["check"])
-        self.assertIs(parser_args.func, entrypoint.cmd_check)
+        self.assertIs(parser_args.func, c4o.check.cmd_check)
 
     # --- report: the numbers the flow computes and then throws away ---
 
@@ -647,7 +656,7 @@ class TestEntrypoint(unittest.TestCase):
         args.metrics = path
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            entrypoint.cmd_report(args, {"DESIGN_NAME": "blinky"})
+            c4o.report.cmd_report(args, {"DESIGN_NAME": "blinky"})
         return out.getvalue()
 
     def test_report_reads_a_real_metrics_file(self):
@@ -796,7 +805,7 @@ class TestEntrypoint(unittest.TestCase):
         for d in (step, final):
             open(os.path.join(d, "blinky.png"), "w").close()
 
-        found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+        found = c4o.runs.find_render(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(final, "blinky.png"))
 
@@ -807,7 +816,7 @@ class TestEntrypoint(unittest.TestCase):
         os.makedirs(os.path.join(run, "final"))
         open(os.path.join(step, "blinky.png"), "w").close()
 
-        found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+        found = c4o.runs.find_render(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(step, "blinky.png"))
 
@@ -821,7 +830,7 @@ class TestEntrypoint(unittest.TestCase):
         for d in (old, new, os.path.join(run, "final")):
             os.makedirs(d)
 
-        found = entrypoint.sta_step(os.path.join(run, "final", "metrics.json"))
+        found = c4o.report.sta_step(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, new)
 
@@ -851,7 +860,7 @@ class TestEntrypoint(unittest.TestCase):
             ("121-magic-streamout", None),
         ])
 
-        found = entrypoint.sta_step(os.path.join(run, "final", "metrics.json"))
+        found = c4o.report.sta_step(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(run, "55-openroad-stapostpnr"))
 
@@ -864,7 +873,7 @@ class TestEntrypoint(unittest.TestCase):
             ("140-misc-reportmanufacturability", resumed),
         ])
 
-        found = entrypoint.sta_step(os.path.join(run, "final", "metrics.json"))
+        found = c4o.report.sta_step(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(run, "119-openroad-stapostpnr"))
 
@@ -879,7 +888,7 @@ class TestEntrypoint(unittest.TestCase):
             ("119-openroad-stapostpnr", {"timing__setup__ws": 4.63}),
         ])
 
-        self.assertEqual(entrypoint.last_finished_step(run), 76)
+        self.assertEqual(c4o.runs.last_finished_step(run), 76)
 
     def test_last_finished_step_has_no_answer_without_state_files(self):
         run = self._run_with_states({"timing__setup__ws": 4.70}, [
@@ -887,9 +896,9 @@ class TestEntrypoint(unittest.TestCase):
             ("119-openroad-stapostpnr", None),
         ])
 
-        self.assertIsNone(entrypoint.last_finished_step(run))
+        self.assertIsNone(c4o.runs.last_finished_step(run))
         self.assertEqual(
-            entrypoint.sta_step(os.path.join(run, "final", "metrics.json")),
+            c4o.report.sta_step(os.path.join(run, "final", "metrics.json")),
             os.path.join(run, "119-openroad-stapostpnr"))
 
     def test_newest_step_reads_the_ordinal_as_a_number(self):
@@ -900,11 +909,11 @@ class TestEntrypoint(unittest.TestCase):
             os.makedirs(os.path.join(run, step, "reports"))
             open(os.path.join(run, step, "reports", "stat.json"), "w").close()
 
-        found = entrypoint.newest_step(run, "*-yosys-synthesis/reports/stat.json")
+        found = c4o.runs.newest_step(run, "*-yosys-synthesis/reports/stat.json")
 
         self.assertEqual(
             found, os.path.join(run, "158-yosys-synthesis", "reports", "stat.json"))
-        self.assertIsNone(entrypoint.newest_step(run, "*-openroad-cts"))
+        self.assertIsNone(c4o.runs.newest_step(run, "*-openroad-cts"))
 
     def test_find_render_falls_back_to_the_newest_step_directory(self):
         run = os.path.join(self.test_dir, "runs", "blinky_run")
@@ -913,7 +922,7 @@ class TestEntrypoint(unittest.TestCase):
             os.makedirs(os.path.join(run, step))
             open(os.path.join(run, step, "blinky.png"), "w").close()
 
-        found = entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+        found = c4o.runs.find_render(os.path.join(run, "final", "metrics.json"))
 
         self.assertEqual(found, os.path.join(run, "79-klayout-render", "blinky.png"))
 
@@ -927,7 +936,7 @@ class TestEntrypoint(unittest.TestCase):
         open(os.path.join(other, "irdrop.png"), "w").close()
 
         self.assertIsNone(
-            entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+            c4o.runs.find_render(os.path.join(run, "final", "metrics.json"))
         )
 
     def test_find_render_returns_none_when_the_flow_rendered_nothing(self):
@@ -935,7 +944,7 @@ class TestEntrypoint(unittest.TestCase):
         os.makedirs(os.path.join(run, "final"))
 
         self.assertIsNone(
-            entrypoint.find_render(os.path.join(run, "final", "metrics.json"))
+            c4o.runs.find_render(os.path.join(run, "final", "metrics.json"))
         )
 
     def test_find_render_ignores_a_metrics_file_outside_a_run(self):
@@ -947,7 +956,7 @@ class TestEntrypoint(unittest.TestCase):
         open(os.path.join(stray, "blinky.png"), "w").close()
 
         self.assertIsNone(
-            entrypoint.find_render(os.path.join(stray, "metrics.json"))
+            c4o.runs.find_render(os.path.join(stray, "metrics.json"))
         )
 
     def test_find_metrics_picks_the_newest_run(self):
@@ -962,9 +971,9 @@ class TestEntrypoint(unittest.TestCase):
                     f.write("{}")
                 os.utime(metrics, (mtime, mtime))
 
-            self.assertIn("new_run", entrypoint.find_metrics(None))
+            self.assertIn("new_run", c4o.runs.find_metrics(None))
             # An explicit path always wins.
-            self.assertEqual(entrypoint.find_metrics("named.json"), "named.json")
+            self.assertEqual(c4o.runs.find_metrics("named.json"), "named.json")
         finally:
             os.chdir(cwd)
 
@@ -973,7 +982,7 @@ class TestEntrypoint(unittest.TestCase):
         os.chdir(self.test_dir)
         try:
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.find_metrics(None)
+                c4o.runs.find_metrics(None)
 
             self.assertEqual(cm.exception.code, 1)
         finally:
@@ -991,7 +1000,7 @@ class TestEntrypoint(unittest.TestCase):
         path = self._results(
             '<testsuites><testsuite><testcase name="ok"/></testsuite></testsuites>'
         )
-        entrypoint.check_cocotb_results(path)  # must not exit
+        c4o.sim.check_cocotb_results(path)  # must not exit
 
     def test_cocotb_results_failure_exits_nonzero(self):
         # This is the whole reason the function exists: the simulator reports
@@ -1003,7 +1012,7 @@ class TestEntrypoint(unittest.TestCase):
             '</testsuite></testsuites>'
         )
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.check_cocotb_results(path)
+            c4o.sim.check_cocotb_results(path)
         self.assertEqual(cm.exception.code, 1)
 
     def test_cocotb_results_error_element_also_fails(self):
@@ -1013,24 +1022,24 @@ class TestEntrypoint(unittest.TestCase):
             '</testsuite></testsuites>'
         )
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.check_cocotb_results(path)
+            c4o.sim.check_cocotb_results(path)
         self.assertEqual(cm.exception.code, 1)
 
     def test_cocotb_missing_results_is_a_failure(self):
         # A run that died before writing results must not read as success.
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.check_cocotb_results(os.path.join(self.test_dir, "absent.xml"))
+            c4o.sim.check_cocotb_results(os.path.join(self.test_dir, "absent.xml"))
         self.assertEqual(cm.exception.code, 1)
 
     def test_cocotb_malformed_results_is_a_failure(self):
         path = self._results("<testsuites><not closed")
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.check_cocotb_results(path)
+            c4o.sim.check_cocotb_results(path)
         self.assertEqual(cm.exception.code, 1)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_cocotb_errors_without_tests(self, mock_ensure, mock_load, mock_run):
         config = {"VERILOG_FILES": ["src/**/*.v"], "DESIGN_NAME": "top"}
         cwd = os.getcwd()
@@ -1039,16 +1048,16 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_cocotb(args, config)
+                c4o.sim.cmd_cocotb(args, config)
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.cocotb_config', return_value="/no/such/libpython.so")
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.sim.cocotb_config', return_value="/no/such/libpython.so")
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_cocotb_errors_when_libpython_is_missing(
         self, mock_ensure, mock_load, mock_run, mock_cfg
     ):
@@ -1068,7 +1077,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.files = None
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_cocotb(args, config)
+                c4o.sim.cmd_cocotb(args, config)
             self.assertEqual(cm.exception.code, 1)
             # It must stop before handing anything to the simulator.
             self.assertEqual(
@@ -1077,11 +1086,11 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.sim.check_cocotb_results')
+    @patch('c4o.sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_cocotb_hands_the_module_and_toplevel_to_the_simulator(
         self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check
     ):
@@ -1102,7 +1111,7 @@ class TestEntrypoint(unittest.TestCase):
             # command down the gate-level path argparse would never pick here.
             args.netlist = None
 
-            entrypoint.cmd_cocotb(args, config)
+            c4o.sim.cmd_cocotb(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertEqual(compile_cmd[0], "iverilog")
@@ -1121,12 +1130,12 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.log_warn')
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.log_warn')
+    @patch('c4o.sim.check_cocotb_results')
+    @patch('c4o.sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_cocotb_warns_when_no_rtl_declares_a_timescale(
         self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check, mock_warn
     ):
@@ -1143,13 +1152,13 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
             args.netlist = None
 
-            entrypoint.cmd_cocotb(args, config)
+            c4o.sim.cmd_cocotb(args, config)
             self.assertIn("`timescale 1ns/1ps", mock_warn.call_args[0][0])
 
             mock_warn.reset_mock()
             with open("src/top.v", "w") as f:
                 f.write("`timescale 1ns/1ps\nmodule top; endmodule")
-            entrypoint.cmd_cocotb(args, config)
+            c4o.sim.cmd_cocotb(args, config)
             mock_warn.assert_not_called()
         finally:
             os.chdir(cwd)
@@ -1162,11 +1171,11 @@ class TestEntrypoint(unittest.TestCase):
         config["//COCOTB_TESTS"] = ["dir::pytests/*.py"]
         return config
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.sim.check_cocotb_results')
+    @patch('c4o.sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_cocotb_drives_the_netlist_when_asked(
         self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check
     ):
@@ -1181,7 +1190,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
             args.netlist = ""  # what argparse stores for a bare --netlist
 
-            entrypoint.cmd_cocotb(args, config)
+            c4o.sim.cmd_cocotb(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertIn("-DFUNCTIONAL", compile_cmd)
@@ -1197,11 +1206,11 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.sim.check_cocotb_results')
+    @patch('c4o.sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_cocotb_gate_level_does_not_overwrite_the_rtl_verdict(
         self, mock_ensure, mock_load, mock_run, mock_cfg, mock_check
     ):
@@ -1215,7 +1224,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
             args.netlist = ""
 
-            entrypoint.cmd_cocotb(args, config)
+            c4o.sim.cmd_cocotb(args, config)
 
             self.assertEqual(
                 mock_check.call_args[0][0], os.path.join("build", "cocotb-gl-results.xml")
@@ -1246,9 +1255,9 @@ class TestEntrypoint(unittest.TestCase):
             "DESIGN_NAME": "top",
         }
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_gatesim_builds_the_netlist_against_the_cell_models(
         self, mock_ensure, mock_load, mock_run
     ):
@@ -1259,7 +1268,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.netlist = None
 
-            entrypoint.cmd_gatesim(args, config)
+            c4o.sim.cmd_gatesim(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertEqual(compile_cmd[0], "iverilog")
@@ -1276,9 +1285,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_gatesim_errors_without_a_gate_testbench(self, mock_ensure, mock_load, mock_run):
         config = self._gl_workspace()
         del config["//GATE_TESTS"]
@@ -1288,15 +1297,15 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.netlist = None
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_gatesim(args, config)
+                c4o.sim.cmd_gatesim(args, config)
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.load_config')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.load_config')
+    @patch('c4o.common.ensure_build_dir')
     def test_gatesim_errors_when_the_cell_models_are_absent(
         self, mock_ensure, mock_load, mock_run
     ):
@@ -1308,7 +1317,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.netlist = None
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_gatesim(args, config)
+                c4o.sim.cmd_gatesim(args, config)
             self.assertEqual(cm.exception.code, 1)
             mock_run.assert_not_called()
         finally:
@@ -1320,7 +1329,7 @@ class TestEntrypoint(unittest.TestCase):
         os.chdir(self.test_dir)
         try:
             self._gl_workspace()
-            models = entrypoint.cell_models(
+            models = c4o.sim.cell_models(
                 {"PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd"}
             )
             self.assertTrue(models[0].endswith("sky130A/libs.ref/sky130_fd_sc_hd/verilog/primitives.v"))
@@ -1332,9 +1341,9 @@ class TestEntrypoint(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            self.assertEqual(entrypoint.find_netlist("named.v"), "named.v")
+            self.assertEqual(c4o.runs.find_netlist("named.v"), "named.v")
             with self.assertRaises(SystemExit) as cm:
-                entrypoint.find_netlist(None)
+                c4o.runs.find_netlist(None)
             self.assertEqual(cm.exception.code, 1)
         finally:
             os.chdir(cwd)
@@ -1342,16 +1351,16 @@ class TestEntrypoint(unittest.TestCase):
     def test_root_args_is_shared_by_sim_and_gatesim(self):
         # Both commands hit the same silent-truncation trap, so both use the
         # same rule rather than one of them growing its own copy.
-        self.assertEqual(entrypoint.root_args({}, ["only.v"], "SIM_TOP"), [])
+        self.assertEqual(c4o.sim.root_args({}, ["only.v"], "SIM_TOP"), [])
         self.assertEqual(
-            entrypoint.root_args({"//GATE_TOP": "tb"}, ["a.v", "b.v"], "GATE_TOP"),
+            c4o.sim.root_args({"//GATE_TOP": "tb"}, ["a.v", "b.v"], "GATE_TOP"),
             ["-s", "tb"],
         )
         with self.assertRaises(SystemExit) as cm:
-            entrypoint.root_args({}, ["a.v", "b.v"], "GATE_TOP")
+            c4o.sim.root_args({}, ["a.v", "b.v"], "GATE_TOP")
         self.assertEqual(cm.exception.code, 1)
 
-    @patch('entrypoint.run_command')
+    @patch('c4o.common.run_command')
     def test_pdk_installs_where_the_readers_look(self, mock_run):
         # The install path used to be a fixed ./pdks while every reader honoured
         # PDK_ROOT, so PDK_ROOT could only ever name a PDK this command had not
@@ -1382,7 +1391,7 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
+    @patch('c4o.common.run_command')
     def test_every_command_reads_the_same_language(self, mock_run):
         # One .sv file used to pass two commands and fail two: sim called
         # iverilog with no -g2012 and synth read with no -sv, while cocotb,
@@ -1394,12 +1403,12 @@ class TestEntrypoint(unittest.TestCase):
             config = {"DESIGN_NAME": "top", "VERILOG_FILES": ["dir::src/top.v"],
                       "//TEST_FILES": ["dir::test/top_tb.v"]}
 
-            entrypoint.cmd_sim(MagicMock(files=None, test_files=None), config)
+            c4o.sim.cmd_sim(MagicMock(files=None, test_files=None), config)
             argv = mock_run.call_args_list[0][0][0]
             self.assertEqual(argv[0], "iverilog")
             self.assertIn("-g2012", argv)
 
-            for cmd in (entrypoint.cmd_synth, entrypoint.cmd_schematic):
+            for cmd in (c4o.rtl.cmd_synth, c4o.rtl.cmd_schematic):
                 mock_run.reset_mock()
                 cmd(MagicMock(files=None), config)
                 script = mock_run.call_args[0][0][-1]
@@ -1424,7 +1433,7 @@ class TestEntrypoint(unittest.TestCase):
     def _site(self, config=None):
         """Runs cmd_site in test_dir and returns the page it wrote."""
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), config or {"DESIGN_NAME": "blinky"})
+            c4o.site.cmd_site(MagicMock(), config or {"DESIGN_NAME": "blinky"})
         with open(os.path.join("build", "site", "index.html")) as f:
             return f.read()
 
@@ -1694,7 +1703,7 @@ class TestEntrypoint(unittest.TestCase):
                           "<code>max_ss_100C_1v60</code>, <code>nom_ss_100C_1v60</code></td></tr>", timing)
             self.assertIn('<tr><td>max&nbsp;capacitance</td><td class="num PASS">0</td><td class="src">none</td></tr>', timing)
             self.assertIn('<tr><td>max&nbsp;fanout</td><td class="num PASS">0</td>', timing)
-            rows = dict(entrypoint.report_rows(json.load(open("runs/blinky_run/final/metrics.json")),
+            rows = dict(c4o.report.report_rows(json.load(open("runs/blinky_run/final/metrics.json")),
                                                "runs/blinky_run/final/metrics.json"))
             self.assertEqual(rows["limit violations"],
                              "11 max slew, 0 max capacitance, 0 max fanout  (max_ss_100C_1v60, nom_ss_100C_1v60)")
@@ -1983,7 +1992,7 @@ class TestEntrypoint(unittest.TestCase):
                     f.write(text)
                 with self.assertRaises(SystemExit) as raised, contextlib.redirect_stdout(io.StringIO()) as err:
                     shutil.copytree(self.RUN_FIXTURE, "runs")
-                    entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "blinky"})
+                    c4o.site.cmd_site(MagicMock(), {"DESIGN_NAME": "blinky"})
                 self.assertEqual(raised.exception.code, 1)
                 self.assertIn("build/history.json", err.getvalue())
 
@@ -2051,7 +2060,7 @@ class TestEntrypoint(unittest.TestCase):
                          ["(ns)", "(ns)", "(µm²)", "(mW)", "(% of supply)"])
         self.assertTrue(all(t in "".join(labels) for t in ("µm²", "mW", "ns", "%")))
         # The unit is not inside the text the capitals reach, and the rule turns them off.
-        self.assertRegex(entrypoint.site_page.CSS, r"\.hist \.label \.unit \{[^}]*text-transform: none")
+        self.assertRegex(c4o.site_page.CSS, r"\.hist \.label \.unit \{[^}]*text-transform: none")
         for label in labels:
             self.assertRegex(label, r'^[^<]*( <span class="unit">\([^<]*\)</span>)?$')
 
@@ -2063,9 +2072,9 @@ class TestEntrypoint(unittest.TestCase):
         for cls in ("seg-ff", "seg-logic", "seg-flow", "seg-synthesis"):
             self.assertIn(f'<polygon points', fold)
             self.assertRegex(fold, rf'class="{cls}"')
-            self.assertIn(f".hist svg .{cls}", entrypoint.site_page.CSS)
+            self.assertIn(f".hist svg .{cls}", c4o.site_page.CSS)
         self.assertNotIn("opacity", fold)
-        self.assertNotRegex(entrypoint.site_page.CSS.split("/* History")[1], r"opacity")
+        self.assertNotRegex(c4o.site_page.CSS.split("/* History")[1], r"opacity")
         # Hover on a commit: every layer and the total.
         self.assertIn("0000000: flip-flops 680.0 µm²; combinational logic 680.0 µm²; "
                       "added or resized by place and route 540.0 µm² (total 1,900.0 µm²)", fold)
@@ -2106,7 +2115,7 @@ class TestEntrypoint(unittest.TestCase):
         page = self._history_site(self._rows(4, setup_ws=-0.5, hold_ws=2.0))
         timing = self._section(page, "timing")
         self.assertEqual(timing.count('class="zero"'), 2)
-        self.assertRegex(entrypoint.site_page.CSS, r"\.hist svg \.zero \{[^}]*stroke: var\(--fail\)")
+        self.assertRegex(c4o.site_page.CSS, r"\.hist svg \.zero \{[^}]*stroke: var\(--fail\)")
         self.assertNotIn('class="zero"', self._section(page, "area"))
 
     def test_the_history_is_escaped_and_a_stray_value_is_a_gap(self):
@@ -2220,7 +2229,7 @@ class TestEntrypoint(unittest.TestCase):
         shutil.copy("runs/blinky_run/final/metrics.json", "runs/other/metrics.json")
         os.makedirs("runs/other/nl")
         open("runs/other/nl/blinky.nl.v", "w").close()
-        with patch.object(entrypoint, "METRICS_GLOBS", ["runs/other/metrics.json"]):
+        with patch.object(c4o.runs, "METRICS_GLOBS", ["runs/other/metrics.json"]):
             page = self._site()
         self.assertNotIn("blinky.nl.v", page)
         self.assertFalse(os.path.exists("build/site/blinky.nl.v"))
@@ -2257,7 +2266,7 @@ class TestEntrypoint(unittest.TestCase):
             "sky130_fd_sc_hd__clkdlybuf4s25_1": 4,
             "sky130_fd_sc_hd__inv_2": 17,
         }
-        self.assertEqual(entrypoint.drive_strengths(cells), {1: 18, 2: 33, 16: 3})
+        self.assertEqual(c4o.report.drive_strengths(cells), {1: 18, 2: 33, 16: 3})
 
     def test_drive_strength_leaves_out_cells_with_no_logic_function(self):
         cells = {
@@ -2271,18 +2280,18 @@ class TestEntrypoint(unittest.TestCase):
             "my_macro_8": 1,  # a macro is not a standard cell
             "$_AND_": 5,      # nor is a Yosys-internal type
         }
-        self.assertEqual(entrypoint.drive_strengths(cells), {2: 3})
+        self.assertEqual(c4o.report.drive_strengths(cells), {2: 3})
 
     def test_drive_strength_counts_the_routed_netlist_of_a_real_run(self):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
             self._real_run()
-            cells = entrypoint.routed_cells(self.REAL_METRICS)
+            cells = c4o.report.routed_cells(self.REAL_METRICS)
             # Every instance, physical ones too: 113 standard cells + 161 fill.
             self.assertEqual(sum(cells.values()), 274)
             self.assertEqual(cells["sky130_fd_sc_hd__tapvpwrvgnd_1"], 27)
-            self.assertEqual(entrypoint.drive_table(self.REAL_METRICS),
+            self.assertEqual(c4o.report.drive_table(self.REAL_METRICS),
                              [(1, 0, 18), (2, 65, 65), (16, 0, 3)])
         finally:
             os.chdir(cwd)
@@ -2366,9 +2375,9 @@ class TestEntrypoint(unittest.TestCase):
 
     def test_site_drive_strength_reading_says_what_routing_added_and_removed(self):
         # Hand-made rows: a real run only ever added.
-        text = entrypoint.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
+        text = c4o.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
         self.assertIn("Place and route added 2 X1 instances. It removed 2 X2 instances.", text)
-        text = entrypoint.site_page.drive_table([(2, 3, 3)])
+        text = c4o.site_page.drive_table([(2, 3, 3)])
         self.assertIn("Place and route did not change the mix.", text)
 
     def test_site_names_the_library_and_says_a_sky130_one_is_single_vt(self):
@@ -2455,7 +2464,7 @@ class TestEntrypoint(unittest.TestCase):
     def test_the_layout_keeps_its_shape_up_to_a_height_cap(self):
         # The render is 1000 px wide and as tall as the die makes it. Squeezed
         # into a square it shrank, and uncapped a tall die pushes the page down.
-        css = entrypoint.site_page.CSS
+        css = c4o.site_page.CSS
         self.assertNotIn("aspect-ratio: 1", css)
         self.assertIn(".hero-art img { display: block; width: 100%; height: auto; "
                       "max-height: min(70vh, 560px); object-fit: contain; }", css)
@@ -2488,7 +2497,7 @@ class TestEntrypoint(unittest.TestCase):
             self.assertNotIn("UTC</", page)
             self.assertNotIn("2026-09-21", page)
             # Off a pinned epoch the clock is read in the same offset.
-            site_page = entrypoint.site_page
+            site_page = c4o.site_page
             fixed = site_page.datetime(2026, 1, 1, 16, 0, tzinfo=site_page.timezone.utc)
 
             class FakeClock(site_page.datetime):
@@ -2796,29 +2805,29 @@ class TestEntrypoint(unittest.TestCase):
         args.if_configured = if_configured
         return args
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim_if_configured_skips_when_only_cocotb_is_configured(self, mock_ensure, mock_run):
         config = self._no_testbench_config(**{"//COCOTB_TESTS": ["dir::pytests/*.py"]})
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            with patch("entrypoint.log_info") as info:
-                entrypoint.cmd_sim(self._sim_args(True), config)
+            with patch("c4o.common.log_info") as info:
+                c4o.sim.cmd_sim(self._sim_args(True), config)
             mock_run.assert_not_called()
             self.assertIn("TEST_FILES is not set", info.call_args[0][0])
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim_if_configured_fails_when_nothing_is_configured(self, mock_ensure, mock_run):
         config = self._no_testbench_config()
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(self._sim_args(True), config)
+            with patch("c4o.common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                c4o.sim.cmd_sim(self._sim_args(True), config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("TEST_FILES", error.call_args[0][0])
             self.assertIn("COCOTB_TESTS", error.call_args[0][0])
@@ -2826,36 +2835,36 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim_if_configured_runs_when_the_testbench_is_configured(self, mock_ensure, mock_run):
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            entrypoint.cmd_sim(self._sim_args(True), self.config)
+            c4o.sim.cmd_sim(self._sim_args(True), self.config)
             self.assertEqual(mock_run.call_args_list[0][0][0][0], "iverilog")
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_sim_asked_for_by_name_still_fails_without_a_testbench(self, mock_ensure, mock_run):
         # Even with the Python tests configured: `make sim` named sim.
         config = self._no_testbench_config(**{"//COCOTB_TESTS": ["dir::pytests/*.py"]})
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         try:
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_sim(self._sim_args(False), config)
+            with patch("c4o.common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                c4o.sim.cmd_sim(self._sim_args(False), config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("sim has no testbench", error.call_args[0][0])
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.sim.check_cocotb_results')
+    @patch('c4o.sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_cocotb_if_configured_skips_when_only_a_testbench_is_configured(
         self, mock_ensure, mock_run, mock_cfg, mock_check
     ):
@@ -2865,16 +2874,16 @@ class TestEntrypoint(unittest.TestCase):
         try:
             args = self._sim_args(True)
             args.netlist = None
-            with patch("entrypoint.log_info") as info:
-                entrypoint.cmd_cocotb(args, config)
+            with patch("c4o.common.log_info") as info:
+                c4o.sim.cmd_cocotb(args, config)
             mock_run.assert_not_called()
             mock_check.assert_not_called()
             self.assertIn("COCOTB_TESTS is not set", info.call_args[0][0])
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_cocotb_if_configured_fails_when_nothing_is_configured(self, mock_ensure, mock_run):
         config = self._no_testbench_config()
         cwd = os.getcwd()
@@ -2882,8 +2891,8 @@ class TestEntrypoint(unittest.TestCase):
         try:
             args = self._sim_args(True)
             args.netlist = None
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_cocotb(args, config)
+            with patch("c4o.common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                c4o.sim.cmd_cocotb(args, config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("TEST_FILES", error.call_args[0][0])
             self.assertIn("COCOTB_TESTS", error.call_args[0][0])
@@ -2891,8 +2900,8 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_cocotb_asked_for_by_name_still_fails_without_tests(self, mock_ensure, mock_run):
         config = self._no_testbench_config(**{"TEST_FILES": ["test/*.v"]})
         cwd = os.getcwd()
@@ -2900,8 +2909,8 @@ class TestEntrypoint(unittest.TestCase):
         try:
             args = self._sim_args(False)
             args.netlist = None
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_cocotb(args, config)
+            with patch("c4o.common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                c4o.sim.cmd_cocotb(args, config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("No cocotb tests", error.call_args[0][0])
         finally:
@@ -2915,10 +2924,10 @@ class TestEntrypoint(unittest.TestCase):
 
     # --- gatesim: the Verilog testbench, else the cocotb tests ---
 
-    @patch('entrypoint.check_cocotb_results')
-    @patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__))
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.sim.check_cocotb_results')
+    @patch('c4o.sim.cocotb_config', return_value=os.path.dirname(__file__))
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_gatesim_runs_the_cocotb_tests_when_there_is_no_gate_testbench(
         self, mock_ensure, mock_run, mock_cfg, mock_check
     ):
@@ -2931,7 +2940,7 @@ class TestEntrypoint(unittest.TestCase):
             args.files = None
             args.netlist = None
 
-            entrypoint.cmd_gatesim(args, config)
+            c4o.sim.cmd_gatesim(args, config)
 
             compile_cmd = mock_run.call_args_list[0][0][0]
             self.assertTrue(any("top.nl.v" in a for a in compile_cmd))
@@ -2944,9 +2953,9 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.cmd_cocotb')
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.sim.cmd_cocotb')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_gatesim_prefers_the_gate_testbench_to_the_cocotb_tests(
         self, mock_ensure, mock_run, mock_cocotb
     ):
@@ -2957,7 +2966,7 @@ class TestEntrypoint(unittest.TestCase):
             args = MagicMock()
             args.netlist = None
 
-            entrypoint.cmd_gatesim(args, config)
+            c4o.sim.cmd_gatesim(args, config)
 
             mock_cocotb.assert_not_called()
             compile_cmd = mock_run.call_args_list[0][0][0]
@@ -2965,8 +2974,8 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    @patch('entrypoint.run_command')
-    @patch('entrypoint.ensure_build_dir')
+    @patch('c4o.common.run_command')
+    @patch('c4o.common.ensure_build_dir')
     def test_gatesim_error_names_both_keys(self, mock_ensure, mock_run):
         config = self._gl_workspace()
         del config["//GATE_TESTS"]
@@ -2975,8 +2984,8 @@ class TestEntrypoint(unittest.TestCase):
         try:
             args = MagicMock()
             args.netlist = None
-            with patch("entrypoint.log_error") as error, self.assertRaises(SystemExit) as cm:
-                entrypoint.cmd_gatesim(args, config)
+            with patch("c4o.common.log_error") as error, self.assertRaises(SystemExit) as cm:
+                c4o.sim.cmd_gatesim(args, config)
             self.assertEqual(cm.exception.code, 1)
             self.assertIn("GATE_TESTS", error.call_args[0][0])
             self.assertIn("COCOTB_TESTS", error.call_args[0][0])
@@ -2991,11 +3000,11 @@ class TestEntrypoint(unittest.TestCase):
         args = MagicMock()
         args.files = None
         args.netlist = netlist
-        with patch('entrypoint.check_cocotb_results'), \
-             patch('entrypoint.cocotb_config', return_value=os.path.dirname(__file__)), \
-             patch('entrypoint.ensure_build_dir'), \
-             patch('entrypoint.run_command') as run:
-            entrypoint.cmd_cocotb(args, config)
+        with patch('c4o.sim.check_cocotb_results'), \
+             patch('c4o.sim.cocotb_config', return_value=os.path.dirname(__file__)), \
+             patch('c4o.common.ensure_build_dir'), \
+             patch('c4o.common.run_command') as run:
+            c4o.sim.cmd_cocotb(args, config)
         return run.call_args_list[0][0][0]
 
     def _rtl_cocotb_config(self):
@@ -3265,7 +3274,7 @@ class TestEntrypoint(unittest.TestCase):
                           '<div class="detail">hold &middot; 1 violation</div>', page)
             # `report` says the same words as the card: one reading of the checks.
             with open("runs/blinky_run/final/metrics.json") as f:
-                self.assertEqual(entrypoint.signoff_row(json.load(f)),
+                self.assertEqual(c4o.report.signoff_row(json.load(f)),
                                  ("signoff", "3 DRC (KLayout), 1 LVS"))
         finally:
             os.chdir(cwd)
@@ -3277,7 +3286,7 @@ class TestEntrypoint(unittest.TestCase):
         # A long test name breaks anywhere, and the result columns are narrow
         # at 600px and below, so RTL and GATES stay in view. Measured in a
         # browser at 390px: the table's scrollWidth equals its clientWidth.
-        css = entrypoint.site_page.CSS
+        css = c4o.site_page.CSS
         self.assertRegex(css, re.compile(
             r"@media \(max-width: 600px\).*?table\.tests th:not\(:first-child\), "
             r"table\.tests td:not\(:first-child\) \{ width: 56px; \}", re.S))
@@ -3301,14 +3310,14 @@ class TestEntrypoint(unittest.TestCase):
             os.chdir(cwd)
 
     def test_hero_caption_labels_the_count_when_only_synthesis_gave_one(self):
-        text = entrypoint.site_page.hero_art(
+        text = c4o.site_page.hero_art(
             "layout.png", "d", [("instances", "110 after synthesis")], None)
         self.assertIn("110 instances after synthesis", text)
-        text = entrypoint.site_page.hero_art("layout.png", "d", [], None)
+        text = c4o.site_page.hero_art("layout.png", "d", [], None)
         self.assertNotIn("<figcaption>", text)
 
     def test_corner_words_write_the_temperature_as_a_number(self):
-        words = entrypoint.site_page.corner_words
+        words = c4o.site_page.corner_words
         self.assertIn(", 25&nbsp;&deg;C, 1.80&nbsp;V", words("nom_tt_025C_1v80"))
         self.assertIn(", -40&nbsp;&deg;C, 1.95&nbsp;V", words("max_ff_n40C_1v95"))
         self.assertIn(", 100&nbsp;&deg;C, 1.60&nbsp;V", words("max_ss_100C_1v60"))
@@ -3352,10 +3361,10 @@ class TestEntrypoint(unittest.TestCase):
             os.chdir(cwd)
 
     def test_a_details_label_counts_the_rows_inside(self):
-        text = entrypoint.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
+        text = c4o.site_page.drive_table([(1, 0, 2), (2, 3, 1), (4, 5, 5)])
         self.assertIn("(3 sizes)</summary>", text)
         self.assertEqual(text.count("<tr><td>X"), 3)
-        text = entrypoint.site_page.drive_table([(2, 3, 3)])
+        text = c4o.site_page.drive_table([(2, 3, 3)])
         self.assertIn("(1 size)</summary>", text)
         cwd = os.getcwd()
         os.chdir(self.test_dir)
@@ -3413,13 +3422,13 @@ class TestEntrypoint(unittest.TestCase):
             os.chdir(cwd)
 
     def test_a_test_name_breaks_after_an_underscore_and_copies_whole(self):
-        name = entrypoint.site_page.test_name("reset_in_the_middle_restarts")
+        name = c4o.site_page.test_name("reset_in_the_middle_restarts")
         self.assertEqual(name, "reset_<wbr>in_<wbr>the_<wbr>middle_<wbr>restarts")
         # <wbr> adds no character: the text a reader copies is the name.
         self.assertEqual(re.sub(r"<[^>]*>", "", name), "reset_in_the_middle_restarts")
         # The name is escaped before the breaks go in.
-        self.assertEqual(entrypoint.site_page.test_name("a<b_c"), "a&lt;b_<wbr>c")
-        css = entrypoint.site_page.CSS
+        self.assertEqual(c4o.site_page.test_name("a<b_c"), "a&lt;b_<wbr>c")
+        css = c4o.site_page.CSS
         self.assertNotIn("overflow-wrap: anywhere", css.split("td code")[1][:40] if "td code" in css else "")
         self.assertNotIn("td code { overflow-wrap: anywhere; }", css)
         cwd = os.getcwd()
@@ -3479,7 +3488,7 @@ class TestCoverage(unittest.TestCase):
         return os.path.join(self.FIXTURES, name)
 
     def summary(self, **extra):
-        types, modules, files = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        types, modules, files = c4o.regress.parse_coverage_dat(self.fixture("run-a.dat"))
         out = {"tests": {"total": 5, "passed": 5}, "files": files, "types": types,
                "modules": [{"name": n, "types": t} for n, t in modules.items()],
                "uncovered": [{"file": "src/top.v", "line": 6, "text": "q <= d;"}]}
@@ -3487,24 +3496,24 @@ class TestCoverage(unittest.TestCase):
         return out
 
     def page(self, coverage, **kwargs):
-        return entrypoint.site_page.render("top", [], None, [], {}, coverage=coverage, **kwargs)
+        return c4o.site_page.render("top", [], None, [], {}, coverage=coverage, **kwargs)
 
     # --- the numbers ---------------------------------------------------------
 
     def test_each_kind_is_counted_from_its_own_records(self):
-        types, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        types, _, _ = c4o.regress.parse_coverage_dat(self.fixture("run-a.dat"))
         got = {k: (v["hit"], v["total"], v["percent"]) for k, v in types.items()}
         # Not lcov's: those take the smallest of line, branch and toggle per source line.
         self.assertEqual(got, {"line": (3, 5, 60.0), "branch": (1, 2, 50.0), "toggle": (5, 8, 62.5)})
 
     def test_user_coverage_is_there_only_when_the_design_has_some(self):
-        a, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
-        b, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-b.dat"))
+        a, _, _ = c4o.regress.parse_coverage_dat(self.fixture("run-a.dat"))
+        b, _, _ = c4o.regress.parse_coverage_dat(self.fixture("run-b.dat"))
         self.assertNotIn("user", a)
         self.assertEqual((b["user"]["hit"], b["user"]["total"]), (1, 1))
 
     def test_each_module_is_counted_apart_and_none_of_a_kind_is_not_zero_percent(self):
-        _, modules, files = entrypoint.parse_coverage_dat(self.fixture("run-a.dat"))
+        _, modules, files = c4o.regress.parse_coverage_dat(self.fixture("run-a.dat"))
         self.assertEqual(list(modules), ["sub", "top"])
         self.assertEqual((modules["top"]["line"]["hit"], modules["top"]["line"]["total"]), (2, 4))
         self.assertEqual((modules["sub"]["toggle"]["hit"], modules["sub"]["toggle"]["total"]), (2, 2))
@@ -3514,8 +3523,8 @@ class TestCoverage(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("verilator_coverage"), "needs verilator_coverage")
     def test_two_runs_are_merged_by_adding_their_counts(self):
-        entrypoint.merge_coverage([self.fixture("run-a.dat"), self.fixture("run-b.dat")], "merged.dat")
-        types, _, _ = entrypoint.parse_coverage_dat("merged.dat")
+        c4o.regress.merge_coverage([self.fixture("run-a.dat"), self.fixture("run-b.dat")], "merged.dat")
+        types, _, _ = c4o.regress.parse_coverage_dat("merged.dat")
         # A point either run hit is hit. Neither alone has 4/5 lines.
         self.assertEqual({k: (v["hit"], v["total"]) for k, v in types.items()},
                          {"line": (4, 5), "branch": (2, 2), "toggle": (6, 8), "user": (1, 1)})
@@ -3524,7 +3533,7 @@ class TestCoverage(unittest.TestCase):
         os.makedirs("src")
         with open("src/top.v", "w") as f:
             f.write("".join(f"line {n}\n" for n in range(1, 15)))
-        got = entrypoint.uncovered_lines(self.fixture("run-a.dat"))
+        got = c4o.regress.uncovered_lines(self.fixture("run-a.dat"))
         # Blocks at lines 6 and 12 and the else branch of line 6 are not hit.
         # Lines 1, 2, 4 and 5 have toggle holes only, and are not listed.
         self.assertEqual(got, [{"file": "src/top.v", "line": 6, "text": "line 6"},
@@ -3537,10 +3546,10 @@ class TestCoverage(unittest.TestCase):
             f.write("# SystemC::Coverage-3\n")
             f.write("C '\x01f\x02src/top.v\x01l\x021\x01page\x02v_line/top\x01o\x02block\x01S\x021,3-4\x01h\x02.top' 0\n")
             f.write("C '\x01f\x02src/top.v\x01l\x025\x01page\x02v_line/top\x01o\x02block\x01S\x025\x01h\x02.top' 1\n")
-        self.assertEqual([m["line"] for m in entrypoint.uncovered_lines("blocks.dat")], [1, 3, 4])
+        self.assertEqual([m["line"] for m in c4o.regress.uncovered_lines("blocks.dat")], [1, 3, 4])
 
     def test_the_text_of_an_unreadable_source_is_empty_not_an_error(self):
-        got = entrypoint.uncovered_lines(self.fixture("run-a.dat"))
+        got = c4o.regress.uncovered_lines(self.fixture("run-a.dat"))
         self.assertEqual([m["text"] for m in got], ["", ""])
 
     # --- the page ------------------------------------------------------------
@@ -3573,15 +3582,15 @@ class TestCoverage(unittest.TestCase):
 
     def test_the_page_says_which_seed_the_coverage_run_used(self):
         runs = [("cocotb, RTL", "1789965785", [("t", "PASS", 1.0)])]
-        same = entrypoint.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="1789965785"))
+        same = c4o.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="1789965785"))
         self.assertIn("This run used seed <code>1789965785</code>, the seed of the RTL run in Tests.", same)
-        other = entrypoint.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="7"))
+        other = c4o.site_page.render("top", [], None, runs, {}, coverage=self.summary(seed="7"))
         self.assertIn("This run used seed <code>7</code>. It is not the seed of the RTL run in Tests.", other)
-        none = entrypoint.site_page.render("top", [], None, runs, {}, coverage=self.summary())
+        none = c4o.site_page.render("top", [], None, runs, {}, coverage=self.summary())
         self.assertNotIn("This run used seed", none)
 
     def test_user_coverage_gets_a_row_when_there_is_some(self):
-        types, modules, files = entrypoint.parse_coverage_dat(self.fixture("run-b.dat"))
+        types, modules, files = c4o.regress.parse_coverage_dat(self.fixture("run-b.dat"))
         self.assertIn("<td>User cover</td>", self.page(self.summary(types=types)))
 
     def test_the_summary_card_has_a_line_for_each_kind_and_no_total(self):
@@ -3599,9 +3608,9 @@ class TestCoverage(unittest.TestCase):
         self.assertNotIn("expression", summary)
 
     def test_the_summary_card_adds_a_user_line_and_a_dash_for_a_kind_with_nothing(self):
-        types, _, _ = entrypoint.parse_coverage_dat(self.fixture("run-b.dat"))
+        types, _, _ = c4o.regress.parse_coverage_dat(self.fixture("run-b.dat"))
         types["branch"] = {"hit": 0, "total": 0, "percent": None}
-        card = entrypoint.site_page.coverage_card(self.summary(types=types))
+        card = c4o.site_page.coverage_card(self.summary(types=types))
         self.assertEqual(re.findall(r'<div class="value">([^<]*)</div><div class="detail">([^<]*)</div>', card),
                          [("40.0%", "Block"), ("n/a", "Branch"), ("12.5%", "Toggle"), ("100.0%", "User cover")])
 
@@ -3614,7 +3623,7 @@ class TestCoverage(unittest.TestCase):
 
     def test_coverage_comes_after_the_tests_and_before_timing(self):
         runs = [("cocotb, RTL", "1", [("t", "PASS", 1.0)])]
-        page = entrypoint.site_page.render(
+        page = c4o.site_page.render(
             "top", [], None, runs, {}, coverage=self.summary(),
             physical={"setup": (1.0, 0), "hold": (1.0, 0)})
         ids = re.findall(r'<section id="([a-z0-9-]*)"', page)
@@ -3623,7 +3632,7 @@ class TestCoverage(unittest.TestCase):
 
     def test_without_coverage_there_is_no_section_and_no_card(self):
         runs = [("cocotb, RTL", "1", [("t", "PASS", 1.0)])]
-        page = entrypoint.site_page.render("top", [], None, runs, {}, physical={"setup": (1.0, 0)})
+        page = c4o.site_page.render("top", [], None, runs, {}, physical={"setup": (1.0, 0)})
         self.assertNotIn("Coverage", page)
         self.assertNotIn("code coverage", page)
         self.assertNotIn('id="coverage"', page)
@@ -3633,12 +3642,12 @@ class TestCoverage(unittest.TestCase):
         with open("build/cocotb-results.xml", "w") as f:
             f.write(self.COCOTB_XML)
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+            c4o.site.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
         self.assertNotIn("Coverage", open("build/site/index.html").read())
         with open("build/coverage/summary.json", "w") as f:
             json.dump(self.summary(), f)
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+            c4o.site.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
         page = open("build/site/index.html").read()
         self.assertIn("<h2>Coverage</h2>", page)
         self.assertIn('<div class="stat"><div class="value">60.0%</div><div class="detail">Block</div></div>', page)
@@ -3651,7 +3660,7 @@ class TestCoverage(unittest.TestCase):
         physical = dict(physical, constraints={"clock_period": (10.0, True)}, core=(40.0, 50.0))
         power = ("nom_tt_025C_1v80", [("Total", 0.0, 0.0, 0.0, 0.001)])
         signoff = [("DRC", 0, "Magic", "")]
-        return entrypoint.site_page.summary_cards(
+        return c4o.site_page.summary_cards(
             numbers, physical, power, signoff, self.summary() if coverage else None)
 
     def test_the_cards_come_three_to_a_row_with_coverage_first_in_the_third(self):
@@ -3714,8 +3723,8 @@ class TestCoverage(unittest.TestCase):
 
     def coverage(self, config=None, **fake):
         out = io.StringIO()
-        with patch("entrypoint.subprocess.run", self.fake(**fake)), contextlib.redirect_stdout(out):
-            entrypoint.cmd_coverage(MagicMock(files=None, if_configured=False), config or self.CONFIG)
+        with patch("c4o.regress.subprocess.run", self.fake(**fake)), contextlib.redirect_stdout(out):
+            c4o.regress.cmd_coverage(MagicMock(files=None, if_configured=False), config or self.CONFIG)
         return out.getvalue()
 
     # --- over a test list ----------------------------------------------------
@@ -3738,7 +3747,7 @@ class TestCoverage(unittest.TestCase):
         sims = [kw["env"] for c, kw in calls if c[0] == "make" and not c[-1].endswith("Vtop")]
         self.assertEqual(len(builds), 1)
         self.assertEqual(len(sims), 5)
-        expect = entrypoint.derive_seeds(31, "test_top", 3) + entrypoint.derive_seeds(31, "test_top.f", 2)
+        expect = c4o.regress.derive_seeds(31, "test_top", 3) + c4o.regress.derive_seeds(31, "test_top.f", 2)
         self.assertEqual([e["RANDOM_SEED"] for e in sims], [str(x) for x in expect])
         self.assertEqual([e.get("TESTCASE") for e in sims], [None] * 3 + ["f"] * 2)
         self.assertTrue(all(e["MODULE"] == "test_top" for e in sims))
@@ -3765,15 +3774,15 @@ class TestCoverage(unittest.TestCase):
     def test_the_merge_takes_every_runs_counts(self):
         config = self.listed()
         merged = []
-        real = entrypoint.merge_coverage
-        with patch("entrypoint.merge_coverage", side_effect=lambda d, m: (merged.append(list(d)), real(d, m))):
+        real = c4o.regress.merge_coverage
+        with patch("c4o.regress.merge_coverage", side_effect=lambda d, m: (merged.append(list(d)), real(d, m))):
             self.coverage(config)
         self.assertEqual(merged, [[f"build/coverage/run-{n}.dat" for n in range(1, 6)]])
 
     def test_a_bad_list_stops_before_the_build(self):
         config = self.listed("- test: test_nope\n")
         calls = []
-        with patch("entrypoint.log_error"), self.assertRaises(SystemExit) as cm:
+        with patch("c4o.common.log_error"), self.assertRaises(SystemExit) as cm:
             self.coverage(config, calls=calls)
         self.assertEqual(cm.exception.code, 1)
         self.assertEqual([c for c, _ in calls if c[0] == "make"], [])
@@ -3841,13 +3850,13 @@ class TestCoverage(unittest.TestCase):
         config = {"DESIGN_NAME": "top", "VERILOG_FILES": ["src/top.v"], "TEST_FILES": ["test/tb.v"]}
         self.project()
         open("test/tb.v", "w").write("x")
-        with patch("entrypoint.subprocess.run", side_effect=AssertionError("must not run")):
+        with patch("c4o.regress.subprocess.run", side_effect=AssertionError("must not run")):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                entrypoint.cmd_coverage(MagicMock(files=None, if_configured=True), config)
+                c4o.regress.cmd_coverage(MagicMock(files=None, if_configured=True), config)
             self.assertIn("coverage skipped: COCOTB_TESTS is not set", out.getvalue())
             with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
-                entrypoint.cmd_coverage(MagicMock(files=None, if_configured=False), config)
+                c4o.regress.cmd_coverage(MagicMock(files=None, if_configured=False), config)
 
     def test_each_run_starts_from_an_empty_directory(self):
         self.project()
@@ -3915,12 +3924,12 @@ class TestRegress(unittest.TestCase):
             return MagicMock(returncode=0)
 
         out, code = io.StringIO(), None
-        with patch("entrypoint.run_command") as run_command, \
-             patch("entrypoint.cocotb_config", return_value=os.path.dirname(__file__)), \
-             patch("entrypoint.subprocess.run", side_effect=fake_vvp), \
+        with patch("c4o.common.run_command") as run_command, \
+             patch("c4o.sim.cocotb_config", return_value=os.path.dirname(__file__)), \
+             patch("c4o.regress.subprocess.run", side_effect=fake_vvp), \
              contextlib.redirect_stdout(out):
             try:
-                entrypoint.cmd_regress(self.args(**kw), self.config)
+                c4o.regress.cmd_regress(self.args(**kw), self.config)
             except SystemExit as e:
                 code = e.code
         return runs, run_command, code, out.getvalue()
@@ -3933,16 +3942,16 @@ class TestRegress(unittest.TestCase):
 
     def test_a_module_a_function_and_the_default_of_one_seed(self):
         self.listing("- test: test_a\n  seeds: 20\n- test: test_b.f\n  seeds: 3\n")
-        got = entrypoint.load_regression(self.config, ["tb/test_a.py", "tb/test_b.py"])
+        got = c4o.regress.load_regression(self.config, ["tb/test_a.py", "tb/test_b.py"])
         self.assertEqual(got, [("test_a", "test_a", None, 20), ("test_b.f", "test_b", "f", 3)])
         self.listing("- test: test_a\n")
-        got = entrypoint.load_regression(self.config, ["tb/test_a.py"])
+        got = c4o.regress.load_regression(self.config, ["tb/test_a.py"])
         self.assertEqual(got, [("test_a", "test_a", None, 1)])
 
     def assertRejected(self, text, message):
         """The list is refused with `message` in the log, before anything is compiled."""
         self.listing(text)
-        with patch("entrypoint.log_error") as log:
+        with patch("c4o.common.log_error") as log:
             runs, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertIn(message, " ".join(str(c[0][0]) for c in log.call_args_list))
@@ -3980,7 +3989,7 @@ class TestRegress(unittest.TestCase):
         self.assertRejected("- test: [unclosed\n", "Failed to parse")
 
     def test_a_missing_list_file_is_refused(self):
-        with patch("entrypoint.log_error") as log:
+        with patch("c4o.common.log_error") as log:
             runs, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertIn("Could not read the test list tb/regression.yaml", log.call_args[0][0])
@@ -3988,7 +3997,7 @@ class TestRegress(unittest.TestCase):
 
     def test_every_problem_is_reported_not_only_the_first(self):
         self.listing("- test: test_x\n- test: test_a\n  seeds: 0\n")
-        with patch("entrypoint.log_error") as log:
+        with patch("c4o.common.log_error") as log:
             _, _, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertEqual(log.call_count, 2)
@@ -3996,13 +4005,13 @@ class TestRegress(unittest.TestCase):
     # --- the seeds -----------------------------------------------------------
 
     def test_the_same_base_seed_gives_the_same_seeds(self):
-        self.assertEqual(entrypoint.derive_seeds(1234, "test_a", 20),
-                         entrypoint.derive_seeds(1234, "test_a", 20))
-        self.assertNotEqual(entrypoint.derive_seeds(1234, "test_a", 20),
-                            entrypoint.derive_seeds(1235, "test_a", 20))
+        self.assertEqual(c4o.regress.derive_seeds(1234, "test_a", 20),
+                         c4o.regress.derive_seeds(1234, "test_a", 20))
+        self.assertNotEqual(c4o.regress.derive_seeds(1234, "test_a", 20),
+                            c4o.regress.derive_seeds(1235, "test_a", 20))
 
     def test_the_seeds_of_an_entry_are_distinct_and_positive(self):
-        seeds = entrypoint.derive_seeds(7, "test_a", 500)
+        seeds = c4o.regress.derive_seeds(7, "test_a", 500)
         self.assertEqual(len(set(seeds)), 500)
         self.assertTrue(all(0 < s < 2**31 for s in seeds))
 
@@ -4025,7 +4034,7 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(again["seed"], 4242)
         self.regress()
         self.assertEqual(self.summary()["runs"], again["runs"])
-        self.assertEqual([r["seed"] for r in again["runs"]], entrypoint.derive_seeds(4242, "test_a", 4))
+        self.assertEqual([r["seed"] for r in again["runs"]], c4o.regress.derive_seeds(4242, "test_a", 4))
 
     def test_without_random_seed_the_base_seed_is_new_each_time(self):
         self.listing("- test: test_a\n")
@@ -4037,7 +4046,7 @@ class TestRegress(unittest.TestCase):
     def test_a_base_seed_that_is_not_a_number_is_refused(self):
         self.listing("- test: test_a\n")
         os.environ["RANDOM_SEED"] = "abc"
-        with patch("entrypoint.log_error") as log:
+        with patch("c4o.common.log_error") as log:
             runs, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertIn("RANDOM_SEED must be a whole number", log.call_args[0][0])
@@ -4055,7 +4064,7 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(len(runs), 5)
         a = [r for r in runs if r["MODULE"] == "test_a"]
         b = [r for r in runs if r["MODULE"] == "test_b"]
-        self.assertEqual([r["RANDOM_SEED"] for r in a], [str(s) for s in entrypoint.derive_seeds(11, "test_a", 3)])
+        self.assertEqual([r["RANDOM_SEED"] for r in a], [str(s) for s in c4o.regress.derive_seeds(11, "test_a", 3)])
         # TESTCASE only for the entry that names a function.
         self.assertTrue(all("TESTCASE" not in r for r in a))
         self.assertTrue(all(r["TESTCASE"] == "f" for r in b))
@@ -4086,7 +4095,7 @@ class TestRegress(unittest.TestCase):
         runs, _, code, out = self.regress({("test_a", None): self.FAIL_XML})
         self.assertEqual(code, 1)
         self.assertEqual(len(runs), 4)  # the failure stopped nothing
-        seed = entrypoint.derive_seeds(5, "test_a", 2)[0]
+        seed = c4o.regress.derive_seeds(5, "test_a", 2)[0]
         self.assertIn(f"make cocotb SEED={seed} TEST=test_a", out)
         self.assertIn("test_b", out)
         self.assertIn("2/4 runs passed", out)
@@ -4103,13 +4112,13 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_unreadable_results_are_a_failure(self):
-        self.assertEqual(entrypoint.run_verdict("absent.xml"), "fail")
+        self.assertEqual(c4o.regress.run_verdict("absent.xml"), "fail")
         open("bad.xml", "w").write("<testsuites><not closed")
-        self.assertEqual(entrypoint.run_verdict("bad.xml"), "fail")
+        self.assertEqual(c4o.regress.run_verdict("bad.xml"), "fail")
 
     def test_an_error_element_also_fails_a_run(self):
         open("e.xml", "w").write('<testsuites><testsuite><testcase name="x"><error message="b"/></testcase></testsuite></testsuites>')
-        self.assertEqual(entrypoint.run_verdict("e.xml"), "fail")
+        self.assertEqual(c4o.regress.run_verdict("e.xml"), "fail")
 
     def test_the_table_has_a_row_per_entry(self):
         self.listing("- test: test_a\n  seeds: 2\n- test: test_b\n")
@@ -4123,7 +4132,7 @@ class TestRegress(unittest.TestCase):
         open("build/regress/summary.json", "w").write('{"stale": true}')
         open("build/regress/old-1.xml", "w").write("x")
         self.listing("- test: test_nope\n")  # stops after clearing
-        with patch("entrypoint.log_error"):
+        with patch("c4o.common.log_error"):
             self.regress()
         self.assertFalse(os.path.exists("build/regress/summary.json"))
         self.assertFalse(os.path.exists("build/regress/old-1.xml"))
@@ -4132,7 +4141,7 @@ class TestRegress(unittest.TestCase):
 
     def test_without_the_key_if_configured_skips_with_a_message(self):
         del self.config["//REGRESSION"]
-        with patch("entrypoint.log_info") as info:
+        with patch("c4o.common.log_info") as info:
             runs, run_command, code, _ = self.regress(if_configured=True)
         self.assertIsNone(code)
         self.assertIn("regress skipped: REGRESSION is not set", info.call_args[0][0])
@@ -4141,7 +4150,7 @@ class TestRegress(unittest.TestCase):
 
     def test_without_the_key_and_without_the_flag_it_is_an_error(self):
         del self.config["//REGRESSION"]
-        with patch("entrypoint.log_error") as log:
+        with patch("c4o.common.log_error") as log:
             _, run_command, code, _ = self.regress()
         self.assertEqual(code, 1)
         self.assertIn("No test list", log.call_args[0][0])
@@ -4173,12 +4182,12 @@ class TestRegress(unittest.TestCase):
                 open(os.path.join(kw["cwd"], "coverage.dat"), "w").write("")
             return MagicMock(returncode=0, stdout="/x", stderr="")
 
-        with patch("entrypoint.subprocess.run", side_effect=fake), \
-             patch("entrypoint.merge_coverage"), \
-             patch("entrypoint.parse_coverage_dat", return_value=({}, {}, [])), \
-             patch("entrypoint.uncovered_lines", return_value=[]), \
+        with patch("c4o.regress.subprocess.run", side_effect=fake), \
+             patch("c4o.regress.merge_coverage"), \
+             patch("c4o.regress.parse_coverage_dat", return_value=({}, {}, [])), \
+             patch("c4o.regress.uncovered_lines", return_value=[]), \
              contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_coverage(self.args(), self.config)
+            c4o.regress.cmd_coverage(self.args(), self.config)
         key = lambda e: (e["MODULE"], e.get("TESTCASE"), e["RANDOM_SEED"])
         self.assertEqual([key(e) for e in sims], [key(e) for e in regress_runs])
         self.assertEqual(len(sims), 6)
@@ -4188,13 +4197,13 @@ class TestRegress(unittest.TestCase):
     def cocotb(self, test=None, **kw):
         if test is not None:
             os.environ["TEST"] = test
-        with patch("entrypoint.run_command") as run_command, \
-             patch("entrypoint.cocotb_config", return_value=os.path.dirname(__file__)), \
-             patch("entrypoint.check_cocotb_results"), \
+        with patch("c4o.common.run_command") as run_command, \
+             patch("c4o.sim.cocotb_config", return_value=os.path.dirname(__file__)), \
+             patch("c4o.sim.check_cocotb_results"), \
              contextlib.redirect_stdout(io.StringIO()):
             code = None
             try:
-                entrypoint.cmd_cocotb(self.args(**kw), self.config)
+                c4o.sim.cmd_cocotb(self.args(**kw), self.config)
             except SystemExit as e:
                 code = e.code
         return run_command, code
@@ -4221,7 +4230,7 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(run_command.call_args_list[1][1]["env"]["MODULE"], "test_a,test_b")
 
     def test_an_unknown_test_is_refused_before_anything_is_compiled(self):
-        with patch("entrypoint.log_error") as log:
+        with patch("c4o.common.log_error") as log:
             run_command, code = self.cocotb("test_nope")
         self.assertEqual(code, 1)
         self.assertIn("'test_nope' names no module of COCOTB_TESTS. The modules are: test_a, test_b", log.call_args[0][0])
@@ -4232,8 +4241,8 @@ class TestRegress(unittest.TestCase):
         open("runs/x/final/nl/top.nl.v", "w").write("module top; endmodule")
         self.config["PDK"] = "sky130A"
         self.config["STD_CELL_LIBRARY"] = "sky130_fd_sc_hd"
-        with patch("entrypoint.find_netlist", return_value="runs/x/final/nl/top.nl.v"), \
-             patch("entrypoint.cell_models", return_value=[]):
+        with patch("c4o.runs.find_netlist", return_value="runs/x/final/nl/top.nl.v"), \
+             patch("c4o.sim.cell_models", return_value=[]):
             run_command, code = self.cocotb("test_b", netlist="")
         self.assertIsNone(code)
         self.assertEqual(run_command.call_args_list[1][1]["env"]["MODULE"], "test_a,test_b")
@@ -4251,7 +4260,7 @@ class TestRegress(unittest.TestCase):
         with open("build/cocotb-results.xml", "w") as f:
             f.write(self.PASS_XML)
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+            c4o.site.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
         with open("build/site/index.html") as f:
             return f.read()
 
@@ -4309,7 +4318,7 @@ class TestRegress(unittest.TestCase):
         self.assertEqual(self.site(), plain)
 
     def test_the_regression_chip_is_red_when_a_run_failed(self):
-        page = entrypoint.site_page.render("top", [], None, [], {"SOURCE_DATE_EPOCH": "0"}, regression=self.SUMMARY)
+        page = c4o.site_page.render("top", [], None, [], {"SOURCE_DATE_EPOCH": "0"}, regression=self.SUMMARY)
         self.assertIn('class="chip FAIL">2/4 regression runs', page)
 
     def test_a_page_with_only_a_regression_is_not_empty(self):
@@ -4317,12 +4326,12 @@ class TestRegress(unittest.TestCase):
         with open("build/regress/summary.json", "w") as f:
             json.dump(self.SUMMARY, f)
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
+            c4o.site.cmd_site(MagicMock(), {"DESIGN_NAME": "top"})
         self.assertTrue(os.path.exists("build/site/index.html"))
 
     def test_the_page_escapes_what_it_did_not_write(self):
         summary = dict(self.SUMMARY, runs=[{"entry": "<b>x</b>", "seed": 1, "verdict": "fail"}])
-        page = entrypoint.site_page.render("top", [], None, [], {}, regression=summary)
+        page = c4o.site_page.render("top", [], None, [], {}, regression=summary)
         self.assertNotIn("<b>x</b>", page)
 
 class TestLogColor(unittest.TestCase):
@@ -4336,9 +4345,9 @@ class TestLogColor(unittest.TestCase):
             if no_color is not None:
                 os.environ["NO_COLOR"] = no_color
             with contextlib.redirect_stdout(out):
-                entrypoint.log_info("a")
-                entrypoint.log_error("b")
-                entrypoint.log_warn("c")
+                c4o.common.log_info("a")
+                c4o.common.log_error("b")
+                c4o.common.log_warn("c")
         return out.getvalue()
 
     def test_a_terminal_without_no_color_gets_codes(self):
@@ -4363,11 +4372,11 @@ class TestLoadConfigVersion(unittest.TestCase):
     def load(self, version):
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as d, patch("os.getcwd", return_value=d), \
-                patch.object(entrypoint, "c4o_version", return_value=version), \
+                patch.object(c4o.common, "c4o_version", return_value=version), \
                 contextlib.redirect_stdout(out):
             with open(os.path.join(d, "config.yaml"), "w") as f:
                 f.write("DESIGN_NAME: demo\n")
-            entrypoint.load_config()
+            c4o.common.load_config()
         return out.getvalue()
 
     def test_the_config_line_names_the_release(self):
@@ -4389,7 +4398,7 @@ class TestProgressMode(unittest.TestCase):
     """PROGRESS= / C4O_PROGRESS: which of raw, plain and tty a run gets."""
 
     def mode(self, env, isatty):
-        return progress.choose_mode(env, isatty)
+        return c4o.progress.choose_mode(env, isatty)
 
     def test_a_named_mode_wins_over_what_the_terminal_is(self):
         for want in ("raw", "plain", "tty"):
@@ -4411,16 +4420,16 @@ class TestProgressMode(unittest.TestCase):
         self.assertEqual(self.mode({"TERM": "dumb"}, True), "plain")
 
     def test_a_word_that_is_not_a_mode_is_auto_and_is_known_to_be_wrong(self):
-        self.assertEqual(progress.parse_mode({"C4O_PROGRESS": "fancy"}), ("fancy", False))
+        self.assertEqual(c4o.progress.parse_mode({"C4O_PROGRESS": "fancy"}), ("fancy", False))
         self.assertEqual(self.mode({"C4O_PROGRESS": "fancy", "TERM": "xterm"}, True), "tty")
-        self.assertEqual(progress.parse_mode({}), ("auto", True))
+        self.assertEqual(c4o.progress.parse_mode({}), ("auto", True))
 
     def test_the_case_of_the_word_does_not_matter(self):
         self.assertEqual(self.mode({"C4O_PROGRESS": "RAW"}, True), "raw")
 
     def test_plain_has_no_escape_codes_and_says_ok_fail_skip(self):
-        style = progress.Style("plain", {})
-        rows = [progress.ledger_row(style, k, "lint", "text") for k in ("ok", "fail", "skip")]
+        style = c4o.progress.Style("plain", {})
+        rows = [c4o.progress.ledger_row(style, k, "lint", "text") for k in ("ok", "fail", "skip")]
         self.assertNotIn("\x1b", "".join(rows))
         self.assertTrue(rows[0].lstrip().startswith("ok "))
         self.assertTrue(rows[1].lstrip().startswith("FAIL "))
@@ -4428,23 +4437,23 @@ class TestProgressMode(unittest.TestCase):
         self.assertTrue(all(ord(c) < 128 for c in "".join(rows)))
 
     def test_a_terminal_has_symbols_and_colour(self):
-        style = progress.Style("tty", {"TERM": "xterm"})
-        row = progress.ledger_row(style, "ok", "lint", "text")
+        style = c4o.progress.Style("tty", {"TERM": "xterm"})
+        row = c4o.progress.ledger_row(style, "ok", "lint", "text")
         self.assertIn("✓", row)
         self.assertIn("\x1b[92m", row)
 
     def test_no_color_removes_the_colour_and_keeps_the_symbols(self):
-        style = progress.Style("tty", {"NO_COLOR": "1"})
-        row = progress.ledger_row(style, "fail", "cocotb", "text")
+        style = c4o.progress.Style("tty", {"NO_COLOR": "1"})
+        row = c4o.progress.ledger_row(style, "fail", "cocotb", "text")
         self.assertIn("✗", row)
         self.assertNotRegex(row, r"\x1b\[(3\d|9\d)m")
 
     def test_an_empty_no_color_is_not_no_color(self):
-        row = progress.ledger_row(progress.Style("tty", {"NO_COLOR": ""}), "ok", "lint", "t")
+        row = c4o.progress.ledger_row(c4o.progress.Style("tty", {"NO_COLOR": ""}), "ok", "lint", "t")
         self.assertIn("\x1b[92m", row)
 
     def test_c4o_ascii_replaces_the_symbols(self):
-        row = progress.ledger_row(progress.Style("tty", {"C4O_ASCII": "1"}), "ok", "lint", "t")
+        row = c4o.progress.ledger_row(c4o.progress.Style("tty", {"C4O_ASCII": "1"}), "ok", "lint", "t")
         self.assertNotIn("✓", row)
         self.assertIn("ok", row)
 
@@ -4452,30 +4461,30 @@ class TestLedgerLines(unittest.TestCase):
     """What a line of the ledger looks like at 80 and 120 columns."""
 
     def visible(self, rows):
-        return [progress.ANSI.sub("", r) for r in rows]
+        return [c4o.progress.ANSI.sub("", r) for r in rows]
 
     def test_a_stage_row_explains_itself_on_a_wide_terminal_only(self):
-        style = progress.Style("tty", {})
-        stage = stages.STAGES[3]
-        wide = self.visible([progress.stage_row(style, "ok", stage, 4, 22.0, 120)])[0]
-        narrow = self.visible([progress.stage_row(style, "ok", stage, 4, 22.0, 80)])[0]
+        style = c4o.progress.Style("tty", {})
+        stage = c4o.stages.STAGES[3]
+        wide = self.visible([c4o.progress.stage_row(style, "ok", stage, 4, 22.0, 120)])[0]
+        narrow = self.visible([c4o.progress.stage_row(style, "ok", stage, 4, 22.0, 80)])[0]
         self.assertIn(stage.blurb, wide)
         self.assertNotIn(stage.blurb, narrow)
         self.assertIn("4 steps", narrow)
         self.assertIn("22s", narrow)
 
     def test_the_explanation_is_there_from_100_columns_and_not_at_99(self):
-        style = progress.Style("tty", {})
-        stage = stages.STAGES[0]
-        self.assertIn(stage.blurb, self.visible([progress.stage_row(style, "ok", stage, 12, 4.0, 100)])[0])
-        self.assertNotIn(stage.blurb, self.visible([progress.stage_row(style, "ok", stage, 12, 4.0, 99)])[0])
+        style = c4o.progress.Style("tty", {})
+        stage = c4o.stages.STAGES[0]
+        self.assertIn(stage.blurb, self.visible([c4o.progress.stage_row(style, "ok", stage, 12, 4.0, 100)])[0])
+        self.assertNotIn(stage.blurb, self.visible([c4o.progress.stage_row(style, "ok", stage, 12, 4.0, 99)])[0])
 
     def test_plain_rows_never_carry_the_explanation(self):
-        row = progress.stage_row(progress.Style("plain", {}), "ok", stages.STAGES[0], 12, 4.0, 200)
-        self.assertNotIn(stages.STAGES[0].blurb, row)
+        row = c4o.progress.stage_row(c4o.progress.Style("plain", {}), "ok", c4o.stages.STAGES[0], 12, 4.0, 200)
+        self.assertNotIn(c4o.stages.STAGES[0].blurb, row)
 
     def test_one_step_is_not_steps(self):
-        row = progress.stage_row(progress.Style("plain", {}), "fail", stages.STAGES[2], 1, 0.2, 80)
+        row = c4o.progress.stage_row(c4o.progress.Style("plain", {}), "fail", c4o.stages.STAGES[2], 1, 0.2, 80)
         self.assertIn("1 step ", row)
         self.assertNotIn("1 steps", row)
 
@@ -4483,48 +4492,48 @@ class TestLedgerLines(unittest.TestCase):
         return [("  ▸ ", ), ("Routing", "bold"), ("  stage 5/7 · Detailed Routing (OpenROAD.DetailedRouting) · 3s in this step", )]
 
     def test_the_live_rows_at_120_columns(self):
-        style = progress.Style("tty", {})
-        rows = self.visible(progress.live_rows(style, 120, self.head(style), 47, 76, "47/76 steps · 0:52 elapsed", "[INFO DRT-0084] Complete 62 groups."))
+        style = c4o.progress.Style("tty", {})
+        rows = self.visible(c4o.progress.live_rows(style, 120, self.head(style), 47, 76, "47/76 steps · 0:52 elapsed", "[INFO DRT-0084] Complete 62 groups."))
         self.assertEqual(len(rows), 3)
         self.assertIn("(OpenROAD.DetailedRouting)", rows[0])
         self.assertIn("47/76 steps", rows[1])
         self.assertIn("Complete 62 groups.", rows[2])
 
     def test_the_live_rows_at_80_columns_drop_the_id_not_the_bar(self):
-        style = progress.Style("tty", {})
+        style = c4o.progress.Style("tty", {})
         head = [("  ▸ ", ), ("Routing", "bold"), (" 5/7 · Detailed Routing · 3s", )]
-        rows = self.visible(progress.live_rows(style, 80, head, 47, 76, "47/76 steps · 0:52 elapsed", "last"))
+        rows = self.visible(c4o.progress.live_rows(style, 80, head, 47, 76, "47/76 steps · 0:52 elapsed", "last"))
         self.assertEqual(len(rows), 3)
         self.assertNotIn("OpenROAD", rows[0])
         self.assertIn("47/76 steps", rows[1])
 
     def test_under_60_columns_there_is_no_bar(self):
-        style = progress.Style("tty", {})
-        rows = progress.live_rows(style, 50, [("  ▸ Routing", )], 1, 2, "1/2", "last")
+        style = c4o.progress.Style("tty", {})
+        rows = c4o.progress.live_rows(style, 50, [("  ▸ Routing", )], 1, 2, "1/2", "last")
         self.assertEqual(len(rows), 2)
 
     def test_under_40_columns_there_is_nothing_pinned(self):
-        self.assertEqual(progress.live_rows(progress.Style("tty", {}), 39, [("x", )], 1, 2, "1/2", "last"), [])
+        self.assertEqual(c4o.progress.live_rows(c4o.progress.Style("tty", {}), 39, [("x", )], 1, 2, "1/2", "last"), [])
 
     def test_a_row_is_never_wider_than_the_terminal_and_a_cut_shows(self):
-        style = progress.Style("tty", {})
+        style = c4o.progress.Style("tty", {})
         long = "x" * 300
         for width in (40, 60, 80, 120):
-            rows = self.visible(progress.live_rows(style, width, [(long, )], 1, 2, "1/2 steps", long))
+            rows = self.visible(c4o.progress.live_rows(style, width, [(long, )], 1, 2, "1/2 steps", long))
             self.assertTrue(all(len(r) < width for r in rows), (width, [len(r) for r in rows]))
             self.assertTrue(rows[0].endswith("…"))
 
     def test_the_bar_fills_in_proportion(self):
-        style = progress.Style("plain", {})
+        style = c4o.progress.Style("plain", {})
         self.assertEqual(style.bar(0, 10, 20), "-" * 20)
         self.assertEqual(style.bar(5, 10, 20), "#" * 10 + "-" * 10)
         self.assertEqual(style.bar(10, 10, 20), "#" * 20)
 
     def test_durations(self):
-        self.assertEqual(progress.fmt_secs(0.2), "<1s")
-        self.assertEqual(progress.fmt_secs(22.4), "22s")
-        self.assertEqual(progress.fmt_secs(97), "1:37")
-        self.assertEqual(progress.fmt_clock(3725), "1:02:05")
+        self.assertEqual(c4o.progress.fmt_secs(0.2), "<1s")
+        self.assertEqual(c4o.progress.fmt_secs(22.4), "22s")
+        self.assertEqual(c4o.progress.fmt_secs(97), "1:37")
+        self.assertEqual(c4o.progress.fmt_clock(3725), "1:02:05")
 
 class TestLastOutput(unittest.TestCase):
     def last(self, text):
@@ -4532,7 +4541,7 @@ class TestLastOutput(unittest.TestCase):
             path = os.path.join(d, "log")
             with open(path, "w") as f:
                 f.write(text)
-            return progress.last_output(path)
+            return c4o.progress.last_output(path)
 
     def test_the_last_line_that_starts_at_the_margin(self):
         self.assertEqual(self.last("[INFO A] one\n[INFO B] two  \n"), "[INFO B] two")
@@ -4544,21 +4553,21 @@ class TestLastOutput(unittest.TestCase):
         self.assertEqual(self.last("\x1b[32mgreen\x1b[0m\n\n   \n"), "green")
 
     def test_no_file_no_line(self):
-        self.assertEqual(progress.last_output("/nonexistent"), "")
+        self.assertEqual(c4o.progress.last_output("/nonexistent"), "")
 
 class TestLive(unittest.TestCase):
     """The rows under the ledger are drawn by moving up, and leave nothing."""
 
     def test_a_redraw_moves_up_over_the_old_rows_and_clears(self):
         out = io.StringIO()
-        live = progress.Live(out, True)
+        live = c4o.progress.Live(out, True)
         live.draw(["a", "b", "c"])
         live.draw(["a", "b", "d"])
         self.assertIn("\x1b[3A\r\x1b[J", out.getvalue())
 
     def test_an_unchanged_frame_is_not_drawn_again(self):
         out = io.StringIO()
-        live = progress.Live(out, True)
+        live = c4o.progress.Live(out, True)
         live.draw(["a"])
         before = out.getvalue()
         live.draw(["a"])
@@ -4566,7 +4575,7 @@ class TestLive(unittest.TestCase):
 
     def test_a_ledger_line_goes_above_the_rows_which_come_back(self):
         out = io.StringIO()
-        live = progress.Live(out, True)
+        live = c4o.progress.Live(out, True)
         live.draw(["row1", "row2"])
         live.commit("LEDGER")
         text = out.getvalue()
@@ -4575,14 +4584,14 @@ class TestLive(unittest.TestCase):
 
     def test_closing_erases_the_rows_and_draws_nothing(self):
         out = io.StringIO()
-        live = progress.Live(out, True)
+        live = c4o.progress.Live(out, True)
         live.draw(["a", "b"])
         live.close()
         self.assertTrue(out.getvalue().endswith("\x1b[2A\r\x1b[J"))
 
     def test_without_a_terminal_it_writes_the_ledger_and_no_codes(self):
         out = io.StringIO()
-        live = progress.Live(out, False)
+        live = c4o.progress.Live(out, False)
         live.draw(["row"])
         live.commit("LEDGER")
         live.close()
@@ -4590,7 +4599,7 @@ class TestLive(unittest.TestCase):
 
     def test_no_absolute_positioning_and_no_alternate_screen(self):
         out = io.StringIO()
-        live = progress.Live(out, True)
+        live = c4o.progress.Live(out, True)
         for n in range(3):
             live.draw([f"r{n}", "x"])
             live.commit(f"l{n}")
@@ -4605,7 +4614,7 @@ class TestCocotbFailures(unittest.TestCase):
         self.xml = os.path.join(FIXTURES, "cocotb-failing-results.xml")
 
     def test_the_failed_tests_with_file_line_and_message(self):
-        info = progress.summarize_cocotb(self.log, self.xml, cwd="/workspace")
+        info = c4o.progress.summarize_cocotb(self.log, self.xml, cwd="/workspace")
         self.assertEqual(info["seed"], "1791475857")
         self.assertEqual((info["total"], info["passed"], len(info["failures"])), (5, 1, 4))
         first = info["failures"][0]
@@ -4628,31 +4637,31 @@ class TestCocotbFailures(unittest.TestCase):
             "                                                            assert dut.q.value == 1\n"
             "                                                        AssertionError: q is low\n"
             "  100.00ns INFO     cocotb.regression                  *****\n")
-        block = progress.cocotb_failure_blocks(log)["t"]
+        block = c4o.progress.cocotb_failure_blocks(log)["t"]
         self.assertEqual(block["where"], ("/workspace/tb/helpers.py", "22"))
         self.assertEqual(block["message"], ["AssertionError: q is low"])
 
     def test_the_cell_count_is_the_last_one_yosys_printed(self):
         text = "Yosys 0.33 (git sha1 x)\n   Number of cells:                 10\n...\n   Number of cells:                 54\n"
-        self.assertEqual(progress.synth_text(text), "yosys 0.33, 54 cells")
+        self.assertEqual(c4o.progress.synth_text(text), "yosys 0.33, 54 cells")
 
     def test_cocotbs_indentation_is_taken_off(self):
-        info = progress.summarize_cocotb(self.log, self.xml, cwd="/workspace")
+        info = c4o.progress.summarize_cocotb(self.log, self.xml, cwd="/workspace")
         for fail in info["failures"]:
             self.assertTrue(all(not line.startswith(" ") for line in fail["message"]), fail["message"])
 
     def test_a_passing_run(self):
-        info = progress.summarize_cocotb(fixture_text("cocotb-passing.log"),
+        info = c4o.progress.summarize_cocotb(fixture_text("cocotb-passing.log"),
                                          os.path.join(FIXTURES, "cocotb-passing-results.xml"))
         self.assertEqual((info["total"], info["passed"], info["failures"]), (5, 5, []))
         self.assertEqual(info["seed"], "1791475867")
 
     def test_a_seed_given_to_the_run_is_read_too(self):
-        info = progress.summarize_cocotb("0.00ns INFO cocotb  Seeding Python random module with supplied seed 77\n", "/nonexistent.xml")
+        info = c4o.progress.summarize_cocotb("0.00ns INFO cocotb  Seeding Python random module with supplied seed 77\n", "/nonexistent.xml")
         self.assertEqual(info["seed"], "77")
 
     def test_a_missing_results_file_is_no_tests_not_a_crash(self):
-        info = progress.summarize_cocotb(self.log, "/nonexistent.xml")
+        info = c4o.progress.summarize_cocotb(self.log, "/nonexistent.xml")
         self.assertEqual((info["total"], info["failures"]), (0, []))
 
     def test_without_a_results_file_the_row_says_only_that_it_failed(self):
@@ -4660,7 +4669,7 @@ class TestCocotbFailures(unittest.TestCase):
             cwd = os.getcwd()
             os.chdir(d)
             try:
-                text = progress.failed_text("cocotb", self.log, 9.0, progress.Style("plain", {}))
+                text = c4o.progress.failed_text("cocotb", self.log, 9.0, c4o.progress.Style("plain", {}))
             finally:
                 os.chdir(cwd)
         self.assertEqual(text, "failed, 9.0 s")
@@ -4674,8 +4683,8 @@ class TestCocotbFailures(unittest.TestCase):
             os.chdir(d)
             try:
                 with patch("os.getcwd", return_value="/workspace"):
-                    return progress.failure_block("cocotb", self.log, "build/log/cocotb.log"), \
-                        progress.failed_text("cocotb", self.log, 9.0, progress.Style("plain", {}))
+                    return c4o.progress.failure_block("cocotb", self.log, "build/log/cocotb.log"), \
+                        c4o.progress.failed_text("cocotb", self.log, 9.0, c4o.progress.Style("plain", {}))
             finally:
                 os.chdir(cwd)
 
@@ -4712,7 +4721,7 @@ class TestCocotbFailures(unittest.TestCase):
             lines = [f"%Error: line {n}" for n in range(100)] + ["[ERROR] Command failed with exit code 1"]
             with open(log, "w") as f:
                 f.write("\n".join(lines) + "\n")
-            block = progress.failure_block("lint", "\n".join(lines), log)
+            block = c4o.progress.failure_block("lint", "\n".join(lines), log)
         self.assertIn("[ERROR] Command failed with exit code 1", block)
         self.assertIn("%Error: line 99", block)
         self.assertNotIn("%Error: line 10", block)
@@ -4742,7 +4751,7 @@ class TestRunDirState(unittest.TestCase):
                 f.write(runtime)
 
     def test_a_step_that_has_started(self):
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         self.step("01-verilator-lint", state=False)
         rd.scan(10.0)
         self.assertEqual([s.name for s in rd.steps], ["01-verilator-lint"])
@@ -4750,7 +4759,7 @@ class TestRunDirState(unittest.TestCase):
         self.assertIs(rd.current, rd.steps[0])
 
     def test_a_step_that_has_finished_has_its_runtime(self):
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         self.step("01-verilator-lint", runtime="00:00:01.250")
         rd.scan(10.0)
         self.assertTrue(rd.steps[0].ok)
@@ -4758,7 +4767,7 @@ class TestRunDirState(unittest.TestCase):
         self.assertAlmostEqual(rd.steps[0].seconds, 1.25)
 
     def test_a_state_file_that_is_still_being_written_does_not_count(self):
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         self.step("01-verilator-lint", state_text="")
         rd.scan(10.0)
         self.assertFalse(rd.steps[0].ok)
@@ -4769,7 +4778,7 @@ class TestRunDirState(unittest.TestCase):
 
     def test_the_next_directory_ends_a_step_that_never_wrote_a_state(self):
         # a signoff check that failed with a deferred error: no state_out.json, no runtime.txt
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         self.step("63-checker-xor", state=False)
         rd.scan(10.0)
         self.assertIs(rd.current, rd.steps[0])
@@ -4784,21 +4793,21 @@ class TestRunDirState(unittest.TestCase):
         self.step("42-openroad-repairantennas")
         os.makedirs(os.path.join(self.run, "42-openroad-repairantennas", "1-openroad-diodeinsertion"))
         os.makedirs(os.path.join(self.run, "42-openroad-repairantennas", "2-openroad-checkantennas"))
-        rd = progress.RunDir(self.run)
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         self.step("43-next")
         rd.scan(1.0)
         self.assertEqual([s.name for s in rd.steps], ["43-next"])
 
     def test_nested_steps_alongside_new_ones_count_once(self):
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         self.step("42-openroad-repairantennas")
         os.makedirs(os.path.join(self.run, "42-openroad-repairantennas", "1-openroad-diodeinsertion"))
         rd.scan(1.0)
         self.assertEqual(len(rd.steps), 1)
 
     def test_files_in_the_run_directory_are_not_steps(self):
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         for name in ("flow.log", "error.log", "resolved.json", "tmp"):
             open(os.path.join(self.run, name), "w").close()
         os.makedirs(os.path.join(self.run, "final"))
@@ -4808,20 +4817,20 @@ class TestRunDirState(unittest.TestCase):
     def test_what_was_there_before_the_flow_started_is_not_ours(self):
         self.step("01-verilator-lint")
         self.step("13-openroad-floorplan")
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         self.step("14-openroad-floorplan", state=False)
         rd.scan(5.0)
         self.assertEqual([s.name for s in rd.steps], ["14-openroad-floorplan"])
 
     def test_steps_are_ordered_by_number_and_not_by_text(self):
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         for n, name in ((55, "55-a"), (119, "119-b"), (9, "09-c")):
             self.step(name)
         rd.scan(1.0)
         self.assertEqual([s.ordinal for s in rd.steps], [9, 55, 119])
 
     def test_the_stage_follows_the_table_and_an_unknown_step_stays_in_the_stage(self):
-        rd = progress.RunDir(self.run)
+        rd = c4o.progress.RunDir(self.run)
         for name in ("01-verilator-lint", "02-somethingnew-unseen", "13-openroad-floorplan", "14-newvendor-thing"):
             self.step(name)
         rd.scan(1.0)
@@ -4833,36 +4842,36 @@ class TestStages(unittest.TestCase):
             return [i for i, _ in json.load(f)["steps"]]
 
     def test_the_76_steps_of_blinky_fall_into_seven_stages(self):
-        counts = stages.step_counts(self.ids())
+        counts = c4o.stages.step_counts(self.ids())
         self.assertEqual(counts, [12, 11, 11, 4, 8, 14, 16])
         self.assertEqual(sum(counts), 76)
 
     def test_a_directory_name_is_the_same_step_as_its_id(self):
-        self.assertEqual(stages.slug("OpenROAD.CTS"), stages.slug("openroad-cts"))
-        self.assertEqual(stages.group(["verilator-lint", "openroad-floorplan"]), [0, 1])
+        self.assertEqual(c4o.stages.slug("OpenROAD.CTS"), c4o.stages.slug("openroad-cts"))
+        self.assertEqual(c4o.stages.group(["verilator-lint", "openroad-floorplan"]), [0, 1])
 
     def test_an_unknown_id_joins_the_running_stage_and_the_first_stage_at_the_start(self):
-        self.assertEqual(stages.group(["Unknown.First", "OpenROAD.CTS", "Brand.New", "Checker.TrDRC", "Other.New"]),
+        self.assertEqual(c4o.stages.group(["Unknown.First", "OpenROAD.CTS", "Brand.New", "Checker.TrDRC", "Other.New"]),
                          [0, 3, 3, 5, 5])
 
 class TestPlan(unittest.TestCase):
     def test_the_plan_of_blinky(self):
-        plan = progress.Plan.load(os.path.join(FIXTURES, "plan-blinky.json"))
+        plan = c4o.progress.Plan.load(os.path.join(FIXTURES, "plan-blinky.json"))
         self.assertEqual((plan.version, plan.total, plan.skipped), ("3.0.14", 76, 4))
         self.assertEqual(plan.step_id("openroad-cts"), "OpenROAD.CTS")
         self.assertEqual(plan.title("openroad-detailedrouting"), "Detailed Routing")
 
     def test_no_plan_is_none_and_not_an_error(self):
-        self.assertIsNone(progress.Plan.load("/nonexistent/plan.json"))
+        self.assertIsNone(c4o.progress.Plan.load("/nonexistent/plan.json"))
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write("not json")
         try:
-            self.assertIsNone(progress.Plan.load(f.name))
+            self.assertIsNone(c4o.progress.Plan.load(f.name))
         finally:
             os.remove(f.name)
 
     def test_without_a_plan_the_first_hyphen_is_the_dot(self):
-        self.assertEqual(progress.guess_id("openroad-globalplacementskipio"), "openroad.globalplacementskipio")
+        self.assertEqual(c4o.progress.guess_id("openroad-globalplacementskipio"), "openroad.globalplacementskipio")
 
 class WatchCase(unittest.TestCase):
     """
@@ -4897,7 +4906,7 @@ class WatchCase(unittest.TestCase):
     def steps(self, upto, missing_state=(), failing=None):
         def make():
             for n, ident in enumerate(self.ids[:upto], 1):
-                name = f"{n:02d}-{stages.slug(ident)}"
+                name = f"{n:02d}-{c4o.stages.slug(ident)}"
                 d = os.path.join(self.run, name)
                 os.makedirs(d)
                 with open(os.path.join(d, "state_in.json"), "w") as f:
@@ -4928,7 +4937,7 @@ class WatchCase(unittest.TestCase):
 
     def watch(self, env=None, report=None, partial=False, clock=None, sleep=None):
         out = io.StringIO()
-        code = progress.watch_flow(self.run, "build/log/status", "build/log/librelane.log", "build/log/plan.json",
+        code = c4o.progress.watch_flow(self.run, "build/log/status", "build/log/librelane.log", "build/log/plan.json",
                                    "build/demo.gds", "demo", partial=partial, env={"TERM": "xterm"} if env is None else env,
                                    out=out, report=report, clock=clock or self.clock(), sleep=sleep or (lambda s: None))
         self.code = code
@@ -5032,8 +5041,8 @@ class TestWatchOnATerminal(WatchCase):
             if count["n"] == ticks_before_status:
                 self.status(1)
         out = TTYOut()
-        with patch.object(progress, "term_width", return_value=120):
-            progress.watch_flow(self.run, "build/log/status", "build/log/librelane.log", "build/log/plan.json",
+        with patch.object(c4o.progress, "term_width", return_value=120):
+            c4o.progress.watch_flow(self.run, "build/log/status", "build/log/librelane.log", "build/log/plan.json",
                                 "build/demo.gds", "demo", env={"TERM": "xterm"}, out=out,
                                 clock=self.clock(step=1.0), sleep=sleep)
         return out.getvalue()
@@ -5052,7 +5061,7 @@ class TestWatchOnATerminal(WatchCase):
 
     def test_the_ledger_rows_stay(self):
         out = self.run_tty()
-        visible = progress.ANSI.sub("", out)
+        visible = c4o.progress.ANSI.sub("", out)
         self.assertIn("Synthesis     12 steps", visible)
 
 class TestProgressDoesNotBreakTheFlow(unittest.TestCase):
@@ -5060,9 +5069,9 @@ class TestProgressDoesNotBreakTheFlow(unittest.TestCase):
         args = entrypoint.build_parser().parse_args(
             ["progress", "--run-dir", "r", "--status", "s", "--log", "build/log/librelane.log", "--plan", "p"])
         out = io.StringIO()
-        with patch.object(progress, "watch_flow", side_effect=RuntimeError("boom")), \
+        with patch.object(c4o.progress, "watch_flow", side_effect=RuntimeError("boom")), \
                 contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
-            entrypoint.cmd_progress(args, {"DESIGN_NAME": "demo"})
+            c4o.sim.cmd_progress(args, {"DESIGN_NAME": "demo"})
         self.assertEqual(cm.exception.code, 0)
         self.assertIn("The progress display stopped (boom). LibreLane goes on. Its output: build/log/librelane.log", out.getvalue())
 
@@ -5073,7 +5082,7 @@ class TestWatchFailing(WatchCase):
         def more():
             with open(os.path.join(self.run, "error.log"), "w") as f:
                 f.write("[GPL-0301] Utilization 124.809 % exceeds 100%.\n")
-            d = os.path.join(self.run, "24-" + stages.slug(self.ids[23]))
+            d = os.path.join(self.run, "24-" + c4o.stages.slug(self.ids[23]))
             with open(os.path.join(d, "openroad-globalplacementskipio.log"), "w") as f:
                 f.write("\n".join(f"line {n}" for n in range(20)) + "\n")
         self.later(more)
@@ -5155,9 +5164,9 @@ class TestWatchFailing(WatchCase):
         def sleep(_):
             count["n"] += 1
             if count["n"] == 2:
-                handlers[progress.signal.SIGINT](progress.signal.SIGINT, None)
+                handlers[c4o.progress.signal.SIGINT](c4o.progress.signal.SIGINT, None)
                 self.status(1)
-        with patch.object(progress.signal, "signal", lambda num, handler: handlers.__setitem__(num, handler)):
+        with patch.object(c4o.progress.signal, "signal", lambda num, handler: handlers.__setitem__(num, handler)):
             out = self.watch(env={}, sleep=sleep)
         self.assertIn("interrupted at step 17 of 76 (Floorplan): ", out)
         self.assertIn("--from Odb.ManualMacroPlacement --with-initial-state runs/demo_run/17-odb-manualmacroplacement/state_in.json", out)
@@ -5243,7 +5252,7 @@ class TestRunAll(unittest.TestCase):
     def run_all(self, behaviour, env=None):
         entry = FakeEntry(self.dir, behaviour).path
         out = io.StringIO()
-        code = progress.run_all(entry, "demo", "9.9.9", env=env if env is not None else {"C4O_PROGRESS": "plain"},
+        code = c4o.progress.run_all(entry, "demo", "9.9.9", env=env if env is not None else {"C4O_PROGRESS": "plain"},
                                 out=out, sleep=lambda s: None)
         return code, out.getvalue()
 
@@ -5295,16 +5304,16 @@ class TestRunAll(unittest.TestCase):
 
     def test_sim_and_cocotb_are_asked_to_skip_what_is_not_configured(self):
         entry = FakeEntry(self.dir, {})
-        self.assertEqual(progress.command_of(entry.path, "sim")[-1], "--if-configured")
-        self.assertEqual(progress.command_of(entry.path, "cocotb")[-1], "--if-configured")
-        self.assertEqual(progress.command_of(entry.path, "lint")[1:], [entry.path, "lint"])
-        self.assertEqual(progress.command_of(entry.path, "synth")[1:], [entry.path, "synth"])
+        self.assertEqual(c4o.progress.command_of(entry.path, "sim")[-1], "--if-configured")
+        self.assertEqual(c4o.progress.command_of(entry.path, "cocotb")[-1], "--if-configured")
+        self.assertEqual(c4o.progress.command_of(entry.path, "lint")[1:], [entry.path, "lint"])
+        self.assertEqual(c4o.progress.command_of(entry.path, "synth")[1:], [entry.path, "synth"])
 
     def test_raw_streams_the_output_and_writes_no_files(self):
         entry = FakeEntry(self.dir, self.GOOD).path
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = progress.run_all(entry, "demo", "9.9.9", env={"C4O_PROGRESS": "raw"}, out=sys.stdout)
+            code = c4o.progress.run_all(entry, "demo", "9.9.9", env={"C4O_PROGRESS": "raw"}, out=sys.stdout)
         self.assertEqual(code, 0)
         self.assertFalse(os.path.exists("build/log"))
 
@@ -5329,7 +5338,7 @@ class TestAllCommand(unittest.TestCase):
         parser = entrypoint.build_parser()
         self.assertIs(parser.parse_args(["all"]).func, entrypoint.cmd_all)
         args = parser.parse_args(["progress", "--run-dir", "r", "--status", "s", "--log", "l", "--plan", "p"])
-        self.assertIs(args.func, entrypoint.cmd_progress)
+        self.assertIs(args.func, c4o.sim.cmd_progress)
         self.assertFalse(args.partial)
 
     def test_the_config_line_is_left_to_the_ledger(self):
@@ -5338,7 +5347,7 @@ class TestAllCommand(unittest.TestCase):
                 f.write("DESIGN_NAME: demo\n")
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                config = entrypoint.load_config(quiet=True)
+                config = c4o.common.load_config(quiet=True)
         self.assertEqual(out.getvalue(), "")
         self.assertEqual(config["DESIGN_NAME"], "demo")
 
@@ -5369,7 +5378,7 @@ class StageCase(unittest.TestCase):
     def flow(self, upto=76, defs=DEFS, no_state=(), seconds=1.0):
         """The directories of the first `upto` steps. The steps named in `defs` write a DEF, those in `no_state` never finish."""
         for n, ident in enumerate(self.ids[:upto], 1):
-            d = os.path.join(self.run, f"{n:02d}-{stages.slug(ident)}")
+            d = os.path.join(self.run, f"{n:02d}-{c4o.stages.slug(ident)}")
             os.makedirs(d)
             if ident in no_state:
                 continue
@@ -5379,7 +5388,7 @@ class StageCase(unittest.TestCase):
             with open(os.path.join(d, "runtime.txt"), "w") as f:
                 f.write(f"00:00:{seconds:06.3f}")
         for ident in defs:
-            d = os.path.join(self.run, f"{self.number[ident]:02d}-{stages.slug(ident)}")
+            d = os.path.join(self.run, f"{self.number[ident]:02d}-{c4o.stages.slug(ident)}")
             if os.path.isdir(d):
                 open(os.path.join(d, "demo.def"), "w").close()
 
@@ -5408,12 +5417,12 @@ class TestStageRenders(StageCase):
         self.final()
         # a step inside a step is not a step, whatever it wrote
         later = "OpenROAD.CheckAntennas-1"       # a step of the stage after the one that holds the DEF of routing
-        nested = os.path.join(self.run, f"{self.number[later]:02d}-{stages.slug(later)}", "1-x")
+        nested = os.path.join(self.run, f"{self.number[later]:02d}-{c4o.stages.slug(later)}", "1-x")
         os.makedirs(nested)
         open(os.path.join(nested, "demo.def"), "w").close()
-        self.assertEqual(stage_renders.plan(self.run), 5 - 0)
+        self.assertEqual(c4o.stage_renders.plan(self.run), 5 - 0)
         jobs = {os.path.basename(j["png"]): j["args"][0] for j in json.load(open("build/stages/jobs.json"))}
-        step = lambda ident: os.path.join(self.run, f"{self.number[ident]:02d}-{stages.slug(ident)}", "demo.def")
+        step = lambda ident: os.path.join(self.run, f"{self.number[ident]:02d}-{c4o.stages.slug(ident)}", "demo.def")
         self.assertEqual(jobs, {"floorplan.png": step("OpenROAD.GeneratePDN"),
                                 "placement.png": step("OpenROAD.DetailedPlacement"),
                                 "clock-tree.png": step("OpenROAD.CTS"),
@@ -5423,14 +5432,14 @@ class TestStageRenders(StageCase):
     def test_signoff_is_the_flows_own_render_copied_and_not_drawn_again(self):
         self.flow(defs=self.DEFS + ("Misc.ReportManufacturability",))
         self.final()
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         self.assertNotIn("signoff.png", [os.path.basename(j["png"]) for j in json.load(open("build/stages/jobs.json"))])
         with open("build/stages/signoff.png") as f:
             self.assertEqual(f.read(), "signoff picture")
 
     def test_the_arguments_are_what_librelanes_render_step_passes(self):
         self.flow()
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         args = json.load(open("build/stages/jobs.json"))[0]["args"]
         self.assertEqual(args[:3], [os.path.join(self.run, "21-openroad-generatepdn", "demo.def"), "--output", "build/stages/floorplan.png"])
         self.assertEqual(args[args.index("--resolution") + 1], "800")
@@ -5440,9 +5449,9 @@ class TestStageRenders(StageCase):
 
     def test_a_stage_with_no_def_has_no_picture(self):
         self.flow(defs=("OpenROAD.Floorplan", "OpenROAD.GlobalPlacement"))
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         self.draw()
-        self.assertEqual(stage_renders.collect(self.run), 2)
+        self.assertEqual(c4o.stage_renders.collect(self.run), 2)
         got = self.stages()
         self.assertIsNone(got["Synthesis"]["png"])
         self.assertIsNone(got["Clock tree"]["png"])
@@ -5452,16 +5461,16 @@ class TestStageRenders(StageCase):
 
     def test_a_step_that_never_finished_is_not_trusted_with_its_def(self):
         self.flow(no_state=("OpenROAD.DetailedRouting",))
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         jobs = {os.path.basename(j["png"]): j["args"][0] for j in json.load(open("build/stages/jobs.json"))}
         self.assertEqual(jobs["routing.png"], os.path.join(self.run, "39-openroad-globalrouting", "demo.def"))
 
     def test_a_flow_that_failed_in_the_middle_is_drawn_up_to_where_it_got(self):
         self.flow(upto=24, no_state=("OpenROAD.GlobalPlacementSkipIO",))
         self.final()    # what an earlier flow left in the same directory is not a render of this one
-        self.assertEqual(stage_renders.plan(self.run), 1)
+        self.assertEqual(c4o.stage_renders.plan(self.run), 1)
         self.draw()
-        self.assertEqual(stage_renders.collect(self.run), 1)
+        self.assertEqual(c4o.stage_renders.collect(self.run), 1)
         got = self.stages()
         self.assertEqual(got["Floorplan"]["png"], "floorplan.png")
         self.assertEqual(got["Placement"]["status"], "failed")
@@ -5474,9 +5483,9 @@ class TestStageRenders(StageCase):
     def test_a_deferred_failure_is_a_failed_signoff_with_the_picture_of_the_run(self):
         self.flow(no_state=("Checker.XOR",))
         self.final()
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         self.draw()
-        self.assertEqual(stage_renders.collect(self.run), 6)
+        self.assertEqual(c4o.stage_renders.collect(self.run), 6)
         got = self.stages()
         self.assertEqual((got["Signoff"]["status"], got["Signoff"]["failed"], got["Signoff"]["png"]),
                          ("failed", ["63-checker-xor"], "signoff.png"))
@@ -5488,8 +5497,8 @@ class TestStageRenders(StageCase):
         with open(os.path.join(self.run, "35-openroad-cts", "runtime.txt"), "w") as f:
             f.write("00:01:02.250")
         os.remove(os.path.join(self.run, "36-openroad-stamidpnr-1", "runtime.txt"))
-        stage_renders.plan(self.run)
-        stage_renders.collect(self.run)
+        c4o.stage_renders.plan(self.run)
+        c4o.stage_renders.collect(self.run)
         got = self.stages()
         self.assertEqual(got["Clock tree"]["seconds"], 62.25 + 0.5 + 0.5)
         self.assertEqual(got["Synthesis"]["seconds"], 12 * 0.5)
@@ -5499,16 +5508,16 @@ class TestStageRenders(StageCase):
         self.flow(seconds=1.0)
         # --from OpenROAD.Floorplan: the steps run again are appended after the 76
         for n, ident in enumerate(self.ids[12:23], 77):
-            d = os.path.join(self.run, f"{n:02d}-{stages.slug(ident)}")
+            d = os.path.join(self.run, f"{n:02d}-{c4o.stages.slug(ident)}")
             os.makedirs(d)
             with open(os.path.join(d, "state_out.json"), "w") as f:
                 f.write("{}")
             with open(os.path.join(d, "runtime.txt"), "w") as f:
                 f.write("00:00:02.000")
         open(os.path.join(self.run, "85-openroad-generatepdn", "demo.def"), "w").close()
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         self.draw()
-        stage_renders.collect(self.run)
+        c4o.stage_renders.collect(self.run)
         got = self.stages()
         self.assertEqual(got["Floorplan"]["seconds"], 22.0)
         self.assertEqual((got["Floorplan"]["after_step"], got["Synthesis"]["seconds"]), (85, 12.0))
@@ -5517,15 +5526,15 @@ class TestStageRenders(StageCase):
     def test_stages_json_names_every_stage_of_the_table_in_order(self):
         self.flow()
         self.final()
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         self.draw()
-        stage_renders.collect(self.run)
+        c4o.stage_renders.collect(self.run)
         with open("build/stages/stages.json") as f:
             data = json.load(f)
         self.assertEqual(data["run"], "demo_run")
-        self.assertEqual([r["name"] for r in data["stages"]], [s.name for s in stages.STAGES])
-        self.assertEqual([r["blurb"] for r in data["stages"]], [s.blurb for s in stages.STAGES])
-        self.assertEqual([r["detail"] for r in data["stages"]], [s.detail for s in stages.STAGES])
+        self.assertEqual([r["name"] for r in data["stages"]], [s.name for s in c4o.stages.STAGES])
+        self.assertEqual([r["blurb"] for r in data["stages"]], [s.blurb for s in c4o.stages.STAGES])
+        self.assertEqual([r["detail"] for r in data["stages"]], [s.detail for s in c4o.stages.STAGES])
         self.assertEqual(set(data["stages"][2]), {"name", "blurb", "first_step", "last_step", "seconds", "png",
                                                    "after_step", "status", "failed", "detail"})
         self.assertEqual([r["png"] for r in data["stages"]],
@@ -5535,10 +5544,10 @@ class TestStageRenders(StageCase):
 
     def test_a_picture_that_was_not_drawn_is_a_stage_without_one(self):
         self.flow()
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         self.draw(skip=("routing.png",))
         open("build/stages/floorplan.png", "w").close()     # an empty file is not a picture either
-        self.assertEqual(stage_renders.collect(self.run), 3)
+        self.assertEqual(c4o.stage_renders.collect(self.run), 3)
         got = self.stages()
         self.assertIsNone(got["Routing"]["png"])
         self.assertIsNone(got["Floorplan"]["png"])
@@ -5547,16 +5556,16 @@ class TestStageRenders(StageCase):
     def test_a_run_with_no_steps_leaves_nothing_and_the_old_pictures_are_gone(self):
         os.makedirs("build/stages")
         open("build/stages/stages.json", "w").close()
-        self.assertEqual(stage_renders.plan(self.run), 0)
-        self.assertIsNone(stage_renders.collect(self.run))
+        self.assertEqual(c4o.stage_renders.plan(self.run), 0)
+        self.assertIsNone(c4o.stage_renders.collect(self.run))
         self.assertFalse(os.path.exists("build/stages"))
-        self.assertEqual(stage_renders.plan("runs/none"), 0)
+        self.assertEqual(c4o.stage_renders.plan("runs/none"), 0)
 
     def test_a_run_that_does_not_say_where_klayout_is_has_no_jobs(self):
         self.flow()
         with open(os.path.join(self.run, "resolved.json"), "w") as f:
             f.write("{}")
-        self.assertEqual(stage_renders.plan(self.run), 0)
+        self.assertEqual(c4o.stage_renders.plan(self.run), 0)
         self.assertEqual(json.load(open("build/stages/jobs.json")), [])
 
 class TestStagesCommand(StageCase):
@@ -5564,7 +5573,7 @@ class TestStagesCommand(StageCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
             args = entrypoint.build_parser().parse_args(["stages", "--run-dir", self.run, *argv])
-            entrypoint.cmd_stages(args, {"DESIGN_NAME": "demo"})
+            c4o.sim.cmd_stages(args, {"DESIGN_NAME": "demo"})
         return cm.exception.code, out.getvalue()
 
     def test_it_names_the_directory_and_how_many_pictures_there_are(self):
@@ -5588,28 +5597,28 @@ class TestStagesCommand(StageCase):
 
     def test_it_never_fails(self):
         self.flow()
-        with patch.object(stage_renders, "plan", side_effect=RuntimeError("boom")):
+        with patch.object(c4o.stage_renders, "plan", side_effect=RuntimeError("boom")):
             code, out = self.run_cmd()
         self.assertEqual(code, 0)
-        with patch.object(stage_renders, "collect", side_effect=RuntimeError("boom")):
+        with patch.object(c4o.stage_renders, "collect", side_effect=RuntimeError("boom")):
             self.assertEqual(self.run_cmd("--collect")[0], 0)
 
 class TestFilesLine(unittest.TestCase):
     def test_bare_names_are_one_line_of_whole_entries(self):
-        import site_page
+        from c4o import site_page
         out = site_page.files_line([(f"stages/f{k}.png", 100) for k in range(7)], bare=True)
         self.assertNotIn("<br>", out)
         self.assertEqual(out.count('<span class="file"><a href="stages/f'), 7)
         self.assertIn('<a href="stages/f3.png" download>f3.png</a> <span class="of">100 B</span></span> &middot; <span class="file">', out)
 
     def test_a_name_is_whole_when_it_is_not_bare(self):
-        import site_page
+        from c4o import site_page
         out = site_page.files_line([("stages/f.png", 100)])
         self.assertIn('download>stages/f.png</a>', out)
         self.assertNotIn('class="file"', out)
 
     def test_the_text_of_a_stage_is_for_a_student(self):
-        for stage in stages.STAGES:
+        for stage in c4o.stages.STAGES:
             self.assertTrue(stage.detail.strip())
             self.assertNotRegex(stage.detail, r"\bstep\b|\w\.[A-Z]\w+")
 
@@ -5620,28 +5629,28 @@ class TestSiteStages(StageCase):
         with open("build/cocotb-results.xml", "w") as f:
             f.write('<testsuites><testsuite><testcase name="t" sim_time_ns="1"/></testsuite></testsuites>')
         with contextlib.redirect_stdout(io.StringIO()):
-            entrypoint.cmd_site(MagicMock(), config or {"DESIGN_NAME": "demo"})
+            c4o.site.cmd_site(MagicMock(), config or {"DESIGN_NAME": "demo"})
         with open("build/site/index.html") as f:
             return f.read()
 
     def drawn(self, **flow):
         self.flow(**flow)
         self.final()
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         self.draw()
-        stage_renders.collect(self.run)
+        c4o.stage_renders.collect(self.run)
 
     def test_the_page_has_a_section_with_a_picture_and_a_row_for_each_stage(self):
         self.drawn()
         page = self.page()
         self.assertIn('<section id="stages"><h2>How it was built</h2>', page)
-        for stage in stages.STAGES:
+        for stage in c4o.stages.STAGES:
             self.assertIn(f'<span class="nm">{html.escape(stage.name)}</span>', page)
         self.assertEqual(page.count('data-src="'), 6)
         # a row is its name; opened it says what the stage does, in the line of the terminal, and what to see
-        for stage in stages.STAGES:
+        for stage in c4o.stages.STAGES:
             self.assertIn(f'<p class="detail"><strong>{html.escape(stage.blurb)}</strong><br>{html.escape(stage.detail)}', page)
-        self.assertNotIn(f'<span class="sub">{html.escape(stages.STAGES[1].blurb)}', page)
+        self.assertNotIn(f'<span class="sub">{html.escape(c4o.stages.STAGES[1].blurb)}', page)
         self.assertIn('<span class="nm">Floorplan</span></span>', page)
         self.assertIn('<span class="nm">Synthesis</span><span class="sub">no picture</span>', page)
         self.assertIn('<figure class="pic"><a href="stages/floorplan.png"><img src="stages/floorplan.png"', page)
@@ -5713,9 +5722,9 @@ class TestSiteStages(StageCase):
 
     def test_a_flow_that_stopped_shows_the_stages_it_got_to(self):
         self.flow(upto=24, no_state=("OpenROAD.GlobalPlacementSkipIO",))
-        stage_renders.plan(self.run)
+        c4o.stage_renders.plan(self.run)
         self.draw()
-        stage_renders.collect(self.run)
+        c4o.stage_renders.collect(self.run)
         page = self.page()
         self.assertEqual(page.count('data-src="'), 1)
         self.assertIn('<span class="nm">Placement</span><span class="sub"><span class="bad">failed</span> &middot; no picture</span>', page)
