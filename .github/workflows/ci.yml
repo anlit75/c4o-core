@@ -240,7 +240,8 @@ jobs:
       # after the other. Its compile is the one that wrote build/rtl.vvp.
       - name: Run RTL check (Config)
         run: |
-          rm -f build/rtl.vvp build/synthesis.json
+          docker run --rm -v ${{ github.workspace }}:/workspace \
+            --entrypoint rm c4o-core:test -f build/rtl.vvp build/synthesis.json
           docker run --rm -v ${{ github.workspace }}:/workspace c4o-core:test rtl
           ls -l build/rtl.vvp build/synthesis.json
 
