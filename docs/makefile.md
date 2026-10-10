@@ -91,6 +91,8 @@ A bare `make` runs `all`, also when one of your targets is above the include.
 
 `make gds` starts LibreLane as a second container, from the place where `make` runs. Thus that place needs a Docker daemon: your host, or the Dev Container, which has its own.
 
+After the flow, passed or failed, it also draws one picture of each stage with that container's KLayout, into `build/stages/` ([commands.md](commands.md#a-picture-of-each-stage)). A picture that fails is left out without failing `make gds`. After a new `LIBRELANE_IMAGE`, check that its `scripts/klayout/render.py` still takes the arguments `c4o-core stages` gives it.
+
 ### What `make all` and `make gds` print
 
 `make all` prints one line for each of `lint`, `sim`, `cocotb` and `synth`. `make gds` prints one line for each of seven stages. The output of the tools goes to `build/log/`: `lint.log`, `sim.log`, `cocotb.log` and `synth.log`, and `librelane.log` for `make gds`, as LibreLane wrote it. The other targets print what their tools print.

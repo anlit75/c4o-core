@@ -246,6 +246,18 @@ The seven stages are in `scripts/stages.py`. A stage starts at its first step. A
 
 Ctrl-C stops LibreLane. The ledger then says at which step it stopped and prints the command that resumes there.
 
+### A picture of each stage
+
+After the flow, `make gds` draws one picture of each stage that has a layout. They go to `build/stages/`: `floorplan.png`, `placement.png`, `clock-tree.png`, `routing.png` and `finish-gds.png`. A picture shows the last step of its stage that wrote a DEF. LibreLane's own `render.py` draws it, with the colours and options of the `KLayout.Render` step. Synthesis has no layout, so it has no picture. `signoff.png` is LibreLane's `final/render/<design>.png`, copied.
+
+This also runs after a flow that failed, and draws what is there. A picture that cannot be drawn is a stage without one. It does not fail `make gds`.
+
+`build/stages/stages.json` has one entry for each stage. It holds the name and description from `scripts/stages.py`, the first and last step, the picture or `null`, the step the picture follows and a short explanation for the page. The seconds are the sum of the `runtime.txt` of the steps. The status is `ok`, `failed` or `not reached`.
+
+A stage is `failed` when one of its steps never wrote its `state_out.json`. That includes a signoff check that fails with a deferred error. There the flow runs to the end and `final/` exists.
+
+The ledger ends with one line, `Stages      build/stages/ (5 renders)`. `PROGRESS=raw` prints no such line.
+
 ## Before the physical flow (check)
 
 `check` is the pre-flight for the physical design flow. It reads values, not
@@ -378,7 +390,7 @@ The page is laid out to be shared. The layout render sits beside the title, capt
 
 The buttons are **Open in 3D**, **View source** (on Actions) and the GDS with its size. The verdict chips are one per thing that ran. "Timing met" needs both setup and hold slack to be non-negative.
 
-The sections run in this order:
+The sections run in this order, and "How it was built" comes last:
 
 | Section | Read from | What to keep in mind |
 |---|---|---|
@@ -389,6 +401,7 @@ The sections run in this order:
 | Area and Instances | `metrics.json`, synthesis's `reports/stat.json` and `final/nl/*.nl.v` | Cards for die, core utilization and instances. One bar of the area after routing, split into synthesis's flip-flops and logic and the difference that place and route added. One bar of the instance count by class, split into what synthesis produced, what the flow added and anything unclassified. The headline is the count after synthesis. The count after routing comes second. A table of instances by drive strength follows, after synthesis and after routing, with a line saying what place and route added. The section names the standard cell library from the run's `config.json`. For a `sky130_fd_sc_*` library it adds that the library has a single threshold voltage. |
 | Power | `<DEFAULT_CORNER>/power.rpt` | OpenSTA's sequential, combinational and clock split. States the corner, the clock frequency from `CLOCK_PERIOD` and the activity, which is OpenSTA's default and not a simulation's. |
 | Signoff checks | `metrics.json` | DRC is one row, the sum of Magic and KLayout, and a failure names the tool: `3 (KLayout)`. LVS, antenna and XOR have rows of their own. Antenna says that OpenROAD checks it in this flow, not the DRC decks. |
+| How it was built | `build/stages/stages.json` and its pictures, from `make gds` | One real render for each stage, and a row for each of the seven stages with its seconds as a bar. Click a row to see its picture and a short explanation under it. The arrow keys move through the list while it has focus. Without JavaScript, every row is open and links to its picture. A stage with no picture says why. A stage that failed is red, also when the flow ran on to the end. Without `build/stages/stages.json` the section is left out. It has no History fold. Its Files line offers the pictures, copied to `build/site/stages/`. The Signoff picture is the page's layout image when it is the same file, so it is not copied twice. |
 
 The Summary holds three cards to a row. The first row is die, core utilization and instances. The second is the clock and one timing card, with the worst setup slack and the worst hold slack side by side. Each slack is green when it is not negative and red when it is. The third row is code coverage, total power and signoff. A card whose data is missing is left out.
 

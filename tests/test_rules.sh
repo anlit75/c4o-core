@@ -149,6 +149,17 @@ elif grep -qF -- "--run-tag demo_run config.yaml" <<<"$out" && grep -qF -- "cp r
 else
   fail "host: PROGRESS=raw lost the LibreLane run or the copy of the GDS" "$out"
 fi
+# The picture of each stage, in both modes: drawn after the flow, and on a failed one.
+check "host: gds draws the stages in the LibreLane image" 0 "klayout" in_repo "$host" make -n gds
+check "host: ... listing them first, in the c4o-core image" 0 "$image stages --run-dir runs/demo_run" in_repo "$host" make -n gds
+check "host: ... and writing stages.json when they are drawn" 0 "$image stages --run-dir runs/demo_run --collect" in_repo "$host" make -n gds
+check "host: PROGRESS=raw draws them too" 0 "$image stages --run-dir runs/demo_run --collect --quiet" in_repo "$host" make -n gds PROGRESS=raw
+out=$(in_repo "$host" make -n gds PROGRESS=raw 2>&1)
+if grep -qE '\|\| \{ code=\$\?;.*klayout.*exit \$code; \}' <<<"$out"; then
+  ok "host: PROGRESS=raw draws what a failed flow left, and keeps its status"
+else
+  fail "host: PROGRESS=raw must draw the stages of a failed flow and exit with LibreLane's status" "$out"
+fi
 for args in "--from OpenROAD.Floorplan --with-initial-state x.json" "--to OpenROAD.CTS" "--skip OpenROAD.CTS" "--only OpenROAD.CTS"; do
   out=$(in_repo "$host" make -n gds LIBRELANE_ARGS="$args" 2>&1)
   if grep -qF -- "--partial" <<<"$out"; then
@@ -181,7 +192,11 @@ cat > "$shim/docker" <<SHIM
 if [ "\$1" = run ]; then
   echo "\$*" >> "$work/docker-calls"
   case "\$*" in
-    *"-m librelane"*) exit 2 ;;
+    *"-m librelane"*)
+      if [ -n "\$SHIM_FLOW_OK" ]; then mkdir -p runs/demo_run/final/gds; : > runs/demo_run/final/gds/demo.gds; exit 0; fi
+      exit 2 ;;
+    *klayout*) [ -n "\$SHIM_STAGES_FAIL" ] && exit 1; echo drew >> "$work/rendered"; exit 0 ;;
+    *" stages "*) [ -n "\$SHIM_STAGES_FAIL" ] && exit 1; exit 0 ;;
     *"python3 -c"*) exit 1 ;;
   esac
   exit 0
@@ -204,6 +219,47 @@ fi
   || fail "gds: build/log/status is not LibreLane's exit status" "$(cat "$fake/build/log/status" 2>&1)"
 [ -f "$fake/build/log/librelane.log" ] && ok "gds: LibreLane's output is in build/log/librelane.log" || fail "gds: no build/log/librelane.log"
 if [ -e "$fake/build/demo.gds" ]; then fail "gds: a failed flow must not copy a GDS"; else ok "gds: a failed flow copies no GDS"; fi
+# The stages are drawn after a flow that failed, and nothing about them changes the status.
+# The stand-in draws nothing itself, so what `stages` would have listed is put there.
+seed_jobs() { mkdir -p "$1/build/stages"; echo '[]' > "$1/build/stages/jobs.json"; }
+for mode in plain raw; do
+  : > "$work/docker-calls"; rm -f "$work/rendered"; seed_jobs "$fake"
+  out=$(cd "$fake" && PATH="$shim:$PATH" make gds PROGRESS=$mode 2>&1)
+  got=$?
+  if [ "$got" -ne 0 ] && grep -qE "Error 2" <<<"$out"; then
+    ok "gds ($mode): a failed flow still ends make with LibreLane's status"
+  else
+    fail "gds ($mode): LibreLane exited 2 and make exited $got" "$out"
+  fi
+  if [ -f "$work/rendered" ] && grep -qE "$image stages --run-dir runs/demo_run --collect" "$work/docker-calls"; then
+    ok "gds ($mode): a failed flow is drawn and its stages written"
+  else
+    fail "gds ($mode): no render or no stages.json call after a failed flow" "$(cat "$work/docker-calls")"
+  fi
+  # whatever the stage calls do, the status is the flow's
+  : > "$work/docker-calls"; seed_jobs "$fake"
+  out=$(cd "$fake" && SHIM_STAGES_FAIL=1 PATH="$shim:$PATH" make gds PROGRESS=$mode 2>&1)
+  got=$?
+  if [ "$got" -ne 0 ] && grep -qE "Error 2" <<<"$out"; then
+    ok "gds ($mode): stage calls that fail do not change the status of a failed flow"
+  else
+    fail "gds ($mode): with failing stage calls make exited $got, not with LibreLane's 2" "$out"
+  fi
+  # a flow that passed: drawn too, and a failing render is not a failure
+  for broken in "" 1; do
+    : > "$work/docker-calls"; rm -f "$work/rendered"; seed_jobs "$fake"
+    out=$(cd "$fake" && SHIM_FLOW_OK=1 SHIM_STAGES_FAIL=$broken PATH="$shim:$PATH" make gds PROGRESS=$mode 2>&1)
+    got=$?
+    if [ "$got" -eq 0 ] && grep -qE "$image stages --run-dir runs/demo_run --collect" "$work/docker-calls" \
+       && { [ -n "$broken" ] || [ -f "$work/rendered" ]; } \
+       && { { [ "$mode" = raw ] && grep -qF -- "--collect --quiet" "$work/docker-calls"; } \
+            || { [ "$mode" != raw ] && ! grep -qF -- "--quiet" "$work/docker-calls"; }; }; then
+      ok "gds ($mode): a flow that passed is drawn${broken:+, and a render that fails is no failure}"
+    else
+      fail "gds ($mode): passing flow, stage calls ${broken:+failing}: exit $got" "$out"
+    fi
+  done
+done
 # make all: a terminal for the container exactly when make's output is one.
 : > "$work/docker-calls"
 (cd "$fake" && PATH="$shim:$PATH" make all >/dev/null 2>&1)

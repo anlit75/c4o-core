@@ -1096,10 +1096,10 @@ jobs:
             exit 1
           fi
           # The summary first, then the verdicts, area and instances, power,
-          # and signoff last. The tests sections between the summary and
-          # coverage are one or two, so they are left out of the list.
+          # signoff, and how it was built last. The tests sections between the
+          # summary and coverage are one or two, so they are left out of the list.
           ids=$(grep -o '<section id="[a-z0-9-]*"' "$page" | sed 's/.*id="//; s/"//' | grep -v '^tests' | tr '\n' ' ')
-          [ "$ids" = "summary regression coverage timing area power signoff " ] || { echo "::error::sections are '$ids'"; exit 1; }
+          [ "$ids" = "summary regression coverage timing area power signoff stages " ] || { echo "::error::sections are '$ids'"; exit 1; }
           # The summary holds the numbers a reader asks first. A card whose
           # data the real run has is named, so the section cannot lose it
           # unnoticed.
@@ -1216,6 +1216,28 @@ jobs:
               sys.exit(f"::error::Drive strength totals {got} are not the instance counts {want}.")
           if "<code>sky130_fd_sc_hd</code>, single threshold voltage" not in page:
               sys.exit("::error::The page does not name the library from the run's config.json.")
+          PY
+          # `make gds` drew a picture of each stage into build/stages/, in the
+          # same job, and `make site` carried them to the directory that the
+          # Pages artifact is made of. A stage drawn for the real design that
+          # is not on the page, or a page that names a file it does not have,
+          # fails here.
+          python3 - "$page" <<'PY'
+          import json, os, sys
+          page = open(sys.argv[1]).read()
+          rows = json.load(open("build/stages/stages.json"))["stages"]
+          pngs = [r["png"] for r in rows if r["png"]]
+          if len(pngs) < 5:
+              sys.exit(f"::error::make gds drew {len(pngs)} stage pictures, expected at least 5: {pngs}")
+          for name in pngs:
+              # Signoff's picture is the layout image when it is the same file.
+              shared = name == "signoff.png" and not os.path.exists("build/site/stages/" + name)
+              rel = "layout.png" if shared else "stages/" + name
+              if not os.path.getsize("build/site/" + rel) or f'data-src="{rel}"' not in page:
+                  sys.exit(f"::error::{rel} is empty or not on the page.")
+          if any(r["status"] != "ok" for r in rows):
+              sys.exit(f"::error::a stage of the real run did not end ok: {[(r['name'], r['status']) for r in rows]}")
+          print("stage pictures:", ", ".join(pngs))
           PY
           # Not asserted: whether the real run wrote ir__drop__worst. The
           # line is printed so the log says what a real run gives.

@@ -180,6 +180,36 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
 .hist svg rect.seg-synthesis { stroke: var(--card); stroke-width: .6; }
 .hist svg rect.hit { fill: transparent; }
 .files .of { font-variant-numeric: tabular-nums; }
+/* How it was built: one picture, and a list of the stages: the seconds it took, the open one explained. */
+.built { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 24px; align-items: start; }
+.built .pic { margin: 0; }
+.built .pic a { display: block; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+.built .pic img { display: block; width: 100%; height: auto; max-height: 520px; object-fit: contain; }
+.built ul { list-style: none; margin: 0; padding: 0; border-radius: 8px; }
+.built ul:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.built li { border-bottom: 1px solid var(--line); border-left: 3px solid transparent; }
+.built li:last-child { border-bottom: 0; }
+.built li[data-src] { cursor: pointer; }
+.built li[data-src]:hover, .built li.on { background: var(--bg); }
+.built li.on { border-left-color: var(--accent); }
+.built .row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 0 12px;
+              align-items: center; padding: 6px 8px; }
+.built .thumb { width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 6px; background: #fff; overflow: hidden; }
+.built .thumb a { display: block; height: 100%; }
+.built .thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.built li:not([data-src]) .thumb { background: transparent; border-style: dashed; }
+.built .what { min-width: 0; }
+.built .nm { display: block; font-weight: 600; }
+.built li.on .nm { color: var(--accent); }
+.built .sub { display: block; color: var(--muted); font-size: 13px; }
+.built .detail { margin: 0; padding: 0 8px 10px 63px; color: var(--muted); font-size: 14px; }
+.built .detail strong { color: var(--fg); font-weight: 600; }
+.built.js li:not(.on) .detail { display: none; }
+.built li.bad .nm, .built .sub .bad, strong.bad { color: var(--fail); }
+.built .secs { color: var(--muted); font-size: 13px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.files .file { white-space: nowrap; }
+@media (prefers-color-scheme: dark) { .built .pic a, .built .thumb { filter: brightness(.88); } }
+@media (max-width: 760px) { .built { grid-template-columns: 1fr; } }
 """
 
 def cocotb_cases(path):
@@ -214,6 +244,33 @@ document.querySelectorAll('[data-viewer]').forEach(function (s) {
   s.querySelector('a').href = '""" + GDS_VIEWER + """?pdk=' +
     encodeURIComponent(s.getAttribute('data-viewer')) + '&model=' + encodeURIComponent(gds);
   s.hidden = false;
+});
+"""
+
+# Click a stage to see its picture and its explanation. The list takes the arrow keys while it has focus,
+# and only then, so the page still scrolls. Without this script every stage is open and links to its image.
+STAGES_JS = """
+document.querySelectorAll('.built').forEach(function (box) {
+  var list = box.querySelector('ul'), link = box.querySelector('.pic a'), img = link.querySelector('img'),
+      items = [].slice.call(list.querySelectorAll('li[data-src]'));
+  box.classList.add('js');
+  function pick(li) {
+    items.forEach(function (x) { x.classList.toggle('on', x === li); x.setAttribute('aria-selected', x === li); });
+    img.src = link.href = li.getAttribute('data-src'); img.alt = li.getAttribute('data-alt');
+    list.setAttribute('aria-activedescendant', li.id);
+  }
+  items.forEach(function (li) {
+    li.addEventListener('click', function (e) { e.preventDefault(); pick(li); list.focus(); });
+  });
+  list.addEventListener('keydown', function (e) {
+    var at = items.findIndex(function (x) { return x.classList.contains('on'); });
+    var to = {ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1}[e.key];
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(items[at]); return; }
+    if (to === undefined) return;
+    e.preventDefault();
+    if (items[to]) pick(items[to]);
+  });
 });
 """
 
@@ -595,6 +652,71 @@ def signoff_section(signoff):
            + rows + "</table></div>"
            "<p>Not analysed: electromigration, crosstalk and dynamic IR drop.</p>")
     return out
+
+def stage_seconds(secs):
+    """6.4 s, 13 s, 1 min 54 s: the time of one stage."""
+    if secs < 10:
+        return f"{secs:.1f} s"
+    if secs < 60:
+        return f"{secs:.0f} s"
+    return f"{int(secs // 60)} min {secs % 60:.0f} s"
+
+def stages_section(data):
+    """
+    "How it was built": the render of each stage, and a row per stage with the
+    seconds it took. The row of the picture on show is open and says
+    what the stage does. data is build/stages/stages.json as entrypoint reads
+    it, each picture named by its path next to the page. A stage with no
+    picture says why. A stage that failed says so, also when the flow ran on to
+    the end (a signoff check fails that way) and the last picture looks clean.
+    """
+    esc = html.escape
+    rows = [r for r in data.get("stages") or [] if isinstance(r, dict)]
+    secs = [float(r.get("seconds") or 0) for r in rows]
+    drawn = [i for i, r in enumerate(rows) if r.get("png")]
+    if not drawn:
+        return ""
+    lis, first = [], None
+    for i, (row, sec) in enumerate(zip(rows, secs)):
+        name, png, status = esc(str(row.get("name", ""))), row.get("png"), row.get("status")
+        marks = []
+        if status == "failed":
+            marks.append('<span class="bad">failed</span>')
+        elif status == "not reached":
+            marks.append("not reached")
+        if not png and status != "not reached":
+            marks.append("no picture")
+        sub = f'<span class="sub">{" &middot; ".join(marks)}</span>' if marks else ""
+        took = f'<span class="secs">{stage_seconds(sec)}</span>' if sec else "<span></span>"
+        label = f'<span class="what"><span class="nm">{name}</span>{sub}</span>'
+        thumb = f'<a href="{esc(png)}" tabindex="-1"><img src="{esc(png)}" alt="" loading="lazy"></a>' if png else ""
+        blurb, detail = esc(str(row.get("blurb", ""))), esc(str(row.get("detail", "")))
+        if status == "failed":
+            detail += " This stage failed. The picture is real, but this stage did not pass."
+        # What the stage does in a line, then what to see in its picture.
+        detail = (f'<p class="detail"><strong>{blurb}</strong><br>{detail.strip()}</p>' if blurb else
+                  f'<p class="detail">{detail.strip()}</p>') if blurb or detail.strip() else ""
+        klass = ' class="bad"' if status == "failed" else ""
+        if not png:
+            lis.append(f'<li role="option" aria-disabled="true"{klass}><div class="row"><span class="thumb"></span>{label}{took}</div>{detail}</li>')
+            continue
+        alt = f"{name}: layout at the end of the stage"
+        on = i == drawn[0]
+        cls = " ".join((["bad"] if status == "failed" else []) + (["on"] if on else []))
+        lis.append(f'<li id="stage-{i}" role="option" aria-selected="{"true" if on else "false"}"'
+                   f'{f" class={chr(34)}{cls}{chr(34)}" if cls else ""} data-src="{esc(png)}" data-alt="{alt}">'
+                   f'<div class="row"><span class="thumb">{thumb}</span>{label}{took}</div>{detail}</li>')
+        if on:
+            first = (esc(png), alt, f"stage-{i}")
+    src, alt, active = first
+    lead = f"One picture per stage of the real run, which took {stage_seconds(sum(secs))}."
+    failed = [esc(str(r.get("name", ""))) for r in rows if r.get("status") == "failed"]
+    if failed:
+        lead += f' <strong class="bad">This run did not finish cleanly:</strong> {", ".join(failed)} failed.'
+    return ("<h2>How it was built</h2>" f"<p>{lead}</p>"
+            f'<div class="built"><figure class="pic"><a href="{src}"><img src="{src}" alt="{alt}"></a></figure>'
+            f'<ul role="listbox" aria-label="Stages of the flow" tabindex="0" aria-activedescendant="{active}">'
+            f"{''.join(lis)}</ul></div>")
 
 COVERAGE_LABELS = {"line": "Block", "branch": "Branch", "toggle": "Toggle", "user": "User cover"}
 
@@ -1055,19 +1177,23 @@ def history_fold(section, rows):
     return (f'<details class="hist-fold"><summary>History ({len(rows)} commit{"" if len(rows) == 1 else "s"})</summary>'
             f'<div class="hist">{"".join(cards)}</div></details>')
 
-def files_line(files):
+def files_line(files, bare=False):
     """
     'Files: name size · name size' under a section, each a download, or ""
     when the section has none.
 
-    files -- (name, bytes) per file, the name being the one next to the page
+    files    -- (name, bytes) per file, the name being the one next to the page
+    bare     -- show only the file's own name, not the folder it is in, and keep
+                each entry whole: a line breaks between entries and not inside one
     """
     if not files:
         return ""
     esc = html.escape
-    return ('<p class="note files">Files: ' + " &middot; ".join(
-        f'<a href="{esc(name)}" download>{esc(name)}</a> <span class="of">{human_size(size)}</span>'
-        for name, size in files) + "</p>")
+    def entry(name, size):
+        link = (f'<a href="{esc(name)}" download>{esc(os.path.basename(name) if bare else name)}</a> '
+                f'<span class="of">{human_size(size)}</span>')
+        return f'<span class="file">{link}</span>' if bare else link
+    return '<p class="note files">Files: ' + " &middot; ".join(entry(n, z) for n, z in files) + "</p>"
 
 # Taiwan time, a fixed offset: no DST, and no tz database in the image.
 TAIPEI = timezone(timedelta(hours=8))
@@ -1084,7 +1210,7 @@ def build_time(env):
 def render(design, numbers, layout, cocotb_runs, env,
            signoff=(), area=None, power=None, gds=None,
            description=None, cells=(), physical=None, drive=(), coverage=None,
-           regression=None, history=(), files=()):
+           regression=None, history=(), files=(), stages=None):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -1114,6 +1240,8 @@ def render(design, numbers, layout, cocotb_runs, env,
     regression   -- build/regress/summary.json as a dict (seed, runs), or None
     history      -- the rows of history.json, oldest first, as entrypoint.history_row
                     writes them. A section with a value in any row gets a fold
+    stages       -- build/stages/stages.json as a dict (stages: name, blurb, seconds,
+                    png, after_step, status), or None; it adds "How it was built"
     files        -- (section anchor, name next to the page, bytes) per file a section
                     offers; the anchor is the section's id without a number
 
@@ -1244,6 +1372,11 @@ def render(design, numbers, layout, cocotb_runs, env,
     if signoff:
         add("signoff", "Signoff", signoff_section(signoff))
 
+    # Not in `order` below: what it does not list goes last, which is where this belongs.
+    how_built = stages_section(stages) if stages else ""
+    if how_built:
+        add("stages", "How it was built", how_built)
+
     # Only on GitHub Actions, where these say which commit the page shows.
     # When the page was built, always: a published page stays up until the
     # next one replaces it, so a reader needs to know how old it is.
@@ -1297,7 +1430,8 @@ def render(design, numbers, layout, cocotb_runs, env,
     for index, (anchor, label, markup) in enumerate(parts):
         base = anchor.split("-")[0]
         parts[index] = (anchor, label, markup + history_fold(base, list(history))
-                        + files_line([(name, size) for sect, name, size in files if sect == base]))
+                        + files_line([(name, size) for sect, name, size in files if sect == base],
+                             bare=base == "stages"))
 
     order = ["layout", "summary", "tests", "regression", "coverage", "timing", "area", "power", "signoff"]
     parts.sort(key=lambda p: order.index(p[0].split("-")[0]) if p[0].split("-")[0] in order
@@ -1336,5 +1470,6 @@ def render(design, numbers, layout, cocotb_runs, env,
           "an open-source chip design flow. "
           '<a href="https://github.com/anlit75/c4o-core">c4o-core</a> generated this page.</p></footer>'
         + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in actions else "")
+        + (f"<script>{STAGES_JS}</script>" if how_built else "")
         + "</body></html>\n"
     )
