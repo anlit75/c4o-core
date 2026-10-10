@@ -29,10 +29,14 @@ The actions are steps in your job. They use your workspace, so a step of your ow
 | Action | What it does |
 |---|---|
 | `setup` | Starts the LibreLane image pull in the background. Checks that the Makefile and `devcontainer.json` name the same c4o-core image. Pulls that image. Restores the Sky130 PDK from the cache. Checks that the Dev Container user exists in the image. |
-| `checks` | `make lint`, `make sim` when `config.yaml` has `"//TEST_FILES"`, `make cocotb` when it has `"//COCOTB_TESTS"`, `make regress` when it has `"//REGRESSION"`, `make synth`, `make schematic`. Fails when `config.yaml` has neither test key. Keeps the cocotb output in `build/cocotb-rtl.log` and the regression output in `build/regress.log`. Puts the regression table on the run summary. |
+| `checks` | `make check`, `make rtl`, `make sim`, `make regress COVERAGE=0` when `config.yaml` has `"//REGRESSION"`, and `make schematic`. Fails when `config.yaml` has neither test key. Keeps the test output in `build/cocotb-rtl.log` and the regression output in `build/regress.log`. Puts the regression table on the run summary. See below for an image older than 2.26. |
 | `gds` | Waits for the LibreLane image. `make gds`. Fails if there is no GDS in `build/` or no layout render in `runs/`. |
 | `report` | The gate-level simulation. With `"//GATE_TESTS"`, it runs `make gatesim`, but not on a pull request. Without it and with `"//COCOTB_TESTS"`, it runs the Python tests on the gates on every event. See below. Puts the signoff numbers on the run summary. `make site`, and checks the sections of the page. Runs `make coverage` when `sections` lists Coverage and the image has that target. On a push or a manual run on `main`, with Pages set to GitHub Actions, fetches the history of earlier runs from the live page, then uploads the new page for a deploy job. |
 | `upload` | Uploads the schematic, the layout render, and `build/` with `runs/`. On a `v*` tag, attaches the GDS to the release. Call it with `if: always()`. |
+
+## An image older than 2.26
+
+The action asks the image which commands it has. It runs `make -n check`. An image from before 2.26 has no such target. The action then runs the commands that image has: `make lint`, `make synth`, `make sim` when `config.yaml` has `"//TEST_FILES"`, and `make cocotb` when it has `"//COCOTB_TESTS"`. Any other failure of `make -n check` fails the step.
 
 ## The Python tests on the gates
 

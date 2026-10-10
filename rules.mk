@@ -16,8 +16,8 @@ $(error LIBRELANE_IMAGE is not set. The Makefile that includes rules.mk has to n
 endif
 
 # A target a repository writes above its include must not become what a bare
-# `make` runs.
-.DEFAULT_GOAL := all
+# `make` runs. It checks the config and runs no tool.
+.DEFAULT_GOAL := check
 
 # Extra flags for the LibreLane run, passed through as they are.
 LIBRELANE_ARGS ?=
@@ -50,7 +50,7 @@ ifeq ($(filter --from --from=% -F --only --only=%,$(LIBRELANE_ARGS)),)
 LIBRELANE_OVERWRITE := --overwrite
 endif
 
-# What `make all` and `make gds` print while they run. The tools' own output
+# What `make sim` and `make gds` print while they run. The tools' own output
 # goes to build/log/ and the terminal gets one line for each command or stage:
 #
 #   make gds PROGRESS=raw     the tools' output as it is, nothing kept
@@ -127,7 +127,8 @@ SITE_ENV := -e GITHUB_SERVER_URL -e GITHUB_REPOSITORY -e GITHUB_SHA -e GITHUB_RU
 # Inside the image -- the Dev Container -- the tools are called directly. On a
 # host each command is a container of C4O_IMAGE.
 #
-# C4O_COCOTB is C4O_CMD with a seed, the waves switch and a test name threaded through.
+# C4O_COCOTB is C4O_CMD with a seed, the waves switch, a test name and the
+# coverage switch threaded through.
 # cocotb seeds Python's random module from the seed and logs the value it used,
 # so
 #
@@ -146,6 +147,16 @@ SITE_ENV := -e GITHUB_SERVER_URL -e GITHUB_REPOSITORY -e GITHUB_SHA -e GITHUB_RU
 # runs one module of COCOTB_TESTS, or one test of it. TEST reaches the container
 # as it is. `make regress` prints this line, with the seed, for each run it lost.
 #
+#   make regress COVERAGE=0
+#
+# leaves out the coverage run that `make regress` ends with. make reads COVERAGE
+# itself, and the container never sees it.
+#
+# C4O_COCOTB mounts PDK_ROOT when it is there, so a cocotb run on the netlist
+# (`$(C4O_COCOTB) cocotb --netlist`, in a target of your own) finds the cell
+# models wherever the PDK is. C4O_GATES mounts it always: `make gatesim` is the
+# one command that cannot run without the PDK.
+#
 # c4o_tool runs one of the image's other programs the same two ways:
 #
 #   $(call c4o_tool,sv2v) rtl/a.sv
@@ -154,6 +165,7 @@ ifneq ($(wildcard $(ENTRYPOINT_SCRIPT)),)
 C4O_IN_CONTAINER := 1
 C4O_CMD := python3 $(ENTRYPOINT_SCRIPT)
 C4O_COCOTB = $(if $(or $(SEED),$(WAVES),$(TEST)),env $(strip $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)) $(if $(TEST),TEST=$(TEST)))) $(C4O_CMD)
+C4O_GATES = env $(strip PDK_ROOT=$(PDK_ROOT) $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)) $(if $(TEST),TEST=$(TEST))) $(C4O_CMD)
 C4O_SITE := $(C4O_CMD)
 C4O_PDK := env PDK_ROOT=$(PDK_ROOT) $(C4O_CMD)
 c4o_tool = $(1)
@@ -161,7 +173,8 @@ C4O_LEDGER = env $(strip C4O_PROGRESS=$(C4O_PROGRESS) $(if $(SEED),RANDOM_SEED=$
 else
 C4O_IN_CONTAINER :=
 C4O_CMD := $(DOCKER_RUN) $(C4O_IMAGE)
-C4O_COCOTB = $(DOCKER_RUN) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
+C4O_COCOTB = $(DOCKER_RUN) $(if $(wildcard $(PDK_ROOT)),-v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
+C4O_GATES = $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
 C4O_SITE := $(DOCKER_RUN) $(SITE_ENV) $(C4O_IMAGE)
 C4O_PDK := $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(C4O_IMAGE)
 c4o_tool = $(DOCKER_RUN) --entrypoint $(1) $(C4O_IMAGE)
@@ -173,43 +186,47 @@ endif
 # What the ledger decides its mode from, passed on as the host has it.
 PROGRESS_ENV := -e C4O_PROGRESS=$(C4O_PROGRESS) -e NO_COLOR -e CI -e TERM -e GITHUB_ACTIONS
 
-.PHONY: all help lint sim cocotb regress coverage gatesim synth schematic gds pdk report site clean distclean shell
+.PHONY: check rtl sim regress gatesim schematic gds pdk report site clean distclean shell help all lint synth cocotb coverage
 
-# A bare `make all` asks for no test kind by name: it runs each kind whose key
-# is in config.yaml and fails when neither is. The target-specific variable
-# reaches sim and cocotb as prerequisites of all, and only then.
+# The config and the files it names, for every part of the flow the config
+# asks for. No tool runs, so it takes a second. `make rtl`, `make sim` and
+# `make gds` each run the part of it that is theirs first.
+check:
+	$(C4O_CMD) check
+
+# Checks the RTL: its config, an Icarus compile, Verilator lint, Yosys generic
+# synthesis. Four commands in one container, and no tests.
+rtl:
+	$(C4O_CMD) rtl
+
+# `rtl`, then the config of the tests, then each kind of test that config.yaml
+# lists: Verilog testbenches and cocotb. The kind it does not list is skipped,
+# and neither kind is an error. SEED, WAVES and TEST apply to the cocotb run.
 #
 # One line for each of the four, with their own output in build/log/. With
-# PROGRESS=raw it is the four commands one after the other, as it was.
-all: C4O_IF_CONFIGURED := --if-configured
-ifeq ($(C4O_PROGRESS),raw)
-all: lint sim cocotb synth
-else
-all:
+# PROGRESS=raw it is the tools' output as it is.
+sim:
 	@if [ -t 1 ]; then T=-t; else T=; fi; $(C4O_LEDGER) all
-endif
 	@echo "Next: make gds turns the design into a GDSII layout (takes minutes)."
 
 # Two colons, so a repository can add lines for its own targets with a
 # `help::` rule below its include.
 help::
 	@echo "Available targets:"
-	@echo "  make all     - Everything that runs in seconds: lint, sim, cocotb, synth"
-	@echo "                 (sim and cocotb run when config.yaml has their tests)"
-	@echo "  make lint    - Run Verilator lint check"
-	@echo "  make sim     - Run Icarus Verilog simulation"
-	@echo "  make cocotb  - Run the Python (cocotb) testbenches"
-	@echo "                 (repeat a random failure: make cocotb SEED=<n>)"
-	@echo "                 (write build/<DESIGN_NAME>.vcd: make cocotb WAVES=1)"
-	@echo "                 (run one module or test: make cocotb SEED=<n> TEST=<entry>)"
-	@echo "  make regress - Run the tests listed in //REGRESSION over many seeds (build/regress/)"
+	@echo "  make check   - Check config.yaml and the files it names (takes a second)"
+	@echo "  make rtl     - Check the RTL: compile, Verilator lint, Yosys synthesis"
+	@echo "  make sim     - Run rtl, then every test config.yaml lists (Verilog and cocotb)"
+	@echo "                 (repeat a random failure: make sim SEED=<n>)"
+	@echo "                 (write build/<DESIGN_NAME>.vcd: make sim WAVES=1)"
+	@echo "                 (run one module or test: make sim SEED=<n> TEST=<entry>)"
+	@echo "  make regress - Run the tests listed in //REGRESSION over many seeds (build/regress/),"
+	@echo "                 then measure code coverage (build/coverage/)"
 	@echo "                 (repeat the whole list: make regress SEED=<n>)"
-	@echo "  make coverage - Measure how much of the RTL the cocotb tests run (build/coverage/)"
+	@echo "                 (leave out coverage: make regress COVERAGE=0)"
 	@echo "  make gatesim - Re-simulate the synthesised netlist (after make gds)"
-	@echo "  make synth   - Run Yosys synthesis"
 	@echo "  make schematic - Draw the circuit as build/schematic.svg"
 	@echo "  make pdk     - Install/Enable Sky130 PDK via Ciel, LibreLane's PDK manager"
-	@echo "  make gds     - Run LibreLane GDSII flow"
+	@echo "  make gds     - Check the physical design config, then run LibreLane GDSII flow"
 	@echo "  make report  - Show area, timing and power from the last GDS run"
 	@echo "  make site    - Put tests, timing, area, power and signoff on one page (build/site/)"
 	@echo "  make shell   - Enter c4o-core interactive shell"
@@ -219,45 +236,43 @@ help::
 	@echo "  Re-run part of the flow after the first full one:"
 	@echo "    make gds LIBRELANE_ARGS=\"--from OpenROAD.Floorplan --with-initial-state <state_in.json>\""
 
-lint:
-	$(C4O_CMD) lint
+# The names these commands had. They stay, and each does what its new name
+# does. `cocotb` below is the exception: it is still the Python tests alone.
+all: sim
+lint synth: rtl
+coverage: regress
 
-sim:
-	$(C4O_CMD) sim $(C4O_IF_CONFIGURED)
-
-# The same RTL, driven from Python instead of Verilog. Not a replacement for
-# `make sim`: it is a second way to write a testbench.
+# The Python (cocotb) tests alone, without rtl and the Verilog testbenches. A
+# failed `make regress` run is replayed with it.
 cocotb:
-	$(C4O_COCOTB) cocotb $(C4O_IF_CONFIGURED)
+	$(C4O_COCOTB) cocotb
 
-# The test list of REGRESSION, each test over its seeds, from one compile. Not
-# part of `all`: a list runs the tests once for every seed. The
-# summary is build/regress/summary.json. C4O_COCOTB so that SEED, the base seed
-# every run's seed comes from, reaches it. Named by itself it fails without the
-# key, like `make cocotb`.
+# The test list of REGRESSION, each test over its seeds, from one compile, and
+# then the same list on Verilator for the coverage numbers that Icarus cannot
+# give. The verdict is the first part's and stays on Icarus: the second part
+# runs only when every run passed, and measures. The summaries are
+# build/regress/summary.json and build/coverage/summary.json. C4O_COCOTB so that
+# SEED, the base seed every run's seed comes from, reaches both. Named by itself
+# it fails without the key.
 regress:
-	$(C4O_COCOTB) regress $(C4O_IF_CONFIGURED)
-
-# The cocotb tests again, on Verilator with coverage counters, for the numbers
-# that Icarus cannot give. Not part of `all`, and not a verdict: `make cocotb`
-# decides whether the tests pass. C4O_COCOTB so that SEED reaches this run too.
-coverage:
-	$(C4O_COCOTB) coverage $(C4O_IF_CONFIGURED)
+	$(C4O_COCOTB) regress $(if $(filter 0,$(COVERAGE)),,--coverage)
 
 # Simulates runs/<tag>/final/nl/, which `make gds` leaves behind, against the
 # PDK's own cell models. `make sim` says the RTL behaves; this says the gates
 # synthesis produced still behave, which is a different claim.
 #
 # The testbench is the Verilog one of GATE_TESTS. Without that key it is the
-# cocotb tests of COCOTB_TESTS, as `cocotb --netlist` runs them. C4O_COCOTB so
+# cocotb tests of COCOTB_TESTS, as `cocotb --netlist` runs them. C4O_GATES so
 # that `make gatesim SEED=n` replays a random cocotb test like `make cocotb`.
+#
+# PDK_ROOT is mounted whether it is in this checkout or not, and made first: a
+# bind mount of a path that does not exist is created by the daemon, owned by
+# root, and `make pdk` could not write into it.
 gatesim:
-	$(C4O_COCOTB) gatesim
+	mkdir -p $(PDK_ROOT)
+	$(C4O_GATES) gatesim
 
-synth:
-	$(C4O_CMD) synth
-
-# A picture of the RTL, not of the netlist. `make synth` runs a full synthesis
+# A picture of the RTL, not of the netlist. `make rtl` runs a full synthesis
 # and leaves a wall of generic gates; this stops after `proc; opt`, where the
 # design still looks like the code you wrote.
 schematic:
@@ -273,9 +288,9 @@ pdk:
 
 # --- Physical design, LibreLane as a sidecar container ---
 # 1. Stop unless a Docker daemon answers.
-# 2. c4o-core validates the config. Before the PDK, not after: `check` reads
-#    config.yaml and the RTL and needs no PDK, so a DESIGN_NAME that names no
-#    module costs a second instead of arriving behind a 3GB download.
+# 2. c4o-core validates the config. Before the PDK, not after: `check --for gds`
+#    reads config.yaml and the RTL and needs no PDK, so a DESIGN_NAME that names
+#    no module costs a second instead of arriving behind a 3GB download.
 # 3. The PDK.
 # 4. LibreLane, on the PDK the step before installed.
 #
@@ -296,7 +311,7 @@ gds:
 	fi
 
 	@echo "🟢 Validating config with c4o-core..."
-	$(C4O_CMD) check
+	$(C4O_CMD) check --for gds
 
 	$(MAKE) pdk
 	@echo "🟢 Running LibreLane..."

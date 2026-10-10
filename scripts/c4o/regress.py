@@ -474,3 +474,10 @@ def cmd_regress(args, config):
             common.log_error(f"{run['entry']} seed {run['seed']} failed. Replay it: {replay_command(run['entry'], run['seed'])}")
         sys.exit(1)
     common.log_info("All regression runs passed.")
+
+    # --coverage: the same list again on Verilator, after the verdict. Only a
+    # list that passed is measured, and with the base seed it just ran with, so
+    # coverage draws the runs that regress made.
+    if getattr(args, "coverage", False) is True:
+        os.environ["RANDOM_SEED"] = str(base)
+        cmd_coverage(args, config)

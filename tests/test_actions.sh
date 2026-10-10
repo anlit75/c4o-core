@@ -313,6 +313,113 @@ fi
 rm "$work/build/regress/summary.json"
 expect 1 "regress summary: no summary file is an error, not an empty section" regress_summary
 
+# --- checks/action.yml: an image with the old commands and an image with the new ---
+# `@v2` of the action runs against whatever c4o-core image a copy pins. Each
+# case runs the steps of the real action.yml, in order, with a stand-in `make`
+# that answers as the rules of one image would, and states the make commands the
+# action must have called. A step that calls a target the image does not have
+# fails here, as it would in the copy's CI. Run with -e and pipefail, as
+# `shell: bash` does.
+reset
+mkdir -p "$work/bin"
+cat > "$work/bin/make" <<'STUB'
+#!/bin/sh
+echo "$*" >> "$MAKE_LOG"
+if [ "$1" = -n ]; then
+  case "$FAKE_IMAGE" in
+    old) echo "make: *** No rule to make target 'check'.  Stop." >&2; exit 2 ;;
+    broken) echo "make: *** Cannot get ghcr.io/x/c4o-core:2.99." >&2; exit 2 ;;
+  esac
+  exit 0
+fi
+# The old rules have none of these targets.
+if [ "$FAKE_IMAGE" = old ]; then
+  case "$1" in check|rtl) echo "make: *** No rule to make target '$1'.  Stop." >&2; exit 2 ;; esac
+fi
+[ "$1" = "$FAKE_FAIL" ] && exit 1
+case "$1" in
+  cocotb) echo "TESTS=2 PASS=2 FAIL=0 SKIP=0" ;;
+  sim) [ "$FAKE_IMAGE" = new ] && echo "TESTS=2 PASS=2 FAIL=0 SKIP=0" ;;
+  schematic) mkdir -p build; echo "<svg></svg>" > build/schematic.svg ;;
+esac
+exit 0
+STUB
+chmod +x "$work/bin/make"
+cat > "$work/run-checks.py" <<'PY'
+import os, subprocess, sys, yaml
+
+action_dir, image = sys.argv[1], sys.argv[2]
+steps = yaml.safe_load(open(os.path.join(action_dir, "action.yml")))["runs"]["steps"]
+env = dict(os.environ, FAKE_IMAGE=image, GITHUB_ACTION_PATH=action_dir,
+           GITHUB_OUTPUT=os.path.abspath("github-output"), MAKE_LOG=os.path.abspath("make.log"),
+           PATH=os.path.abspath("bin") + os.pathsep + os.environ["PATH"])
+open(env["GITHUB_OUTPUT"], "w").close()
+open(env["MAKE_LOG"], "w").close()
+for step in steps:
+    # `uses:` steps and the always() steps that read a file are the page's own.
+    if "run" not in step or "if" in step:
+        continue
+    outputs = dict(l.strip().split("=", 1) for l in open(env["GITHUB_OUTPUT"]) if "=" in l)
+    step_env = dict(env)
+    for key, value in step.get("env", {}).items():
+        step_env[key] = value.replace("${{ steps.image.outputs.new }}", outputs.get("new", ""))
+    print(f"== {step['name']}", flush=True)
+    code = subprocess.run(["bash", "-eo", "pipefail", "-c", step["run"]], env=step_env).returncode
+    if code:
+        print(f"== failed with {code}")
+        sys.exit(code)
+PY
+checks_action() {  # checks_action <old|new|broken>: the action run in $work
+  (cd "$work" && rm -rf build && python3 run-checks.py "$actions/checks" "$1")
+}
+made() {  # the make commands the action called, one line
+  tr '\n' ',' < "$work/make.log"
+}
+made_is() {  # made_is <label> <the commands, comma after each>
+  [ "$(made)" = "$2" ] && echo "ok    $1" \
+    || { echo "FAIL  $1: made '$(made)', expected '$2'"; failures=$((failures + 1)); }
+}
+both='"//TEST_FILES":
+  - dir::tb/tb.v
+"//COCOTB_TESTS":
+  - dir::tb/test_a.py
+"//REGRESSION": dir::tb/regression.yaml'
+printf 'DESIGN_NAME: x\n%s\n' "$both" > "$work/config.yaml"
+
+expect 0 "checks (new image): the action passes" checks_action new
+made_is "checks (new image): check, rtl, sim, regress without coverage, schematic" \
+  "-n check,check,rtl,sim PROGRESS=raw,regress COVERAGE=0,schematic,"
+grep -q "TESTS=2 PASS=2" "$work/build/cocotb-rtl.log" && echo "ok    checks (new image): build/cocotb-rtl.log holds the cocotb summary line" \
+  || { echo "FAIL  checks (new image): no cocotb summary line in build/cocotb-rtl.log"; failures=$((failures + 1)); }
+
+expect 0 "checks (2.25 image): the action passes" checks_action old
+made_is "checks (2.25 image): lint, synth, sim, cocotb, regress without coverage, schematic" \
+  "-n check,lint,synth,sim,cocotb,regress COVERAGE=0,schematic,"
+grep -q "TESTS=2 PASS=2" "$work/build/cocotb-rtl.log" && echo "ok    checks (2.25 image): build/cocotb-rtl.log holds the cocotb summary line" \
+  || { echo "FAIL  checks (2.25 image): no cocotb summary line in build/cocotb-rtl.log"; failures=$((failures + 1)); }
+
+printf 'DESIGN_NAME: x\n"//COCOTB_TESTS":\n  - dir::tb/test_a.py\n' > "$work/config.yaml"
+expect 0 "checks (2.25 image): Python tests alone" checks_action old
+made_is "checks (2.25 image): ... runs no sim and no regress" "-n check,lint,synth,cocotb,schematic,"
+printf 'DESIGN_NAME: x\n"//TEST_FILES":\n  - dir::tb/tb.v\n' > "$work/config.yaml"
+expect 0 "checks (2.25 image): a Verilog testbench alone" checks_action old
+made_is "checks (2.25 image): ... runs no cocotb" "-n check,lint,synth,sim,schematic,"
+expect 0 "checks (new image): a Verilog testbench alone" checks_action new
+made_is "checks (new image): ... is still check, rtl, sim, schematic" "-n check,check,rtl,sim PROGRESS=raw,schematic,"
+
+printf 'DESIGN_NAME: x\n' > "$work/config.yaml"
+expect 1 "checks (2.25 image): no test configured fails" checks_action old
+made_is "checks (2.25 image): ... before any tool runs" "-n check,"
+FAKE_FAIL=check expect 1 "checks (new image): make check failing fails the action" checks_action new
+made_is "checks (new image): ... before rtl" "-n check,check,"
+
+printf 'DESIGN_NAME: x\n%s\n' "$both" > "$work/config.yaml"
+refuses "checks: a make that fails for another reason is not an old image" "Cannot get ghcr.io/x/c4o-core:2.99" checks_action broken
+made_is "checks: ... and nothing else is run" "-n check,"
+FAKE_FAIL=sim expect 1 "checks (new image): a failing sim fails the action" checks_action new
+made_is "checks (new image): ... and regress does not run" "-n check,check,rtl,sim PROGRESS=raw,"
+
+
 # --- report/action.yml: the order of the steps that carry the history -----------
 # The page is built after the Pages answer and the fetch, or the build has no
 # build/history.json to add its row to. The fetch runs only when the answer was yes.

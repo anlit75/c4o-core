@@ -1,5 +1,6 @@
 import sys
 import os
+import argparse
 import re
 import io
 import json
@@ -541,10 +542,11 @@ class TestEntrypoint(unittest.TestCase):
         config.update(overrides)
         return config
 
-    def _check(self, config):
+    def _check(self, config, scope="gds"):
         """Runs cmd_check in the temp tree and returns what it printed."""
         args = MagicMock()
         args.files = None
+        args.scope = scope
         cwd = os.getcwd()
         os.chdir(self.test_dir)
         out = io.StringIO()
@@ -640,11 +642,24 @@ class TestEntrypoint(unittest.TestCase):
         # run reads as a finished layout when nothing was built.
         self.assertIn("builds no layout", self._check(self._gds_config()))
 
-    def test_check_is_reachable_under_both_names(self):
-        parser_args = entrypoint.build_parser().parse_args(["gds"])
-        self.assertIs(parser_args.func, c4o.check.cmd_check)
-        parser_args = entrypoint.build_parser().parse_args(["check"])
-        self.assertIs(parser_args.func, c4o.check.cmd_check)
+    def test_check_is_a_command_and_gds_is_not(self):
+        # `gds` was an alias of check until the scope took its place:
+        # `check --for gds`. The name is gone, and an unknown command is an
+        # argparse error, which exits 2.
+        parser = entrypoint.build_parser()
+        self.assertIs(parser.parse_args(["check"]).func, c4o.check.cmd_check)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            parser.parse_args(["gds"])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_check_takes_a_scope_from_the_list_and_nothing_else(self):
+        parser = entrypoint.build_parser()
+        self.assertIsNone(parser.parse_args(["check"]).scope)
+        for scope in ("rtl", "sim", "regress", "gatesim", "gds"):
+            self.assertEqual(parser.parse_args(["check", "--for", scope]).scope, scope)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            parser.parse_args(["check", "--for", "lint"])
+        self.assertEqual(cm.exception.code, 2)
 
     # --- report: the numbers the flow computes and then throws away ---
 
@@ -3466,6 +3481,292 @@ class TestEntrypoint(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+class TestCheckScopes(unittest.TestCase):
+    """`check --for <scope>`: what each scope asks of a config, and what a bare check leaves out."""
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.cwd = os.getcwd()
+        os.chdir(self.test_dir)
+        for d in ("rtl", "tb"):
+            os.makedirs(d)
+        open("rtl/top.v", "w").write("module top(input clk); endmodule")
+        open("tb/tb_top.v", "w").write("module tb_top; endmodule")
+        open("tb/test_a.py", "w").write("")
+        open("tb/test_b.py", "w").write("")
+        open("tb/gate_tb.v", "w").write("module gate_tb; endmodule")
+        open("tb/regression.yaml", "w").write("- test: test_a\n  seeds: 2\n- test: test_b.f\n")
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.test_dir)
+
+    def config(self, **keys):
+        config = {"VERILOG_FILES": ["rtl/*.v"], "DESIGN_NAME": "top"}
+        config.update(keys)
+        return config
+
+    def check(self, config, scope=None):
+        """(exit code or None, what it printed). Bare check when scope is None."""
+        out, code = io.StringIO(), None
+        with contextlib.redirect_stdout(out):
+            try:
+                c4o.check.cmd_check(argparse.Namespace(files=None, scope=scope), config)
+            except SystemExit as e:
+                code = e.code
+        return code, out.getvalue()
+
+    GDS = {"PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": [0, 0, 100, 100],
+           "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0}
+
+    # --- rtl ---
+
+    def test_rtl_passes_a_design_with_no_physical_design_keys(self):
+        code, out = self.check(self.config(), "rtl")
+        self.assertIsNone(code)
+        self.assertIn("Configuration verified for the RTL.", out)
+
+    def test_rtl_stops_on_files_that_match_nothing(self):
+        code, out = self.check(self.config(VERILOG_FILES=["nowhere/*.v"]), "rtl")
+        self.assertEqual(code, 1)
+        self.assertIn("VERILOG_FILES matched no files", out)
+
+    def test_rtl_stops_on_a_design_name_that_names_no_module(self):
+        code, out = self.check(self.config(DESIGN_NAME="my_cpu"), "rtl")
+        self.assertEqual(code, 1)
+        self.assertIn("'my_cpu'", out)
+        self.assertIn("Declared there: top", out)
+
+    def test_rtl_stops_when_there_is_no_design_name(self):
+        config = self.config()
+        del config["DESIGN_NAME"]
+        code, out = self.check(config, "rtl")
+        self.assertEqual(code, 1)
+        self.assertIn("DESIGN_NAME is not set", out)
+
+    def test_rtl_warns_about_a_clock_port_that_is_not_in_the_rtl_and_still_passes(self):
+        code, out = self.check(self.config(CLOCK_PORT="wall_clock"), "rtl")
+        self.assertIsNone(code)
+        self.assertIn("[WARN] CLOCK_PORT is 'wall_clock'", out)
+
+    # --- sim ---
+
+    def test_sim_passes_with_a_testbench_alone(self):
+        code, out = self.check(self.config(TEST_FILES=["tb/tb_top.v"]), "sim")
+        self.assertIsNone(code)
+        self.assertIn("Configuration verified for the tests.", out)
+
+    def test_sim_passes_with_cocotb_tests_alone(self):
+        code, _ = self.check(self.config(**{"//COCOTB_TESTS": ["dir::tb/test_*.py"]}), "sim")
+        self.assertIsNone(code)
+
+    def test_sim_stops_when_no_test_is_configured_and_names_both_keys(self):
+        code, out = self.check(self.config(), "sim")
+        self.assertEqual(code, 1)
+        self.assertIn("TEST_FILES", out)
+        self.assertIn("COCOTB_TESTS", out)
+
+    def test_sim_stops_on_a_test_file_that_is_not_there(self):
+        code, out = self.check(self.config(TEST_FILES=["tb/missing_tb.v"]), "sim")
+        self.assertEqual(code, 1)
+        self.assertIn("TEST_FILES matched no files", out)
+        code, out = self.check(self.config(**{"//COCOTB_TESTS": ["dir::tb/missing_*.py"]}), "sim")
+        self.assertEqual(code, 1)
+        self.assertIn("COCOTB_TESTS matched no files", out)
+
+    def test_sim_has_the_checks_of_rtl(self):
+        code, out = self.check(self.config(DESIGN_NAME="my_cpu", TEST_FILES=["tb/tb_top.v"]), "sim")
+        self.assertEqual(code, 1)
+        self.assertIn("'my_cpu'", out)
+
+    # --- regress ---
+
+    def regress_config(self, **keys):
+        config = self.config(**{"//COCOTB_TESTS": ["dir::tb/test_*.py"], "//REGRESSION": "dir::tb/regression.yaml"})
+        config.update(keys)
+        return config
+
+    def test_regress_passes_a_list_that_names_tests_that_exist(self):
+        code, out = self.check(self.regress_config(), "regress")
+        self.assertIsNone(code)
+        self.assertIn("Configuration verified for the regression.", out)
+
+    def test_regress_stops_without_a_list(self):
+        config = self.regress_config()
+        del config["//REGRESSION"]
+        code, out = self.check(config, "regress")
+        self.assertEqual(code, 1)
+        self.assertIn("No test list", out)
+
+    def test_regress_stops_on_a_list_file_that_is_not_there(self):
+        code, out = self.check(self.regress_config(**{"//REGRESSION": "dir::tb/none.yaml"}), "regress")
+        self.assertEqual(code, 1)
+        self.assertIn("Could not read the test list", out)
+
+    def test_regress_stops_on_a_list_that_does_not_parse(self):
+        open("tb/regression.yaml", "w").write("- test: [unclosed\n")
+        code, out = self.check(self.regress_config(), "regress")
+        self.assertEqual(code, 1)
+        self.assertIn("Failed to parse", out)
+
+    def test_regress_stops_on_an_entry_that_names_no_test(self):
+        open("tb/regression.yaml", "w").write("- test: test_zzz\n")
+        code, out = self.check(self.regress_config(), "regress")
+        self.assertEqual(code, 1)
+        self.assertIn("no module test_zzz in COCOTB_TESTS", out)
+
+    def test_regress_stops_when_the_config_has_no_cocotb_tests(self):
+        config = self.regress_config(TEST_FILES=["tb/tb_top.v"])
+        del config["//COCOTB_TESTS"]
+        code, out = self.check(config, "regress")
+        self.assertEqual(code, 1)
+        self.assertIn("REGRESSION runs tests of COCOTB_TESTS", out)
+
+    def test_regress_has_the_checks_of_sim(self):
+        config = self.regress_config()
+        config["//COCOTB_TESTS"] = ["dir::tb/missing_*.py"]
+        code, out = self.check(config, "regress")
+        self.assertEqual(code, 1)
+        self.assertIn("COCOTB_TESTS matched no files", out)
+
+    # --- gatesim ---
+
+    def test_gatesim_passes_with_gate_tests_or_cocotb_tests(self):
+        for keys in ({"GATE_TESTS": ["tb/gate_tb.v"]}, {"//COCOTB_TESTS": ["dir::tb/test_*.py"]}):
+            code, out = self.check(self.config(**keys), "gatesim")
+            self.assertIsNone(code)
+            self.assertIn("Configuration verified for the gate-level tests.", out)
+
+    def test_gatesim_stops_with_neither_and_names_both(self):
+        code, out = self.check(self.config(TEST_FILES=["tb/tb_top.v"]), "gatesim")
+        self.assertEqual(code, 1)
+        self.assertIn("GATE_TESTS", out)
+        self.assertIn("COCOTB_TESTS", out)
+
+    def test_gatesim_stops_on_a_gate_testbench_that_is_not_there(self):
+        code, out = self.check(self.config(GATE_TESTS=["tb/missing.v"]), "gatesim")
+        self.assertEqual(code, 1)
+        self.assertIn("GATE_TESTS matched no files", out)
+
+    def test_gatesim_does_not_read_the_rtl(self):
+        code, _ = self.check({"DESIGN_NAME": "top", "GATE_TESTS": ["tb/gate_tb.v"]}, "gatesim")
+        self.assertIsNone(code)
+
+    # --- gds ---
+
+    def test_gds_has_the_checks_of_rtl(self):
+        code, out = self.check(self.config(DESIGN_NAME="my_cpu", **self.GDS), "gds")
+        self.assertEqual(code, 1)
+        self.assertIn("'my_cpu'", out)
+
+    def test_gds_names_the_keys_that_are_missing(self):
+        config = self.config(**self.GDS)
+        del config["CLOCK_PERIOD"]
+        code, out = self.check(config, "gds")
+        self.assertEqual(code, 1)
+        self.assertIn("CLOCK_PERIOD", out)
+
+    def test_gds_says_it_builds_no_layout(self):
+        code, out = self.check(self.config(**self.GDS), "gds")
+        self.assertIsNone(code)
+        self.assertIn("Configuration verified for the physical design flow.", out)
+        self.assertIn("builds no layout", out)
+
+    # --- a check without a scope ---
+
+    def test_a_bare_check_leaves_out_what_the_config_does_not_ask_for(self):
+        code, out = self.check(self.config(TEST_FILES=["tb/tb_top.v"]))
+        self.assertIsNone(code)
+        self.assertIn("regress skipped: REGRESSION is not set.", out)
+        self.assertIn("gatesim skipped: GATE_TESTS and COCOTB_TESTS are not set.", out)
+        self.assertIn("gds skipped: the config has none of the keys", out)
+        self.assertIn("Configuration verified for the RTL.", out)
+        self.assertIn("Configuration verified for the tests.", out)
+        self.assertNotIn("regression.", out)
+
+    def test_a_bare_check_runs_every_scope_a_full_config_asks_for(self):
+        config = self.regress_config(GATE_TESTS=["tb/gate_tb.v"], **self.GDS)
+        code, out = self.check(config)
+        self.assertIsNone(code)
+        for what in ("the RTL", "the tests", "the regression", "the gate-level tests", "the physical design flow"):
+            self.assertIn(f"Configuration verified for {what}.", out)
+        self.assertNotIn("skipped", out)
+
+    def test_a_bare_check_fails_when_no_test_is_configured(self):
+        code, out = self.check(self.config())
+        self.assertEqual(code, 1)
+        self.assertIn("No tests to run", out)
+
+    def test_a_bare_check_fails_on_a_list_it_was_asked_to_read(self):
+        open("tb/regression.yaml", "w").write("- test: test_zzz\n")
+        code, out = self.check(self.regress_config())
+        self.assertEqual(code, 1)
+        self.assertIn("no module test_zzz", out)
+
+    def test_a_bare_check_holds_a_config_with_one_physical_design_key_to_all_of_them(self):
+        code, out = self.check(self.config(TEST_FILES=["tb/tb_top.v"], PDK="sky130A"))
+        self.assertEqual(code, 1)
+        self.assertIn("Missing required keys", out)
+
+    def test_a_bare_check_says_a_warning_once(self):
+        # sim, regress and gds each stand on rtl. The checks of rtl run once.
+        config = self.regress_config(CLOCK_PORT="wall_clock", **{k: v for k, v in self.GDS.items() if k != "CLOCK_PORT"})
+        code, out = self.check(config)
+        self.assertIsNone(code)
+        self.assertEqual(out.count("CLOCK_PORT is 'wall_clock'"), 1)
+
+    # --- the commands that run a scope first ---
+
+    def test_rtl_runs_its_checks_then_compile_lint_and_synth_in_that_order(self):
+        config = self.config(LINTER_DISABLE_WARNINGS=[])
+        with patch("c4o.common.run_command") as run, patch("c4o.common.ensure_build_dir"), \
+             contextlib.redirect_stdout(io.StringIO()):
+            entrypoint.cmd_rtl(argparse.Namespace(files=None), config)
+        tools = [call.args[0][0] for call in run.call_args_list]
+        self.assertEqual(tools, ["iverilog", "verilator", "yosys"])
+        compile_cmd = run.call_args_list[0].args[0]
+        self.assertEqual(compile_cmd[:2], ["iverilog", "-g2012"])
+        self.assertEqual(compile_cmd[compile_cmd.index("-s") + 1], "top")
+        self.assertIn("rtl/top.v", compile_cmd)
+
+    def test_rtl_runs_no_tool_when_the_config_is_wrong(self):
+        with patch("c4o.common.run_command") as run, contextlib.redirect_stdout(io.StringIO()), \
+             self.assertRaises(SystemExit):
+            entrypoint.cmd_rtl(argparse.Namespace(files=None), self.config(DESIGN_NAME="my_cpu"))
+        run.assert_not_called()
+
+    def test_rtl_and_the_scope_are_commands(self):
+        parser = entrypoint.build_parser()
+        self.assertIs(parser.parse_args(["rtl"]).func, entrypoint.cmd_rtl)
+        self.assertEqual(parser.parse_args(["rtl", "--files", "a.v"]).files, ["a.v"])
+        self.assertFalse(parser.parse_args(["regress"]).coverage)
+        self.assertTrue(parser.parse_args(["regress", "--coverage"]).coverage)
+
+    # --- WAVES with a Verilog testbench ---
+
+    def sim_with_waves(self, testbench_text, waves):
+        open("tb/tb_top.v", "w").write(testbench_text)
+        out = io.StringIO()
+        with patch.dict(os.environ), patch("c4o.common.run_command"), patch("c4o.common.ensure_build_dir"), \
+             contextlib.redirect_stdout(out):
+            os.environ.pop("WAVES", None)
+            if waves is not None:
+                os.environ["WAVES"] = waves
+            c4o.sim.cmd_sim(argparse.Namespace(files=None, if_configured=False), self.config(TEST_FILES=["tb/tb_top.v"]))
+        return out.getvalue()
+
+    def test_waves_with_a_testbench_that_never_dumps_is_a_warning(self):
+        out = self.sim_with_waves("module tb_top; endmodule", "1")
+        self.assertIn("[WARN] WAVES=1 writes no waveform from a Verilog testbench", out)
+
+    def test_waves_with_a_testbench_that_dumps_says_nothing(self):
+        out = self.sim_with_waves('module tb_top; initial $dumpfile("x.vcd"); endmodule', "1")
+        self.assertNotIn("WAVES", out)
+
+    def test_a_testbench_without_waves_says_nothing(self):
+        out = self.sim_with_waves("module tb_top; endmodule", None)
+        self.assertNotIn("WAVES", out)
+
 class TestCoverage(unittest.TestCase):
     """`coverage`: the numbers from coverage.dat, the page they appear on, and the command's exit codes."""
     FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "coverage")
@@ -3937,6 +4238,36 @@ class TestRegress(unittest.TestCase):
     def summary(self):
         with open("build/regress/summary.json") as f:
             return json.load(f)
+
+    # --- --coverage: the same list on Verilator, after the verdict ---------------
+
+    def test_coverage_runs_after_a_list_that_passed_with_the_seed_it_ran_with(self):
+        self.listing("- test: test_a\n  seeds: 2\n")
+        seen = {}
+        with patch("c4o.regress.cmd_coverage", side_effect=lambda a, c: seen.update(seed=os.environ.get("RANDOM_SEED"))) as cov:
+            _, _, code, _ = self.regress(coverage=True)
+        self.assertIsNone(code)
+        cov.assert_called_once()
+        self.assertEqual(seen["seed"], str(self.summary()["seed"]))
+
+    def test_coverage_is_not_run_without_the_flag(self):
+        self.listing("- test: test_a\n")
+        with patch("c4o.regress.cmd_coverage") as cov:
+            self.regress()
+        cov.assert_not_called()
+
+    def test_coverage_is_not_run_after_a_run_that_failed(self):
+        self.listing("- test: test_a\n")
+        with patch("c4o.regress.cmd_coverage") as cov:
+            _, _, code, _ = self.regress(verdicts={("test_a", None): self.FAIL_XML}, coverage=True)
+        self.assertEqual(code, 1)
+        cov.assert_not_called()
+
+    def test_coverage_is_not_run_when_the_list_is_skipped(self):
+        del self.config["//REGRESSION"]
+        with patch("c4o.regress.cmd_coverage") as cov:
+            self.regress(coverage=True, if_configured=True)
+        cov.assert_not_called()
 
     # --- the list ------------------------------------------------------------
 
@@ -5257,10 +5588,10 @@ class TestRunAll(unittest.TestCase):
         return code, out.getvalue()
 
     GOOD = {
-        "lint": ("[INFO] Running: verilator\n", 0),
+        "rtl": ("[INFO] Running: verilator\nYosys 0.33 (git sha1 x)\n   Number of cells:                 54\n", 0),
+        "check": ("[INFO] Configuration verified for the tests.\n", 0),
         "sim": ("[INFO] sim skipped: TEST_FILES is not set.\n", 0),
         "cocotb": ("0.00ns INFO cocotb Seeding Python random module with 5\n[INFO] All cocotb tests passed.\n", 0),
-        "synth": ("Yosys 0.33 (git sha1 x)\n   Number of cells:                 54\n", 0),
     }
 
     def test_one_line_for_each_command_with_real_numbers(self):
@@ -5268,11 +5599,11 @@ class TestRunAll(unittest.TestCase):
         self.assertEqual(code, 0)
         lines = out.splitlines()
         self.assertEqual(lines[0], "c4o all, demo, c4o-core 9.9.9")
-        self.assertRegex(lines[1], r"^  ok +lint +verilator, no warnings, \d+\.\d s$")
-        self.assertEqual(lines[2].split(None, 2)[0:2], ["skip", "sim"])
-        self.assertIn("skipped: TEST_FILES is not set", lines[2])
-        self.assertRegex(lines[3], r"^  ok +cocotb +passed, seed 5, \d+\.\d s$")
-        self.assertRegex(lines[4], r"^  ok +synth +yosys 0\.33, 54 cells, \d+\.\d s$")
+        self.assertRegex(lines[1], r"^  ok +rtl +verilator, no warnings, yosys 0\.33, 54 cells, \d+\.\d s$")
+        self.assertRegex(lines[2], r"^  ok +check +tests configured, \d+\.\d s$")
+        self.assertEqual(lines[3].split(None, 2)[0:2], ["skip", "sim"])
+        self.assertIn("skipped: TEST_FILES is not set", lines[3])
+        self.assertRegex(lines[4], r"^  ok +cocotb +passed, seed 5, \d+\.\d s$")
 
     def test_each_commands_output_goes_to_its_own_log_unchanged(self):
         self.run_all(self.GOOD)
@@ -5286,28 +5617,40 @@ class TestRunAll(unittest.TestCase):
         self.assertNotIn("Yosys 0.33 (git", out)
 
     def test_a_failure_stops_there_names_the_rest_and_returns_its_status(self):
+        behaviour = dict(self.GOOD, sim=("[ERROR] Command failed with exit code 1\n", 1))
+        code, out = self.run_all(behaviour)
+        self.assertEqual(code, 1)
+        self.assertRegex(out, r"FAIL +sim +failed, \d+\.\d s")
+        self.assertRegex(out, r"skip +cocotb +not run: sim failed first")
+        self.assertFalse(os.path.exists("build/log/cocotb.log"))
+
+    def test_a_failed_rtl_stops_before_the_tests_are_looked_at(self):
+        code, out = self.run_all(dict(self.GOOD, rtl=("%Error: x\n", 1)))
+        self.assertEqual(code, 1)
+        for later in ("check", "sim", "cocotb"):
+            self.assertRegex(out, rf"skip +{later} +not run: rtl failed first")
+
+    def test_a_failed_cocotb_test_names_the_tests(self):
         behaviour = dict(self.GOOD, cocotb=("[ERROR] cocotb tests failed: a, b\n", 1))
         code, out = self.run_all(behaviour)
         self.assertEqual(code, 1)
         self.assertRegex(out, r"FAIL +cocotb +failed, \d+\.\d s")
         self.assertIn("\n[ERROR] cocotb tests failed: a, b\n", out)
-        self.assertRegex(out, r"skip +synth +not run: cocotb failed first")
-        self.assertFalse(os.path.exists("build/log/synth.log"))
 
     def test_a_command_that_exits_with_another_status_returns_that(self):
-        code, _ = self.run_all(dict(self.GOOD, lint=("%Error: x\n", 7)))
+        code, _ = self.run_all(dict(self.GOOD, rtl=("%Error: x\n", 7)))
         self.assertEqual(code, 7)
 
     def test_lint_warnings_are_counted(self):
-        _, out = self.run_all(dict(self.GOOD, lint=("%Warning-UNUSED: a\n%Warning-WIDTH: b\n", 0)))
+        _, out = self.run_all(dict(self.GOOD, rtl=("%Warning-UNUSED: a\n%Warning-WIDTH: b\n", 0)))
         self.assertIn("verilator, 2 warnings", out)
 
-    def test_sim_and_cocotb_are_asked_to_skip_what_is_not_configured(self):
+    def test_the_check_is_the_one_of_the_tests_and_the_kinds_are_asked_to_skip(self):
         entry = FakeEntry(self.dir, {})
+        self.assertEqual(c4o.progress.command_of(entry.path, "check")[1:], [entry.path, "check", "--for", "sim"])
         self.assertEqual(c4o.progress.command_of(entry.path, "sim")[-1], "--if-configured")
         self.assertEqual(c4o.progress.command_of(entry.path, "cocotb")[-1], "--if-configured")
-        self.assertEqual(c4o.progress.command_of(entry.path, "lint")[1:], [entry.path, "lint"])
-        self.assertEqual(c4o.progress.command_of(entry.path, "synth")[1:], [entry.path, "synth"])
+        self.assertEqual(c4o.progress.command_of(entry.path, "rtl")[1:], [entry.path, "rtl"])
 
     def test_raw_streams_the_output_and_writes_no_files(self):
         entry = FakeEntry(self.dir, self.GOOD).path
@@ -5326,8 +5669,8 @@ class TestRunAll(unittest.TestCase):
         _, plain = self.run_all(self.GOOD)
         self.assertNotIn("::group::", plain)
         _, gh = self.run_all(self.GOOD, env={"C4O_PROGRESS": "plain", "GITHUB_ACTIONS": "true"})
-        self.assertIn("::group::lint raw output\n[INFO] Running: verilator\n::endgroup::\n", gh)
-        self.assertLess(gh.index("::endgroup::"), gh.index("ok   lint"))
+        self.assertIn("::group::rtl raw output\n[INFO] Running: verilator\n", gh)
+        self.assertLess(gh.index("::endgroup::"), gh.index("ok   rtl"))
 
     def test_there_is_no_escape_code_in_plain_output(self):
         _, out = self.run_all(self.GOOD)
