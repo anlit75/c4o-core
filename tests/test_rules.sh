@@ -181,6 +181,24 @@ else
   ok "host: a resume does not delete the previous run"
 fi
 
+# A run made from the RTL and config.yaml that are here has nothing to redo.
+check "host: gds asks whether the run is current" 0 "$image fresh" in_repo "$host" make -n gds
+out=$(in_repo "$host" make -n gds FORCE=1 2>&1)
+if grep -qF -- "-m librelane" <<<"$out" && ! grep -qE "$image fresh" <<<"$out"; then
+  ok "host: FORCE=1 does not ask"
+else
+  fail "host: FORCE=1 must go to LibreLane without asking" "$out"
+fi
+out=$(in_repo "$host" make -n gds LIBRELANE_ARGS="--from OpenROAD.Floorplan --with-initial-state x.json" 2>&1)
+if ! grep -qE "$image fresh" <<<"$out" && ! grep -qE "$image stamp" <<<"$out"; then
+  ok "host: a partial run neither asks nor records the inputs"
+else
+  fail "host: a partial run must not ask whether the run is current, nor stamp it" "$out"
+fi
+check "host: a whole run records the inputs it was made from" 0 "$image stamp" in_repo "$host" make -n gds
+check "host: ... in both modes" 0 "$image stamp" in_repo "$host" make -n gds PROGRESS=raw
+check "host: a new run removes the record of the last one" 0 "rm -f runs/demo_run/c4o-inputs.sha256" in_repo "$host" make -n gds
+
 # The exit status of make gds is LibreLane's. A pipe to the ledger would return
 # the ledger's, which is 0 whatever LibreLane did. docker is a stand-in here: it
 # answers `run` and passes the rest to the real one. LibreLane exits 2.
@@ -197,6 +215,7 @@ if [ "\$1" = run ]; then
       exit 2 ;;
     *klayout*) [ -n "\$SHIM_STAGES_FAIL" ] && exit 1; echo drew >> "$work/rendered"; exit 0 ;;
     *" stages "*) [ -n "\$SHIM_STAGES_FAIL" ] && exit 1; exit 0 ;;
+    *" fresh") exit \${SHIM_FRESH:-1} ;;
     *"python3 -c"*) exit 1 ;;
   esac
   exit 0
@@ -219,6 +238,26 @@ fi
   || fail "gds: build/log/status is not LibreLane's exit status" "$(cat "$fake/build/log/status" 2>&1)"
 [ -f "$fake/build/log/librelane.log" ] && ok "gds: LibreLane's output is in build/log/librelane.log" || fail "gds: no build/log/librelane.log"
 if [ -e "$fake/build/demo.gds" ]; then fail "gds: a failed flow must not copy a GDS"; else ok "gds: a failed flow copies no GDS"; fi
+grep -qE "$image stamp" "$work/docker-calls" && fail "gds: a failed flow must not record its inputs" "$(cat "$work/docker-calls")" \
+  || ok "gds: a failed flow records no inputs"
+# A current run: make gds prints the report and does not start LibreLane. FORCE=1 does.
+: > "$work/docker-calls"
+out=$(cd "$fake" && SHIM_FRESH=0 PATH="$shim:$PATH" make gds 2>&1)
+got=$?
+if [ "$got" -eq 0 ] && grep -qE "$image report" "$work/docker-calls" && ! grep -qF -- "-m librelane" "$work/docker-calls" \
+   && grep -qF "LibreLane skipped" <<<"$out"; then
+  ok "gds: a run made from these inputs is reported, not repeated"
+else
+  fail "gds: a current run should skip LibreLane and print the report (exit $got)" "$out"
+fi
+: > "$work/docker-calls"
+out=$(cd "$fake" && SHIM_FRESH=0 SHIM_FLOW_OK=1 PATH="$shim:$PATH" make gds FORCE=1 2>&1)
+got=$?
+if [ "$got" -eq 0 ] && grep -qF -- "-m librelane" "$work/docker-calls" && grep -qE "$image stamp" "$work/docker-calls"; then
+  ok "gds: FORCE=1 runs LibreLane again and records the inputs"
+else
+  fail "gds: FORCE=1 should run LibreLane and stamp (exit $got)" "$out"
+fi
 # The stages are drawn after a flow that failed, and nothing about them changes the status.
 # The stand-in draws nothing itself, so what `stages` would have listed is put there.
 seed_jobs() { mkdir -p "$1/build/stages"; echo '[]' > "$1/build/stages/jobs.json"; }

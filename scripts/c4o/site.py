@@ -234,9 +234,15 @@ def cmd_site(args, config):
     numbers, layout, details = [], None, {}
     render = None  # the flow's own render of the layout, when there is a run
     files = []  # (section, name next to the page) of each file copied
-    found = [path for pattern in runs.METRICS_GLOBS for path in glob.glob(pattern)]
-    if found:
-        path = max(found, key=os.path.getmtime)
+    run_dir, path = runs.locate(config, "final/metrics.json")
+    stale = False  # the run is older than the RTL or config: say so on the page
+    if path:
+        state = runs.freshness(run_dir, config)
+        stale = state == "stale"
+        if stale:
+            common.log_warn(f"{run_dir} was made from different RTL or config than this directory has now. The page says so.")
+        elif state == "unknown":
+            common.log_warn(f"{run_dir} does not record the inputs it was made from, so it is not checked.")
         metrics = report.read_metrics(path)
         rows = report.report_rows(metrics, path)
         details = run_details(path, metrics, config)
@@ -380,5 +386,5 @@ def cmd_site(args, config):
         f.write(site_page.render(design, numbers, layout, cocotb_runs, os.environ,
                                  description=common.config_get(config, "DESCRIPTION", None),
                                  coverage=coverage, regression=regression,
-                                 history=history, files=offered, stages=built, **details))
+                                 history=history, files=offered, stages=built, stale=stale, **details))
     common.log_info(f"Wrote {index}")

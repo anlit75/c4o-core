@@ -1210,7 +1210,7 @@ def build_time(env):
 def render(design, numbers, layout, cocotb_runs, env,
            signoff=(), area=None, power=None, gds=None,
            description=None, cells=(), physical=None, drive=(), coverage=None,
-           regression=None, history=(), files=(), stages=None):
+           regression=None, history=(), files=(), stages=None, stale=False):
     """
     The page, as a string. Every argument may be empty, and its section is
     then left out.
@@ -1244,6 +1244,8 @@ def render(design, numbers, layout, cocotb_runs, env,
                     png, after_step, status), or None; it adds "How it was built"
     files        -- (section anchor, name next to the page, bytes) per file a section
                     offers; the anchor is the section's id without a number
+    stale        -- True when the run behind the layout numbers was made from
+                    other RTL or config than the page was built from
 
     The page is laid out to be shared, as a portfolio piece: the layout first,
     then the verdicts (tests, timing and its constraints), then what the chip
@@ -1285,6 +1287,8 @@ def render(design, numbers, layout, cocotb_runs, env,
     if slacks:
         layout_chips.append(("FAIL", "Timing missed") if any(s < 0 for s in slacks)
                      else ("PASS", "Timing met"))
+    if stale:
+        layout_chips.append(("FAIL", "Layout is older than the RTL"))
     if signoff:
         errors = sum(item[1] for item in signoff)
         layout_chips.append(("FAIL", f"Signoff: {errors} errors") if errors
@@ -1455,6 +1459,8 @@ def render(design, numbers, layout, cocotb_runs, env,
             f'<span class="chip {state}">{esc(text)}</span>' for state, text in row)
             + "</div>" for row in (chips, layout_chips) if row)
         + actions
+        + ('<p class="hint">The layout, timing, area and power come from a run made before the RTL or '
+           "<code>config.yaml</code> last changed. Run <code>make gds</code> to update them.</p>" if stale else "")
         # Locally, before the flow has run, the page is the tests only; say what is missing and what adds it, or it reads as all there is.
         + ("" if layout or signoff else '<p class="hint">The layout, signoff checks, timing, area and '
            "power appear here once <code>make gds</code> has run.</p>")

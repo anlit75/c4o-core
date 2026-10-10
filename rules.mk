@@ -111,6 +111,8 @@ LIBRELANE_PLAN = docker run --rm -v $(PWD):/workspace -w /workspace -v $(PDK_ROO
 # failed as well, on what the run left. After an upgrade of LIBRELANE_IMAGE,
 # check that scripts/klayout/render.py still takes the arguments c4o-core gives it.
 STAGES_RUN := runs/$(DESIGN_NAME)_run
+# The file in the run that records what it was made from. c4o-core's runs.py names it too.
+INPUTS_FILE := c4o-inputs.sha256
 LIBRELANE_RENDER_PY := import json,os,subprocess,sys,librelane;R=os.path.join(os.path.dirname(librelane.__file__),"scripts","klayout","render.py");ok=lambda j:subprocess.run([sys.executable,R]+j["args"],capture_output=True).returncode==0 and os.path.exists(j["png"]) and os.path.getsize(j["png"])>0;[os.path.exists(j["png"]) and os.remove(j["png"]) for j in json.load(open("build/stages/jobs.json")) if not ok(j)]
 LIBRELANE_RENDER = docker run --rm -v $(PWD):/workspace -w /workspace -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks -e HOME=/tmp \
 		-u $(shell id -u):$(shell id -g) $(LIBRELANE_IMAGE) timeout 300 python3 -c '$(LIBRELANE_RENDER_PY)'
@@ -173,7 +175,7 @@ endif
 # What the ledger decides its mode from, passed on as the host has it.
 PROGRESS_ENV := -e C4O_PROGRESS=$(C4O_PROGRESS) -e NO_COLOR -e CI -e TERM -e GITHUB_ACTIONS
 
-.PHONY: all help lint sim cocotb regress coverage gatesim synth schematic gds pdk report site clean distclean shell
+.PHONY: all help lint sim cocotb regress coverage gatesim synth schematic gds gds-flow pdk report site clean distclean shell
 
 # A bare `make all` asks for no test kind by name: it runs each kind whose key
 # is in config.yaml and fails when neither is. The target-specific variable
@@ -209,7 +211,8 @@ help::
 	@echo "  make synth   - Run Yosys synthesis"
 	@echo "  make schematic - Draw the circuit as build/schematic.svg"
 	@echo "  make pdk     - Install/Enable Sky130 PDK via Ciel, LibreLane's PDK manager"
-	@echo "  make gds     - Run LibreLane GDSII flow"
+	@echo "  make gds     - Run LibreLane GDSII flow (skipped when the RTL and config.yaml are"
+	@echo "                 unchanged since the last one; make gds FORCE=1 runs it anyway)"
 	@echo "  make report  - Show area, timing and power from the last GDS run"
 	@echo "  make site    - Put tests, timing, area, power and signoff on one page (build/site/)"
 	@echo "  make shell   - Enter c4o-core interactive shell"
@@ -298,15 +301,33 @@ gds:
 	@echo "🟢 Validating config with c4o-core..."
 	$(C4O_CMD) check
 
+	@# A run made from this RTL and config.yaml has nothing to redo: print its
+	@# report instead of waiting minutes for the same numbers. FORCE=1 reruns it,
+	@# and so does a partial run, which exists to run a part of the flow again.
+	@# What the run was made from is written by `stamp` below, after a whole
+	@# flow succeeded and not before.
+	@if $(if $(or $(FORCE),$(LIBRELANE_PARTIAL)),false,$(C4O_CMD) fresh); then \
+		echo "🟢 LibreLane skipped: the RTL and config.yaml are unchanged since the last run. make gds FORCE=1 runs it again."; \
+		$(MAKE) --no-print-directory report; \
+	else \
+		$(MAKE) --no-print-directory gds-flow; \
+	fi
+
+# The part of `make gds` that runs LibreLane.
+gds-flow:
 	$(MAKE) pdk
 	@echo "🟢 Running LibreLane..."
 	mkdir -p build
+	@# The run about to start is not the one that was stamped. A partial run or a
+	@# failed one leaves no stamp, so the next command says it cannot be checked.
+	@rm -f $(STAGES_RUN)/$(INPUTS_FILE)
 ifeq ($(C4O_PROGRESS),raw)
 	$(LIBRELANE_RUN) || { code=$$?; $(call C4O_STAGES,--quiet); exit $$code; }
 	@echo "🟢 Post-processing..."
 	# Copy the final GDS to the build folder
 	cp runs/$(DESIGN_NAME)_run/final/gds/$(DESIGN_NAME).gds build/$(DESIGN_NAME).gds
 	@$(call C4O_STAGES,--quiet)
+	@$(if $(LIBRELANE_PARTIAL),,$(C4O_CMD) stamp)
 	# runs/ stays where LibreLane put it: a resume looks for the run there, and
 	# c4o-core's report and gatesim search it too.
 else
@@ -338,6 +359,7 @@ else
 	if [ "$$code" != 0 ]; then $(call C4O_STAGES,); fi; \
 	exit $$code
 	@cp runs/$(DESIGN_NAME)_run/final/gds/$(DESIGN_NAME).gds build/$(DESIGN_NAME).gds
+	@$(if $(LIBRELANE_PARTIAL),,$(C4O_CMD) stamp)
 endif
 
 	@# The flow just measured area, timing and power. Show them rather than
