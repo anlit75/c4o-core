@@ -317,10 +317,11 @@ else
   echo "skip  all: no script(1) here to give make a terminal"
 fi
 
-# coverage is an alias of regress, which measures it after the runs, and is not part of sim.
-check "host: coverage is regress, with the coverage run" 0 "$image regress --coverage" in_repo "$host" make -n coverage
-check "host: SEED reaches the coverage run" 0 "-e RANDOM_SEED=7 $image regress --coverage" in_repo "$host" make -n coverage SEED=7
+# coverage keeps its meaning: the coverage run alone, not regress. It is not part of sim.
+check "host: coverage runs the coverage command" 0 "$image coverage" in_repo "$host" make -n coverage
+check "host: SEED reaches the coverage run" 0 "-e RANDOM_SEED=7 $image coverage" in_repo "$host" make -n coverage SEED=7
 out=$(in_repo "$host" make -n coverage 2>&1)
+if grep -qE "$image regress" <<<"$out"; then fail "host: make coverage must not run regress" "$out"; else ok "host: make coverage does not run regress"; fi
 if grep -qF -- "--if-configured" <<<"$out"; then
   fail "host: make coverage by itself must not skip" "$out"
 else
@@ -432,7 +433,7 @@ check "inside: PROGRESS reaches the entrypoint" 0 "env C4O_PROGRESS=plain python
 check "inside: SEED reaches the ledger run" 0 "env C4O_PROGRESS= RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all SEED=7
 check "inside: PROGRESS=raw reaches the ledger" 0 "env C4O_PROGRESS=raw python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n sim PROGRESS=raw
 check "inside: gds follows the run with the entrypoint, not a second container" 0 "python3 /opt/c4o-core/scripts/entrypoint.py progress --run-dir runs/demo_run" dmake -n gds
-check "inside: coverage is regress with the coverage run" 0 "python3 /opt/c4o-core/scripts/entrypoint.py regress --coverage" dmake -n coverage
+check "inside: coverage calls the entrypoint's coverage" 0 "python3 /opt/c4o-core/scripts/entrypoint.py coverage" dmake -n coverage
 [ ! -e "$inside/.c4o" ] && ok "inside: nothing is copied to .c4o/" || fail "inside: .c4o/ was written inside the image"
 cat >> "$inside/Makefile" <<'EOF'
 

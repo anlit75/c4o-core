@@ -85,8 +85,8 @@ Some names are older than these commands. They still work and `make help` does n
 |---|---|
 | `all` | `make sim` |
 | `lint`, `synth` | `make rtl` |
-| `coverage` | `make regress` |
 | `cocotb` | The Python tests alone. Its meaning has not changed. |
+| `coverage` | The coverage run alone. Its meaning has not changed. |
 
 ### Which tests run
 
@@ -103,7 +103,7 @@ Some names are older than these commands. They still work and `make help` does n
 
 `make regress SEED=<n>` reruns the whole list with the same seeds, and the coverage run uses them too. `make cocotb SEED=<n> TEST=<entry>` replays one run. See [commands.md](commands.md#many-seeds-regress).
 
-`make coverage` is `make regress`, so it needs `"//REGRESSION"` too. The coverage run does not decide whether the tests pass. See [commands.md](commands.md#code-coverage-coverage).
+`make coverage` runs the coverage run alone, as before. It measures the list when `"//REGRESSION"` is set and the Python tests otherwise. The coverage run does not decide whether the tests pass. See [commands.md](commands.md#code-coverage-coverage).
 
 `make sim WAVES=1` writes `build/<DESIGN_NAME>.vcd` from the Python tests. A Verilog testbench writes a waveform only when it calls `$dumpfile`. With `WAVES=1` and no `$dumpfile` in `"//TEST_FILES"`, `make sim` prints a warning.
 

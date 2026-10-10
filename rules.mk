@@ -237,15 +237,21 @@ help::
 	@echo "    make gds LIBRELANE_ARGS=\"--from OpenROAD.Floorplan --with-initial-state <state_in.json>\""
 
 # The names these commands had. They stay, and each does what its new name
-# does. `cocotb` below is the exception: it is still the Python tests alone.
+# does. `cocotb` and `coverage` below are the exceptions: they keep their old
+# meaning, because the report action calls `make coverage`.
 all: sim
 lint synth: rtl
-coverage: regress
 
 # The Python (cocotb) tests alone, without rtl and the Verilog testbenches. A
 # failed `make regress` run is replayed with it.
 cocotb:
 	$(C4O_COCOTB) cocotb
+
+# The coverage run alone: the cocotb tests again on Verilator with coverage
+# counters, or the REGRESSION list when the key is there. Not a verdict.
+# C4O_COCOTB so that SEED reaches it. `make regress` ends with the same run.
+coverage:
+	$(C4O_COCOTB) coverage
 
 # The test list of REGRESSION, each test over its seeds, from one compile, and
 # then the same list on Verilator for the coverage numbers that Icarus cannot

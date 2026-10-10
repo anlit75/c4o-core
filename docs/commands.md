@@ -139,7 +139,7 @@ The directory is emptied at the start of every run. `--if-configured` skips, wit
 
 `coverage` shows how much of the RTL the Python tests run. It runs the `"//COCOTB_TESTS"` again on Verilator, with coverage counters in the model. Icarus has no code coverage.
 
-It reads the same config as `cocotb`. It also applies `LINTER_DISABLE_WARNINGS`, because Verilator stops at a warning when it builds the design. It accepts `--if-configured`, as `cocotb` does. `make sim` does not run it. `make regress` runs it after the list, and `make coverage` is the same command as `make regress`.
+It reads the same config as `cocotb`. It also applies `LINTER_DISABLE_WARNINGS`, because Verilator stops at a warning when it builds the design. It accepts `--if-configured`, as `cocotb` does. `make sim` does not run it. `make regress` runs it after the list, and `make coverage` runs it alone.
 
 | Kind | What it counts |
 |---|---|
@@ -154,7 +154,7 @@ The verdict stays with `cocotb`, which runs on Icarus. Verilator is 2-state, so 
 
 A line counts as not reached when a line point or a branch point on it was not hit. A signal that never toggled does not add a line. The Toggle row and the module table show it.
 
-`make regress SEED=<n>` sets the seed of both parts, as `make cocotb SEED=<n>` does for one run. The `report` action passes the base seed of the regression when `build/regress/summary.json` exists, and the seed of the RTL run otherwise. The page says which seed the coverage run used.
+`make coverage SEED=<n>` sets the seed, as `make cocotb SEED=<n>` does. `make regress SEED=<n>` sets the seed of both parts. The `report` action passes the base seed of the regression when `build/regress/summary.json` exists, and the seed of the RTL run otherwise. The page says which seed the coverage run used.
 
 With `"//REGRESSION"` set, the command measures the runs of `regress` instead. Verilator builds the design once. Then it simulates each entry and seed, with the same list and the same seeds as `regress` for one base seed. The runs are `run-<n>.dat` in the order of the list, and the command merges them. Failed tests still do not fail the command. `summary.json` then holds the base seed as `seed` and the number of runs as `runs`.
 
