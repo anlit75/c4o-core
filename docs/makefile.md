@@ -116,7 +116,7 @@ After the flow, passed or failed, it also draws one picture of each stage with t
 
 ### What `make sim` and `make gds` print
 
-`make sim` prints one line for each of `rtl`, `check`, `sim` and `cocotb`. `make gds` prints one line for each of seven stages. The output of the tools goes to `build/log/`: `rtl.log`, `check.log`, `sim.log` and `cocotb.log`, and `librelane.log` for `make gds`, as LibreLane wrote it. The other targets print what their tools print.
+`make sim` prints one line for each of `rtl`, `check`, `verilog` and `cocotb`. `make gds` prints one line for each of seven stages. The output of the tools goes to `build/log/`: `rtl.log`, `check.log`, `verilog.log` and `cocotb.log`, and `librelane.log` for `make gds`, as LibreLane wrote it. The other targets print what their tools print.
 
 | `PROGRESS=` | What you get |
 |---|---|

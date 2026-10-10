@@ -5758,17 +5758,17 @@ class TestRunAll(unittest.TestCase):
         code, out = self.run_all(self.GOOD)
         self.assertEqual(code, 0)
         lines = out.splitlines()
-        self.assertEqual(lines[0], "c4o all, demo, c4o-core 9.9.9")
+        self.assertEqual(lines[0], "c4o sim, demo, c4o-core 9.9.9")
         self.assertRegex(lines[1], r"^  ok +rtl +verilator, no warnings, yosys 0\.33, 54 cells, \d+\.\d s$")
         self.assertRegex(lines[2], r"^  ok +check +tests configured, \d+\.\d s$")
-        self.assertEqual(lines[3].split(None, 2)[0:2], ["skip", "sim"])
+        self.assertEqual(lines[3].split(None, 2)[0:2], ["skip", "verilog"])
         self.assertIn("skipped: TEST_FILES is not set", lines[3])
         self.assertRegex(lines[4], r"^  ok +cocotb +passed, seed 5, \d+\.\d s$")
 
     def test_each_commands_output_goes_to_its_own_log_unchanged(self):
         self.run_all(self.GOOD)
         for step, (text, _) in self.GOOD.items():
-            with open(f"build/log/{step}.log") as f:
+            with open(f"build/log/{c4o.progress.LABELS.get(step, step)}.log") as f:
                 self.assertEqual(f.read(), text)
 
     def test_the_raw_output_is_not_in_the_ledger(self):
@@ -5780,14 +5780,14 @@ class TestRunAll(unittest.TestCase):
         behaviour = dict(self.GOOD, sim=("[ERROR] Command failed with exit code 1\n", 1))
         code, out = self.run_all(behaviour)
         self.assertEqual(code, 1)
-        self.assertRegex(out, r"FAIL +sim +failed, \d+\.\d s")
-        self.assertRegex(out, r"skip +cocotb +not run: sim failed first")
+        self.assertRegex(out, r"FAIL +verilog +failed, \d+\.\d s")
+        self.assertRegex(out, r"skip +cocotb +not run: verilog failed first")
         self.assertFalse(os.path.exists("build/log/cocotb.log"))
 
     def test_a_failed_rtl_stops_before_the_tests_are_looked_at(self):
         code, out = self.run_all(dict(self.GOOD, rtl=("%Error: x\n", 1)))
         self.assertEqual(code, 1)
-        for later in ("check", "sim", "cocotb"):
+        for later in ("check", "verilog", "cocotb"):
             self.assertRegex(out, rf"skip +{later} +not run: rtl failed first")
 
     def test_a_failed_cocotb_test_names_the_tests(self):
