@@ -2082,6 +2082,7 @@ class TestEntrypoint(unittest.TestCase):
         # A local `make site` is not a commit: no row, no file, no fold.
         self.assertFalse(os.path.exists("build/site/history.json"))
         self.assertNotIn("hist-fold", page)
+        self.assertNotIn(c4o.site_page.HIST_JS, page)
         shutil.rmtree("runs")
         shutil.rmtree("build/site")
         with patch.dict(os.environ, self.HIST_ENV, clear=False), \
@@ -2301,9 +2302,42 @@ class TestEntrypoint(unittest.TestCase):
         rows[1]["c4o_version"] = "<b>"
         rows[2]["hold_ws"] = True
         page = self._history_site(rows)
-        self.assertNotIn("<script", page)
+        self.assertNotIn("<script>alert", page)
         self.assertNotIn("<b>", page)
         self.assertIn("&lt;script", page)
+
+    def _hover(self, chart):
+        """The data-hover points of the first chart in `chart`, as HIST_JS reads them."""
+        return json.loads(html.unescape(re.search(r'data-hover="([^"]*)"', chart).group(1)))
+
+    def test_each_chart_carries_every_commit_for_the_hover_note(self):
+        self.cwd_before = os.getcwd()
+        rows = self._rows(6)
+        rows[2]["built"] = "2026-10-10T14:32:00Z"
+        rows[4]["setup_ws"] = None
+        page = self._history_site(rows)
+        points = self._hover(self._section(page, "timing"))
+        # The fixture run adds no row (no GITHUB_SHA); the commit without setup slack has no point.
+        self.assertEqual([p["head"].split(" · ")[0] for p in points],
+                         ["0000000", "0000001", "0000002", "0000003", "0000005"])
+        self.assertEqual(points[0]["head"], "0000000 · c4o-core 2.21.0")
+        self.assertEqual(points[2]["head"], "0000002 · 2026-10-10 22:32 · c4o-core 2.21.0")
+        self.assertEqual(points[0]["lines"], ["+4.00 ns"])
+        self.assertLess(points[0]["x"], points[-1]["x"])
+        # A stacked chart names every layer and the total; a chart of two lines names each.
+        area = self._hover(self._section(page, "area"))[0]["lines"]
+        self.assertEqual(area[-1], "total 1,900.0 µm²")
+        self.assertEqual(len(area), 4)
+        two = c4o.site_page.hist_line_chart(rows, [("s3", "total", [3] * 6), ("s4", "passed", [3, 2, 3, 3, 3, 3])],
+                                            str, str, "Tests", floor=0)
+        self.assertEqual(self._hover(two)[1]["lines"], ["total 3", "passed 2"])
+
+    def test_the_hover_script_comes_only_with_a_chart(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site(self._rows(3))
+        self.assertEqual(page.count("<script>" + c4o.site_page.HIST_JS), 1)
+        self.assertIn('data-plot="12,102"', page)
+        self.assertIn("<title>", self._section(page, "timing"))  # still readable without the script
 
     def test_the_coverage_tests_and_regression_charts_use_the_pages_own_names(self):
         self.cwd_before = os.getcwd()

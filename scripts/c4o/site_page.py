@@ -8,6 +8,7 @@ markup. Nothing here touches the filesystem except to parse the XML it is
 handed.
 """
 import html
+import json
 import math
 import os
 import re
@@ -167,6 +168,15 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
 .hist svg .base { stroke: var(--line); }
 .hist svg .zero { stroke: var(--fail); stroke-dasharray: 3 3; }
 .hist svg .mark { stroke: var(--muted); stroke-dasharray: 2 3; }
+/* The hover guide and its note, added by HIST_JS; touch can scroll the page up and down over a chart. */
+.hist .kpi { position: relative; }
+.hist svg[data-hover] { touch-action: pan-y; cursor: crosshair; }
+.hist svg .guide { stroke: var(--muted); stroke-width: 1; pointer-events: none; }
+.hist-tip { position: absolute; z-index: 2; pointer-events: none; background: var(--card); border: 1px solid var(--line);
+            border-radius: 8px; padding: 6px 8px; font-size: 12px; line-height: 1.45; white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, .12); }
+.hist-tip[hidden] { display: none; }
+.hist-tip .h { color: var(--muted); }
 .hist svg polyline { fill: none; stroke-width: 1.8; }
 .hist svg polyline.s1 { stroke: var(--accent); } .hist svg circle.s1 { fill: var(--accent); }
 .hist svg polyline.s2 { stroke: var(--skip); } .hist svg circle.s2 { fill: var(--skip); }
@@ -271,6 +281,38 @@ document.querySelectorAll('.built').forEach(function (box) {
     e.preventDefault();
     if (items[to]) pick(items[to]);
   });
+});
+"""
+
+HIST_JS = """
+document.querySelectorAll('.hist svg[data-hover]').forEach(function (svg) {
+  var points = JSON.parse(svg.getAttribute('data-hover')), plot = svg.getAttribute('data-plot').split(','),
+      card = svg.parentNode, guide = document.createElementNS('http://www.w3.org/2000/svg', 'line'),
+      tip = document.createElement('div');
+  guide.setAttribute('class', 'guide'); guide.setAttribute('y1', plot[0]); guide.setAttribute('y2', plot[1]);
+  guide.style.display = 'none'; svg.appendChild(guide);
+  tip.className = 'hist-tip'; tip.hidden = true; card.appendChild(tip);
+  function hide() { guide.style.display = 'none'; tip.hidden = true; }
+  function show(e) {
+    var p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
+    var at = p.matrixTransform(svg.getScreenCTM().inverse()).x, best = points[0];
+    points.forEach(function (q) { if (Math.abs(q.x - at) < Math.abs(best.x - at)) best = q; });
+    guide.setAttribute('x1', best.x); guide.setAttribute('x2', best.x); guide.style.display = '';
+    tip.textContent = '';
+    var head = document.createElement('div'); head.className = 'h'; head.textContent = best.head; tip.appendChild(head);
+    best.lines.forEach(function (text) { var d = document.createElement('div'); d.textContent = text; tip.appendChild(d); });
+    tip.hidden = false;
+    // Over the chart, centred on the guide and kept inside the card.
+    // An SVG element has no offsetTop: both offsets come from the boxes.
+    var box = svg.getBoundingClientRect(), from = card.getBoundingClientRect(),
+        gx = box.left - from.left + best.x / svg.viewBox.baseVal.width * box.width;
+    tip.style.left = Math.max(0, Math.min(gx - tip.offsetWidth / 2, card.clientWidth - tip.offsetWidth)) + 'px';
+    tip.style.top = Math.max(0, box.top - from.top - tip.offsetHeight - 4) + 'px';
+  }
+  svg.addEventListener('pointermove', show);
+  svg.addEventListener('pointerdown', show);
+  svg.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') hide(); });
+  document.addEventListener('pointerdown', function (e) { if (!svg.contains(e.target)) hide(); });
 });
 """
 
@@ -922,6 +964,35 @@ def hist_sha(row):
     """The short commit name a chart prints."""
     return str(row.get("sha") or "?")[:7]
 
+def hist_head(row):
+    """
+    What the hover note says of a commit before its values: the short name,
+    when it was built in Taiwan time, and the c4o-core version, each only when
+    the row has it.
+    """
+    head = [hist_sha(row)]
+    try:
+        built = datetime.strptime(str(row.get("built")), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        head.append(built.astimezone(TAIPEI).strftime("%Y-%m-%d %H:%M"))
+    except ValueError:
+        pass
+    if isinstance(row.get("c4o_version"), str):
+        head.append(f"c4o-core {row['c4o_version']}")
+    return " · ".join(head)
+
+def hist_hover(svg_tag, rows, x, entries):
+    """
+    The chart's opening tag with what HIST_JS needs: each commit's x position,
+    its head line and its values, and the top and bottom of the plot for the
+    guide. The <title> of each point stays, for a page read without script.
+
+    entries -- (row index, value lines) per commit that has a value
+    """
+    points = [{"x": round(x(i), 1), "head": hist_head(rows[i]), "lines": lines} for i, lines in entries]
+    data = html.escape(json.dumps(points, ensure_ascii=False), quote=True)
+    return (svg_tag[:4] + f' data-hover="{data}" data-plot="{HIST_TOP - 4},{HIST_H - HIST_BOTTOM}"'
+            + svg_tag[4:])
+
 def hist_scale(columns, floor=None, ceil=None, include_zero=False):
     """
     Where a value lands in a chart of one or more columns, as
@@ -1030,6 +1101,13 @@ def hist_line_chart(rows, series, hover, axis, label, floor=None, ceil=None, zer
     out = hist_frame(rows, scale, (axis(low), axis(high)), label)
     if zero_line:
         out.append(f'<line x1="{HIST_LEFT}" y1="{y(0):.1f}" x2="{HIST_W - HIST_RIGHT}" y2="{y(0):.1f}" class="zero"/>')
+    entries = []
+    for i in range(len(rows)):
+        lines = [f"{name} {hover(values[i])}" if len(series) > 1 else hover(values[i])
+                 for _, name, values in series if values[i] is not None]
+        if lines:
+            entries.append((i, lines))
+    out[0] = hist_hover(out[0], rows, x, entries)
     for cls, name, values in series:
         # A commit with no value breaks the line: it was not zero.
         for run in hist_runs(values):
@@ -1073,6 +1151,9 @@ def hist_stack_chart(rows, layers, hover, axis, label):
                 out.append(f'<rect x="{x(i) - 3:.1f}" y="{y(above[i]):.1f}" width="6" '
                            f'height="{y(below[i]) - y(above[i]):.1f}" class="{cls}"/>')
         below = [b if a is None else a for a, b in zip(above, below)]
+    out[0] = hist_hover(out[0], rows, x, [
+        (i, [f"{name} {hover(values[i])}" for _, name, values in layers] + [f"total {hover(totals[i])}"])
+        for i in range(count) if totals[i] is not None])
     width = max(2.0, min(8.0, (HIST_W - HIST_LEFT - HIST_RIGHT) / max(last - first, 1)))
     for i in range(count):
         if totals[i] is not None:
@@ -1477,5 +1558,6 @@ def render(design, numbers, layout, cocotb_runs, env,
           '<a href="https://github.com/anlit75/c4o-core">c4o-core</a> generated this page.</p></footer>'
         + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in actions else "")
         + (f"<script>{STAGES_JS}</script>" if how_built else "")
+        + (f"<script>{HIST_JS}</script>" if any("data-hover=" in markup for _, _, markup in parts) else "")
         + "</body></html>\n"
     )
