@@ -443,7 +443,7 @@ A section with a value in any row ends with a collapsed History fold. The fold h
 | Area and Instances | The area and the instance count as stacked layers, in the colours of the bars above them. |
 | Power | Total power, and the static IR drop as a share of the supply. |
 
-A dotted line marks a commit where the clock period or the c4o-core version differs from the commit before. The numbers can move there without a change to the design. A hover on a point shows the commit and the value. A hover on a stacked chart shows every layer and the total.
+A dotted line marks a commit where the clock period or the c4o-core version differs from the commit before. The numbers can move there without a change to the design. A pointer or a tap anywhere on a chart moves a guide to the nearest commit. A note above the chart names the commit, when it was built and its c4o-core version, then each value. On a stacked chart the note gives every layer and the total. Without JavaScript, a hover on a point shows the commit and the value.
 
 Like `report`, `site` shows a failed test and still succeeds. The command that ran the test is the gate, not the page. The page carries Open Graph tags for link previews. `og:image` is the layout, and only on Actions, where the Pages URL is known.
 
