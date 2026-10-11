@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.27.0](https://github.com/anlit75/c4o-core/compare/v2.26.1...v2.27.0) (2026-10-11)
+
+
+### Features
+
+* hover or tap a History chart to read its nearest commit ([#104](https://github.com/anlit75/c4o-core/issues/104)) ([8eb256d](https://github.com/anlit75/c4o-core/commit/8eb256d630212f3d754adc0b6b450cb0d12d7ad8))
+
 ## [2.26.1](https://github.com/anlit75/c4o-core/compare/v2.26.0...v2.26.1) (2026-10-10)
 
 
