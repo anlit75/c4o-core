@@ -56,7 +56,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Build Docker image
         run: docker build -t c4o-core:test .
@@ -947,7 +947,7 @@ jobs:
 
       - name: Upload Docker Build Artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: artifacts-docker-build
           path: build/
@@ -984,13 +984,13 @@ jobs:
       # workspace root and have no working-directory input, so the caller goes
       # there and this checkout goes beside it.
       - name: Check out ChipForAll as the caller
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: anlit75/ChipForAll
           ref: main
 
       - name: Check out this commit of c4o-core
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: c4o-core
 

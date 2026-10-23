@@ -79,7 +79,7 @@ runs:
     # nothing to show.
     - name: cocotb results on the summary page
       if: always() && hashFiles('build/cocotb-results.xml') != ''
-      uses: test-summary/action@v2
+      uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2.6
       with:
         paths: build/cocotb-results.xml
 

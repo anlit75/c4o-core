@@ -89,7 +89,15 @@ ENV PATH="/opt/venv/bin:$PATH"
 # both sides agree with each other and neither agrees with the design. They
 # bring numpy and systemrdl-compiler with them, which is most of the ~84MB this
 # block adds -- paid once, in an image that already carries three EDA tools.
-RUN pip install --no-cache-dir \
+#
+# certifi is floored for the trust store it carries. Before 2026.10.18 it still
+# trusted emSign ECC Root CA - G3, which signed compromised eMudhra
+# intermediates. Ciel pulls certifi only transitively, with no floor, so every
+# image kept the certifi of the day it was built. 2026.10.23 was the latest when
+# this was written; it keeps only emSign Root CA - G1, which Mozilla did not list.
+# pip is upgraded first so the resolver and its bundled CA data are current too.
+RUN pip install --no-cache-dir --upgrade "pip>=26.2.2" \
+    && pip install --no-cache-dir \
     "cocotb==1.9.*" \
     "pytest==8.*" \
     "ciel==2.6.1" \
@@ -97,7 +105,8 @@ RUN pip install --no-cache-dir \
     "pyuvm==5.0.*" \
     "peakrdl==1.5.*" \
     "peakrdl-regblock==1.3.*" \
-    "peakrdl-pyuvm==0.9.*"
+    "peakrdl-pyuvm==0.9.*" \
+    "certifi>=2026.10.23"
 
 # Create the application directory
 WORKDIR /opt/c4o-core

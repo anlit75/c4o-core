@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/actions/*"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # A new release waits 7 days before it gets a pull request, so a version
+    # that was just hijacked is more likely to be pulled before we pin it.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
