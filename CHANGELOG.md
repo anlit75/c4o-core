@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.27.1](https://github.com/anlit75/c4o-core/compare/v2.27.0...v2.27.1) (2026-10-24)
+
+
+### Fixes
+
+* drop compromised emSign root and attest released images ([#106](https://github.com/anlit75/c4o-core/issues/106)) ([18b3202](https://github.com/anlit75/c4o-core/commit/18b32025df3677566ce948e486106069537e1388))
+
 ## [2.27.0](https://github.com/anlit75/c4o-core/compare/v2.26.1...v2.27.0) (2026-10-11)
 
 
