@@ -32,6 +32,18 @@ Each release publishes four tags:
 
 The current numbers are on the [releases page](https://github.com/anlit75/c4o-core/releases).
 
+### Check where an image came from
+
+Each release image carries signed build provenance and an SBOM. To check that an image was built from this repository by its release workflow, log in to the registry and verify it with the [GitHub CLI](https://cli.github.com/manual/gh_attestation_verify):
+
+```bash
+docker login ghcr.io
+gh attestation verify oci://ghcr.io/anlit75/c4o-core:<version> --repo anlit75/c4o-core
+gh attestation verify oci://ghcr.io/anlit75/c4o-core:<version> --repo anlit75/c4o-core --predicate-type https://spdx.dev/Document/v2.3
+```
+
+The first command checks the provenance. The second checks the SBOM. **Only images from the release after 2.27.0 carry attestations.** Earlier images fail both checks.
+
 ## 🛠 Command Reference
 
 The Python entrypoint of the engine has these commands:
