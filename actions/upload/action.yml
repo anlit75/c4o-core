@@ -16,7 +16,7 @@ runs:
   using: composite
   steps:
     - name: Upload the schematic
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: schematic
         path: build/schematic.svg
@@ -24,7 +24,7 @@ runs:
         retention-days: ${{ inputs.retention-days }}
 
     - name: Upload the layout render
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: layout
         path: runs/*/final/render/*.png
@@ -32,7 +32,7 @@ runs:
         retention-days: ${{ inputs.retention-days }}
 
     - name: Upload build/ and runs/
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.name }}
         path: |
