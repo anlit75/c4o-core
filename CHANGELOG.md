@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.28.0](https://github.com/anlit75/c4o-core/compare/v2.27.2...v2.28.0) (2026-10-25)
+
+
+### Features
+
+* add make info, the versions a bug report needs in one block ([#115](https://github.com/anlit75/c4o-core/issues/115)) ([f1ca2ff](https://github.com/anlit75/c4o-core/commit/f1ca2ff5814103f3d83ac1e76196713fb17a035a))
+
 ## [2.27.2](https://github.com/anlit75/c4o-core/compare/v2.27.1...v2.27.2) (2026-10-25)
 
 
