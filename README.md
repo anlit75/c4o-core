@@ -63,6 +63,7 @@ The Python entrypoint of the engine has these commands:
 | `check` | Checks the configuration, values included. It builds nothing and runs no tool. `--for rtl`, `sim`, `regress`, `gatesim` or `gds` checks one part. Without `--for`, it checks every part that the config asks for. |
 | `report` | Prints a summary of the last LibreLane run: area, timing, power and the signoff result. |
 | `site` | Writes `build/site/`, one results page for GitHub Pages. The page shows the tests, timing, area, power and signoff of what was run before it. |
+| `info` | Prints what a bug report needs: the c4o-core version, the two image names, where it runs, the host's Docker and each tool's version. It reads no config. `make info` passes in the images and the host. |
 
 [docs/commands.md](docs/commands.md) tells you more about each command, and the reasons.
 

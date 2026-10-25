@@ -82,6 +82,20 @@ for t in all lint synth coverage cocotb; do
 done
 check "host: make help says how to run one test" 0 "make sim SEED=<n> TEST=<entry>" in_repo "$host" make help
 check "host: make help says how to leave out coverage" 0 "make regress COVERAGE=0" in_repo "$host" make help
+
+# make info: what a bug report needs, read on the host and in the image.
+check "host: make help lists info" 0 "make info " in_repo "$host" make help
+check "host: info names the c4o-core image" 0 "C4O_IMAGE        $image" in_repo "$host" env -u GITHUB_ACTIONS -u CODESPACES make info
+check "host: info names the LibreLane image" 0 "LIBRELANE_IMAGE  ghcr.io/librelane/librelane:3.0.14" in_repo "$host" env -u GITHUB_ACTIONS -u CODESPACES make info
+check "host: info says it runs in Docker here" 0 "Docker on this machine" in_repo "$host" env -u GITHUB_ACTIONS -u CODESPACES make info
+check "host: ... and on GitHub Actions there" 0 "GitHub Actions" in_repo "$host" env GITHUB_ACTIONS=true make info
+check "host: info gives the host's Docker" 0 "Docker           $(docker version --format '{{.Server.Version}}')" in_repo "$host" make info
+check "host: info gives the host's system" 0 "Host             $(uname -sm)" in_repo "$host" make info
+check "host: info reads the image's tools" 0 "Verilator        Verilator 5" in_repo "$host" make info
+cp "$host/config.yaml" "$work/config.yaml.bak"
+echo 'DESIGN_NAME: [unclosed' > "$host/config.yaml"
+check "host: info works with a config that does not parse" 0 "c4o-core         $(cat "$repo/version.txt")" in_repo "$host" make info
+cp "$work/config.yaml.bak" "$host/config.yaml"
 check "host: gds checks the config of the physical design flow first" 0 "$image check --for gds" in_repo "$host" make -n gds
 out=$(in_repo "$host" make -n gds 2>&1)
 if [ "$(grep -n -m1 -e 'check --for gds' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -m1 -e 'make pdk' <<<"$out" | cut -d: -f1)" ]; then
@@ -475,6 +489,8 @@ check "inside: SEED reaches the ledger run" 0 "env C4O_PROGRESS= RANDOM_SEED=7 p
 check "inside: PROGRESS=raw reaches the ledger" 0 "env C4O_PROGRESS=raw python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n sim PROGRESS=raw
 check "inside: gds follows the run with the entrypoint, not a second container" 0 "python3 /opt/c4o-core/scripts/entrypoint.py progress --run-dir runs/demo_run" dmake -n gds
 check "inside: coverage calls the entrypoint's coverage" 0 "python3 /opt/c4o-core/scripts/entrypoint.py coverage" dmake -n coverage
+check "inside: info says it is the Dev Container" 0 "Dev Container" dmake info
+check "inside: info names the LibreLane image" 0 "LIBRELANE_IMAGE  ghcr.io/librelane/librelane:3.0.14" dmake info
 [ ! -e "$inside/.c4o" ] && ok "inside: nothing is copied to .c4o/" || fail "inside: .c4o/ was written inside the image"
 cat >> "$inside/Makefile" <<'EOF'
 
