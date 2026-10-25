@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.27.2](https://github.com/anlit75/c4o-core/compare/v2.27.1...v2.27.2) (2026-10-25)
+
+
+### CI
+
+* ship the action dependency bumps to callers ([#113](https://github.com/anlit75/c4o-core/issues/113)) ([0335586](https://github.com/anlit75/c4o-core/commit/0335586b5b251dba12b4dd1c7df12393098ae83d))
+
 ## [2.27.1](https://github.com/anlit75/c4o-core/compare/v2.27.0...v2.27.1) (2026-10-24)
 
 
