@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 import entrypoint
 import c4o.check
 import c4o.common
+import c4o.info
 import c4o.progress
 import c4o.regress
 import c4o.report
@@ -6322,6 +6323,66 @@ class TestSiteStages(StageCase):
         self.page()
         self.assertFalse(os.path.exists("build/site/secret.txt"))
         self.assertFalse(os.path.exists("build/site/stages/secret.txt"))
+
+class TestInfo(unittest.TestCase):
+    def test_runs_on_names_the_four_places_of_the_bug_form(self):
+        self.assertEqual(c4o.info.runs_on({"GITHUB_ACTIONS": "true", "C4O_RUNS_IN": "host"}), "GitHub Actions")
+        self.assertEqual(c4o.info.runs_on({"CODESPACES": "true", "C4O_RUNS_IN": "image"}), "Codespace")
+        self.assertEqual(c4o.info.runs_on({"C4O_RUNS_IN": "image"}), "Dev Container")
+        self.assertEqual(c4o.info.runs_on({"C4O_RUNS_IN": "host"}), "Docker on this machine")
+
+    def test_collect_reports_what_make_passed_in(self):
+        env = {"C4O_IMAGE": "ghcr.io/anlit75/c4o-core:2.27", "LIBRELANE_IMAGE": "ghcr.io/librelane/librelane:3.0.14",
+               "C4O_RUNS_IN": "host", "C4O_HOST": "Linux x86_64", "C4O_DOCKER": "29.0.0"}
+        with patch("c4o.common.c4o_version", return_value="2.27.2"), \
+             patch("c4o.info.tool_version", return_value="tool 1.0"), \
+             patch("c4o.info.package_version", return_value="1.9.2"):
+            rows = dict(c4o.info.collect(env))
+        self.assertEqual(rows["c4o-core"], "2.27.2")
+        self.assertEqual(rows["C4O_IMAGE"], "ghcr.io/anlit75/c4o-core:2.27")
+        self.assertEqual(rows["LIBRELANE_IMAGE"], "ghcr.io/librelane/librelane:3.0.14")
+        self.assertEqual(rows["Host"], "Linux x86_64")
+        self.assertEqual(rows["Docker"], "29.0.0")
+        for name in ["Verilator", "Icarus Verilog", "Yosys", "sv2v"]:
+            self.assertEqual(rows[name], "tool 1.0")
+        for name in ["cocotb", "pyuvm"]:
+            self.assertEqual(rows[name], "1.9.2")
+
+    def test_collect_says_what_it_does_not_know(self):
+        with patch("c4o.common.c4o_version", return_value=None), \
+             patch("c4o.info.tool_version", return_value="tool 1.0"), \
+             patch("c4o.info.package_version", return_value="1.9.2"):
+            rows = dict(c4o.info.collect({}))
+        self.assertEqual(rows["c4o-core"], "unknown")
+        self.assertEqual(rows["C4O_IMAGE"], "unknown")
+        self.assertEqual(rows["Docker"], "not found")
+
+    def test_a_missing_tool_is_not_found(self):
+        self.assertEqual(c4o.info.tool_version(["no-such-tool-c4o"]), "not found")
+        self.assertEqual(c4o.info.package_version("no-such-package-c4o"), "not found")
+
+    def test_tool_version_is_the_first_line_it_prints(self):
+        self.assertEqual(c4o.info.tool_version(["python3", "-c", "print(); print('v 1.2'); print('more')"]), "v 1.2")
+
+    def test_info_reads_no_config(self):
+        # A config that does not parse is what a bug report may be about.
+        cwd = os.getcwd()
+        d = tempfile.mkdtemp()
+        try:
+            os.chdir(d)
+            with open("config.yaml", "w") as f:
+                f.write("DESIGN_NAME: [unclosed\n")
+            out = io.StringIO()
+            with patch.object(sys, "argv", ["entrypoint.py", "info"]), \
+                 patch("c4o.info.tool_version", return_value="tool 1.0"), \
+                 contextlib.redirect_stdout(out):
+                entrypoint.main()
+            self.assertIn("c4o-core", out.getvalue())
+            self.assertNotIn("Failed to parse", out.getvalue())
+        finally:
+            os.chdir(cwd)
+            shutil.rmtree(d)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -172,6 +172,8 @@ C4O_SITE := $(C4O_CMD)
 C4O_PDK := env PDK_ROOT=$(PDK_ROOT) $(C4O_CMD)
 C4O_FLOW := env LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) $(C4O_CMD)
 c4o_tool = $(1)
+C4O_INFO = env C4O_IMAGE=$(C4O_IMAGE) LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) C4O_RUNS_IN=image \
+	C4O_HOST="$(INFO_OS)" C4O_DOCKER="$(INFO_DOCKER)" $(C4O_CMD)
 C4O_LEDGER = env $(strip C4O_PROGRESS=$(C4O_PROGRESS) $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)) $(if $(TEST),TEST=$(TEST))) python3 $(ENTRYPOINT_SCRIPT)
 else
 C4O_IN_CONTAINER :=
@@ -182,15 +184,22 @@ C4O_SITE := $(DOCKER_RUN) $(SITE_ENV) $(C4O_IMAGE)
 C4O_PDK := $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(C4O_IMAGE)
 C4O_FLOW := $(DOCKER_RUN) -e LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) $(C4O_IMAGE)
 c4o_tool = $(DOCKER_RUN) --entrypoint $(1) $(C4O_IMAGE)
+C4O_INFO = $(DOCKER_RUN) -e C4O_IMAGE=$(C4O_IMAGE) -e LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) -e C4O_RUNS_IN=host \
+	-e C4O_HOST="$(INFO_OS)" -e C4O_DOCKER="$(INFO_DOCKER)" -e GITHUB_ACTIONS -e CODESPACES $(C4O_IMAGE)
 # The ledger redraws, so on a host its container gets a terminal exactly when
 # make's output is one. A recipe sets $$T for that: `[ -t 1 ]` has to run in the
 # recipe's own shell, where $(shell) would be asking about a pipe.
 C4O_LEDGER = $(DOCKER_RUN) $$T $(PROGRESS_ENV) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
 endif
+# What `make info` cannot see from inside the image: the system make runs on and
+# its Docker. `=`, not `:=`, so that only `make info` asks Docker.
+INFO_OS = $(shell uname -sm)
+INFO_DOCKER = $(shell docker version --format '{{.Server.Version}}' 2>/dev/null)
+
 # What the ledger decides its mode from, passed on as the host has it.
 PROGRESS_ENV := -e C4O_PROGRESS=$(C4O_PROGRESS) -e NO_COLOR -e CI -e TERM -e GITHUB_ACTIONS
 
-.PHONY: check rtl sim regress gatesim schematic gds gds-flow pdk report site clean distclean shell help all lint synth cocotb coverage
+.PHONY: check rtl sim regress gatesim schematic gds gds-flow pdk report site info clean distclean shell help all lint synth cocotb coverage
 
 # The config and the files it names, for every part of the flow the config
 # asks for. No tool runs, so it takes a second. `make rtl`, `make sim` and
@@ -235,6 +244,7 @@ help::
 	@echo "                 make gds FORCE=1 runs it anyway)"
 	@echo "  make report  - Show area, timing and power from the last GDS run"
 	@echo "  make site    - Put tests, timing, area, power and signoff on one page (build/site/)"
+	@echo "  make info    - Print the versions a bug report needs"
 	@echo "  make shell   - Enter c4o-core interactive shell"
 	@echo "  make clean     - Remove build/ (keeps runs/, which report and gatesim read)"
 	@echo "  make distclean - Remove build/, runs/ and the copied rules in .c4o/"
@@ -404,6 +414,11 @@ report:
 # layout render, on one page. Shows whatever has been run so far.
 site:
 	$(C4O_SITE) site
+
+# The images, where this runs and the version of every tool, to paste into a bug
+# report. It reads no config, so it works in a repository that does not build.
+info:
+	@$(C4O_INFO) info
 
 shell:
 	$(DOCKER_RUN) -it --entrypoint /bin/bash $(C4O_IMAGE)

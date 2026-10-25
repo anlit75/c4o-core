@@ -6,6 +6,7 @@ import sys
 from c4o import progress
 from c4o import check
 from c4o import common
+from c4o import info
 from c4o import regress
 from c4o import report
 from c4o import rtl
@@ -222,6 +223,11 @@ def build_parser():
     pdk_parser = subparsers.add_parser("pdk", help="Install/Enable Sky130 PDK via Ciel")
     pdk_parser.set_defaults(func=cmd_pdk)
 
+    info_parser = subparsers.add_parser(
+        "info", help="Print the images, where this runs and every tool's version, for a bug report"
+    )
+    info_parser.set_defaults(func=info.cmd_info)
+
     return parser
 
 def main():
@@ -232,6 +238,10 @@ def main():
         sys.exit(1)
 
     args = parser.parse_args()
+    # info reads no config: a config that does not parse is what it may be asked about.
+    if args.command == "info":
+        args.func(args, {})
+        return
     # The ledger opens with the release and the design, so it does not need the
     # line that says which config was read.
     args.func(args, common.load_config(quiet=args.command in ("all", "progress", "stages", "fresh", "stamp")))
