@@ -220,7 +220,10 @@ rtl:
 # PROGRESS=raw it is the tools' output as it is.
 sim:
 	@if [ -t 1 ]; then T=-t; else T=; fi; $(C4O_LEDGER) all
-	@echo "Next: make gds turns the design into a GDSII layout (takes minutes)."
+	@echo
+	@echo "Next:"
+	@echo "  make gds    build the layout from this RTL (minutes; the first run also downloads the PDK, a few GB)"
+	@echo "  or change rtl/ or tb/ and run make sim again"
 
 # Two colons, so a repository can add lines for its own targets with a
 # `help::` rule below its include.
@@ -404,7 +407,10 @@ ifneq ($(C4O_PROGRESS),raw)
 	@$(call C4O_STAGES,)
 endif
 	@# Say what comes after the layout, since a new user does not know.
-	@echo "Next: make site puts the results on one page (build/site/index.html); push, and CI publishes it when GitHub Pages is on."
+	@echo
+	@echo "Next:"
+	@echo "  make site   put the results on one page, build/site/index.html"
+	@echo "  or push, and CI publishes the page when GitHub Pages is on"
 
 # Reads runs/<tag>/final/metrics.json, which `make gds` leaves behind.
 report:

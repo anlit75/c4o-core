@@ -435,7 +435,6 @@ def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sl
     title = f"c4o sim{style.sep}{design}" + (f"{style.sep}c4o-core {version}" if version else "")
     out.write(style.paint(title, "bold") + "\n")
     t_start = clock()
-    done_logs = []
     failed = None
     try:
         for index, step in enumerate(ALL_STEPS):
@@ -455,8 +454,6 @@ def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sl
                 failed = (step, index, proc.returncode, text, log)
                 break
             kind, line = summarize_step(step, text, spent, style)
-            if kind != "skip":
-                done_logs.append(log)
             live.commit(ledger_row(style, kind, name, line))
         live.close()
     except BaseException:
@@ -471,8 +468,7 @@ def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sl
             out.write(ledger_row(style, "skip", LABELS.get(later, later), f"not run: {LABELS.get(step, step)} failed first") + "\n")
         out.flush()
         return rc
-    out.write("\n" + f"  all passed in {fmt_time(clock() - t_start)}. raw output: "
-              + ", ".join(done_logs) + "\n")
+    out.write("\n" + f"  all passed in {fmt_time(clock() - t_start)}. raw output in build/log/\n")
     out.flush()
     return 0
 

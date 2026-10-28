@@ -5806,6 +5806,10 @@ class TestRunAll(unittest.TestCase):
             with open(f"build/log/{c4o.progress.LABELS.get(step, step)}.log") as f:
                 self.assertEqual(f.read(), text)
 
+    def test_the_success_line_ends_with_the_log_folder(self):
+        _, out = self.run_all(self.GOOD)
+        self.assertRegex(out.splitlines()[-1], r"^  all passed in \d+\.\d s\. raw output in build/log/$")
+
     def test_the_raw_output_is_not_in_the_ledger(self):
         _, out = self.run_all(self.GOOD)
         self.assertNotIn("Running: verilator", out)

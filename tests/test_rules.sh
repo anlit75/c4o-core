@@ -391,13 +391,13 @@ fi
 
 # The last line of a target says what to run next. -n prints the echo, so the
 # hint shows without running anything.
-check "host: make sim points to make gds" 0 "Next: make gds turns the design into a GDSII layout" in_repo "$host" make -n sim
-check "host: make all points to make gds" 0 "Next: make gds turns the design into a GDSII layout" in_repo "$host" make -n all
+check "host: make sim points to make gds" 0 "make gds    build the layout from this RTL" in_repo "$host" make -n sim
+check "host: make all points to make gds" 0 "make gds    build the layout from this RTL" in_repo "$host" make -n all
 out=$(in_repo "$host" make -n all 2>&1)
 if [ "$(grep -c 'Next:' <<<"$out")" -eq 1 ]; then ok "host: make all says what comes next once"; else fail "host: make all should print one Next: hint" "$out"; fi
-check "host: make gds points to make site" 0 "Next: make site puts the results on one page" in_repo "$host" make -n gds
+check "host: make gds points to make site" 0 "make site   put the results on one page" in_repo "$host" make -n gds
 out=$(in_repo "$host" make -n gds 2>&1)
-if [ "$(grep -n 'Next:' <<<"$out" | tail -1 | cut -d: -f1)" = "$(grep -c '' <<<"$out")" ]; then
+if [[ "$(tail -n 1 <<<"$out")" == *'echo "  or push, and CI publishes the page when GitHub Pages is on"'* ]]; then
   ok "host: the make site hint is the last thing make gds does"
 else
   fail "host: the make site hint is not last in make gds" "$out"
