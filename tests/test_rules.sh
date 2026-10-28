@@ -402,6 +402,21 @@ if [ "$(grep -n 'Next:' <<<"$out" | tail -1 | cut -d: -f1)" = "$(grep -c '' <<<"
 else
   fail "host: the make site hint is not last in make gds" "$out"
 fi
+# The step plan hides docker's stderr, so a first pull of the LibreLane image
+# has to happen before it, in the open and only when the image is not local.
+out=$(in_repo "$host" make -n gds-flow 2>&1)
+pull_line=$(grep -n 'docker image inspect' <<<"$out" | head -1 | cut -d: -f1)
+plan_line=$(grep -n 'gating_config_vars' <<<"$out" | head -1 | cut -d: -f1)
+if grep -qE 'docker pull ghcr\.io/' <<<"$out"; then
+  ok "host: make gds-flow pulls the LibreLane image when it is missing"
+else
+  fail "host: make gds-flow should docker pull the LibreLane image when it is missing" "$out"
+fi
+if [ -n "$pull_line" ] && [ -n "$plan_line" ] && [ "$pull_line" -lt "$plan_line" ]; then
+  ok "host: the LibreLane image is pulled before the step plan runs"
+else
+  fail "host: the image pull must come before the step plan (pull line '$pull_line', plan line '$plan_line')" "$out"
+fi
 out=$(in_repo "$host" make -n rtl 2>&1)
 if grep -qF "Next:" <<<"$out"; then
   fail "host: make rtl must not print a Next: hint" "$out"
