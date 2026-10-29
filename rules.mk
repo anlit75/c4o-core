@@ -358,6 +358,13 @@ gds-flow:
 	@# The run about to start is not the one that was stamped. A partial run or a
 	@# failed one leaves no stamp, so the next command says it cannot be checked.
 	@rm -f $(STAGES_RUN)/$(INPUTS_FILE)
+	@# The plan below runs in the LibreLane image with stderr hidden, so docker's
+	@# pull of a missing image (1.5 GB) would be minutes of silence. Pull it here,
+	@# in the open. A failed pull stops make.
+	@if ! docker image inspect $(LIBRELANE_IMAGE) >/dev/null 2>&1; then \
+		echo "🟢 Downloading the LibreLane image, 1.5 GB, first run only..."; \
+		docker pull $(LIBRELANE_IMAGE); \
+	fi
 ifeq ($(C4O_PROGRESS),raw)
 	$(LIBRELANE_RUN) || { code=$$?; $(call C4O_STAGES,--quiet); exit $$code; }
 	@echo "🟢 Post-processing..."
