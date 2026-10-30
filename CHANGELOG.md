@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.29.0](https://github.com/anlit75/c4o-core/compare/v2.28.1...v2.29.0) (2026-10-30)
+
+
+### Features
+
+* make the terminal output of make sim and make gds readable for a first-time user ([#121](https://github.com/anlit75/c4o-core/issues/121)) ([974e7ff](https://github.com/anlit75/c4o-core/commit/974e7ff0f3f0b7a8722a5818b3be4cbb0e4be817))
+
 ## [2.28.1](https://github.com/anlit75/c4o-core/compare/v2.28.0...v2.28.1) (2026-10-30)
 
 
