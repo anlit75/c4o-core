@@ -303,6 +303,26 @@ if [ "$got" -eq 0 ] && grep -qE "$image report" "$work/docker-calls" && ! grep -
 else
   fail "gds: a current run should skip LibreLane and print the report (exit $got)" "$out"
 fi
+# The skip prints what the flow prints at its end: the GDS line only when the
+# file is there, and Next: always. A failed flow (above) prints neither.
+if grep -qF "Next:" <<<"$out" && grep -qF "make site" <<<"$out" && ! grep -qE "^  GDS " <<<"$out"; then
+  ok "gds: a skip with no GDS file prints Next: and no GDS line"
+else
+  fail "gds: a skip with no build/demo.gds should print Next: and no GDS line" "$out"
+fi
+mkdir -p "$fake/build"; : > "$fake/build/demo.gds"
+out=$(cd "$fake" && SHIM_FRESH=0 PATH="$shim:$PATH" make gds 2>&1)
+if grep -qF "  GDS         build/demo.gds" <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "  or push, and CI publishes the page when GitHub Pages is on" ]; then
+  ok "gds: a skip with the GDS file prints the GDS line, then Next:"
+else
+  fail "gds: a skip with build/demo.gds should print the GDS line and end with Next:" "$out"
+fi
+rm -f "$fake/build/demo.gds"
+if grep -qF "Next:" <<<"$(cd "$fake" && PATH="$shim:$PATH" make gds 2>&1)"; then
+  fail "gds: a failed flow must not print Next:"
+else
+  ok "gds: a failed flow prints no Next:"
+fi
 : > "$work/docker-calls"
 out=$(cd "$fake" && SHIM_FRESH=0 SHIM_FLOW_OK=1 PATH="$shim:$PATH" make gds FORCE=1 2>&1)
 got=$?
@@ -391,11 +411,11 @@ fi
 
 # The last line of a target says what to run next. -n prints the echo, so the
 # hint shows without running anything.
-check "host: make sim points to make gds" 0 "make gds    build the layout from this RTL" in_repo "$host" make -n sim
-check "host: make all points to make gds" 0 "make gds    build the layout from this RTL" in_repo "$host" make -n all
+check "host: make sim points to make gds" 0 "      builds the chip layout" in_repo "$host" make -n sim
+check "host: make all points to make gds" 0 "      builds the chip layout" in_repo "$host" make -n all
 out=$(in_repo "$host" make -n all 2>&1)
 if [ "$(grep -c 'Next:' <<<"$out")" -eq 1 ]; then ok "host: make all says what comes next once"; else fail "host: make all should print one Next: hint" "$out"; fi
-check "host: make gds points to make site" 0 "make site   put the results on one page" in_repo "$host" make -n gds
+check "host: make gds points to make site" 0 "  make site" in_repo "$host" make -n gds
 out=$(in_repo "$host" make -n gds 2>&1)
 if [[ "$(tail -n 1 <<<"$out")" == *'echo "  or push, and CI publishes the page when GitHub Pages is on"'* ]]; then
   ok "host: the make site hint is the last thing make gds does"

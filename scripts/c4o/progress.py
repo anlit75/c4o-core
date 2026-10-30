@@ -462,7 +462,7 @@ def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sl
 
     if failed:
         step, index, rc, text, log = failed
-        for line in failure_block(step, text, log):
+        for line in failure_block(step, text, log, rtl_passed=True, style=style):
             out.write(line + "\n")
         for later in ALL_STEPS[index + 1:]:
             out.write(ledger_row(style, "skip", LABELS.get(later, later), f"not run: {LABELS.get(step, step)} failed first") + "\n")
@@ -502,7 +502,7 @@ def summarize_step(step, text, spent, style):
         return "ok", f"testbench ran{sep}{fmt_time(spent)}"
     if step == "cocotb":
         info = summarize_cocotb(text, os.path.join("build", "cocotb-results.xml"))
-        parts = [f"{info['passed']}/{info['total']} passed" if info["total"] else "passed"]
+        parts = [f"{info['passed']} of {info['total']} tests passed" if info["total"] else "passed"]
         if info["seed"]:
             parts.append(f"seed {info['seed']}")
         parts.append(fmt_time(spent))
@@ -514,18 +514,34 @@ def failed_text(step, text, spent, style):
     if step == "cocotb":
         info = summarize_cocotb(text, os.path.join("build", "cocotb-results.xml"))
         if info["failures"]:
-            parts.append(f"{info['passed']} passed, {len(info['failures'])} failed")
+            parts.append(f"{len(info['failures'])} of {info['total']} tests failed")
             if info["seed"]:
                 parts.append(f"seed {info['seed']}")
     return style.sep.join(parts or ["failed"] ) + style.sep + fmt_time(spent)
 
-def failure_block(step, text, log):
+def trim_message(message):
+    """
+    `AssertionError: <text>` and cocotb's `assert` line under it say the same
+    twice, once in words and once as the comparison. When the test wrote the
+    words, print only those. Any other message is returned as it is.
+    """
+    if message:
+        m = re.match(r"AssertionError:[ \t]*(\S.*)$", message[0])
+        cut = next((k for k, l in enumerate(message) if l.startswith("assert ")), None)
+        if m and cut is not None and cut > 0:
+            return [m.group(1)] + message[1:cut]
+    return message
+
+def failure_block(step, text, log, rtl_passed=False, style=None):
     """
     Why a command failed, at the left margin: the line `[ERROR] cocotb tests
     failed: <names>` exactly as c4o-core has always printed it (a README quotes
-    it and a CI step looks for it), then one entry for each failed test, and the
-    paths. A command that is not cocotb gets the end of its own output.
+    it and a CI step looks for it), then one entry for each failed test, and
+    what to do next. A command that is not cocotb gets the end of its own
+    output. rtl_passed is true only when this run compiled the Verilog first
+    (`run_all` does, `rtl` before `cocotb`). The style bolds the conclusion.
     """
+    bold = (lambda t: style.paint(t, "bold")) if style else (lambda t: t)
     out = []
     info = summarize_cocotb(text, os.path.join("build", "cocotb-results.xml")) if step == "cocotb" else None
     if info and info["failures"]:
@@ -533,15 +549,25 @@ def failure_block(step, text, log):
         for fail in info["failures"]:
             out.append("")
             out.append(fail["name"] + (f"  {fail['where']}" if fail["where"] else ""))
-            out += fail["message"]
+            out += trim_message(fail["message"])
             if fail["module"]:
                 seed = f"SEED={info['seed']} " if info["seed"] else ""
                 # The label has a line of its own, so the command line copies whole.
                 out.append("rerun this test:")
                 out.append(f"make cocotb {seed}TEST={fail['module']}.{fail['name']}")
         out.append("")
-        out.append(f"full output: {log} ({count_lines(log)} lines)")
-        out.append("verdicts:    build/cocotb-results.xml")
+        out.append(f"full log: {log} ({count_lines(log)} lines)")
+        n = len(info["failures"])
+        conclusion = f"{n} of {info['total']} tests failed." if info["total"] else f"{n} tests failed."
+        if info["total"] == 0 and n == 1:
+            conclusion = "1 test failed."
+        if rtl_passed:
+            conclusion = "The Verilog compiles, but " + conclusion
+        out.append("")
+        out.append(bold(conclusion))
+        out.append("")
+        out.append(bold("Next:"))
+        out.append("  change rtl/ (or the test in tb/), then run make sim again")
     else:
         out.append("")
         out += excerpt(log)

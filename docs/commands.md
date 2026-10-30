@@ -235,12 +235,12 @@ c4o sim, blinky, c4o-core 2.26.0
   ok   rtl     verilator, no warnings, yosys 0.33, 54 cells, 0.5 s
   ok   check   tests configured, 0.3 s
   skip verilog skipped: TEST_FILES is not set
-  ok   cocotb  5/5 passed, seed 1791614587, 17.8 s
+  ok   cocotb  5 of 5 tests passed, seed 1791614587, 17.8 s
 ```
 
 `c4o-core all` is what `make sim` runs. It runs `rtl`, `check --for sim`, `sim` and `cocotb`, and times them itself. The ledger and `build/log/` call `sim` `verilog`, because it runs only the Verilog testbenches. A kind of test that is not configured says so and counts as passed. The first command that fails stops the run, and the commands after it are listed as not run.
 
-A failed cocotb test gets its name, the file and line of the assertion, and the message. It also gets a command that runs only that test with the same seed. The line `[ERROR] cocotb tests failed: <names>` stays in the output. `build/cocotb-results.xml` has the verdicts.
+A failed cocotb test gets its name, the file and line of the assertion, and the message. It also gets a command that runs only that test with the same seed. The line `[ERROR] cocotb tests failed: <names>` stays in the output. When the test wrote a message, the block shows the message without cocotb's `AssertionError:` prefix and without the `assert` line under it. The block ends with the path of the log, a sentence such as `The Verilog compiles, but 4 of 5 tests failed.`, and a `Next:` line. `build/cocotb-results.xml` still has the verdicts.
 
 `make gds` starts `c4o-core progress` beside LibreLane. You do not run it yourself. It reads `runs/<tag>/`, not the text of LibreLane. A step starts when its directory appears. It ends when its `state_out.json` can be read, or when the next directory appears. A signoff check that fails with a deferred error writes no `state_out.json`, so the stage shows `FAIL` and names the check. The flow still ends, `final/` exists, and the exit status is not 0.
 

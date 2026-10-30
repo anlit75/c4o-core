@@ -5200,7 +5200,7 @@ class TestCocotbFailures(unittest.TestCase):
                 os.chdir(cwd)
         self.assertEqual(text, "failed, 9.0 s")
 
-    def failure_block(self):
+    def failure_block(self, **kwargs):
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, "build", "log"))
             shutil.copy(self.xml, os.path.join(d, "build", "cocotb-results.xml"))
@@ -5209,7 +5209,7 @@ class TestCocotbFailures(unittest.TestCase):
             os.chdir(d)
             try:
                 with patch("os.getcwd", return_value="/workspace"):
-                    return c4o.progress.failure_block("cocotb", self.log, "build/log/cocotb.log"), \
+                    return c4o.progress.failure_block("cocotb", self.log, "build/log/cocotb.log", **kwargs), \
                         c4o.progress.failed_text("cocotb", self.log, 9.0, c4o.progress.Style("plain", {}))
             finally:
                 os.chdir(cwd)
@@ -5232,17 +5232,98 @@ class TestCocotbFailures(unittest.TestCase):
 
     def test_nothing_in_the_block_is_indented_or_cut(self):
         block, _ = self.failure_block()
-        self.assertTrue(all(not l.startswith(" ") for l in block), [l for l in block if l.startswith(" ")])
+        # The Next: line is the one indented line, and it is ours.
+        self.assertEqual([l for l in block if l.startswith(" ")],
+                         ["  change rtl/ (or the test in tb/), then run make sim again"])
+        # This message has no assert line, so it is printed as it is.
         self.assertIn("AssertionError: led is 1, model says 0: cycle 16387, rst was 0, model count 16384", block)
 
-    def test_the_block_names_the_logs(self):
-        block, _ = self.failure_block()
-        self.assertIn("full output: build/log/cocotb.log (%d lines)" % len(self.log.splitlines()), block)
-        self.assertIn("verdicts:    build/cocotb-results.xml", block)
+    def test_the_block_ends_with_the_log_a_conclusion_and_what_to_do_next(self):
+        block, _ = self.failure_block(rtl_passed=True)
+        self.assertEqual(block[-6:], [
+            "full log: build/log/cocotb.log (%d lines)" % len(self.log.splitlines()),
+            "",
+            "The Verilog compiles, but 4 of 5 tests failed.",
+            "",
+            "Next:",
+            "  change rtl/ (or the test in tb/), then run make sim again",
+        ])
+        self.assertEqual(block[-7], "")
+        self.assertNotIn("verdicts:", "\n".join(block))
+        self.assertNotIn("full output:", "\n".join(block))
 
-    def test_the_row_counts_the_passed_and_the_failed(self):
+    def test_without_a_passed_rtl_the_conclusion_does_not_say_the_verilog_compiles(self):
+        block, _ = self.failure_block()
+        self.assertIn("4 of 5 tests failed.", block)
+        self.assertNotIn("The Verilog compiles", "\n".join(block))
+        self.assertEqual(block[-5:-3], ["", "4 of 5 tests failed."])
+
+    def test_one_failed_test_reads_1_of_n(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "build", "log"))
+            with open(self.xml) as f:
+                xml = f.read()
+            # Make three of the four failed tests pass.
+            xml = re.sub(r"<failure[^>]*/>|<failure[^>]*>.*?</failure>", "", xml, count=3, flags=re.S)
+            with open(os.path.join(d, "build", "cocotb-results.xml"), "w") as f:
+                f.write(xml)
+            with open(os.path.join(d, "build", "log", "cocotb.log"), "w") as f:
+                f.write(self.log)
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                block = c4o.progress.failure_block("cocotb", self.log, "build/log/cocotb.log", rtl_passed=True)
+            finally:
+                os.chdir(cwd)
+        self.assertIn("The Verilog compiles, but 1 of 5 tests failed.", block)
+
+    def test_the_conclusion_and_next_are_bold_in_a_terminal_and_plain_otherwise(self):
+        tty = c4o.progress.Style("tty", {"NO_COLOR": "1"})
+        block, _ = self.failure_block(rtl_passed=True, style=tty)
+        self.assertIn("\x1b[1mThe Verilog compiles, but 4 of 5 tests failed.\x1b[0m", block)
+        self.assertIn("\x1b[1mNext:\x1b[0m", block)
+        self.assertTrue(block[0].startswith("[ERROR]") and "\x1b" not in block[0])
+        block, _ = self.failure_block(rtl_passed=True, style=c4o.progress.Style("plain", {}))
+        self.assertNotIn("\x1b", "\n".join(block))
+
+    def test_the_prefix_and_the_assert_line_are_dropped_when_the_test_wrote_a_message(self):
+        block, _ = self.failure_block()
+        self.assertIn("led rose before cycle 32768", block)
+        self.assertNotIn("AssertionError: led rose before cycle 32768", block)
+        self.assertNotIn("assert 1 == 0", block)
+
+    def test_trim_message(self):
+        trim = c4o.progress.trim_message
+        self.assertEqual(trim(["AssertionError: q is low", "assert 0 == 1", " +  where 0 = x", "more"]), ["q is low"])
+        self.assertEqual(trim(["AssertionError: q is low", "detail", "assert 0 == 1", "tail"]), ["q is low", "detail"])
+        # No text after the exception name: as it is.
+        self.assertEqual(trim(["AssertionError", "assert 0 == 1"]), ["AssertionError", "assert 0 == 1"])
+        self.assertEqual(trim(["AssertionError: ", "assert 0 == 1"]), ["AssertionError: ", "assert 0 == 1"])
+        # Another exception type: as it is.
+        self.assertEqual(trim(["ValueError: bad", "assert 0 == 1"]), ["ValueError: bad", "assert 0 == 1"])
+        # No assert line: as it is.
+        self.assertEqual(trim(["AssertionError: q is low"]), ["AssertionError: q is low"])
+        self.assertEqual(trim([]), [])
+
+    def test_the_row_counts_the_failed_of_the_total(self):
         _, row = self.failure_block()
-        self.assertEqual(row, "1 passed, 4 failed, seed 1791475857, 9.0 s")
+        self.assertEqual(row, "4 of 5 tests failed, seed 1791475857, 9.0 s")
+
+    def test_the_row_of_a_passing_run_counts_the_passed_of_the_total(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs("%s/build" % d)
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                with open("build/cocotb-results.xml", "w") as f:
+                    f.write('<testsuites><testsuite>' + ''.join(
+                        '<testcase name="t%d" classname="m.m" />' % n for n in range(5)) + '</testsuite></testsuites>')
+                kind, row = c4o.progress.summarize_step(
+                    "cocotb", "0.00ns INFO cocotb  Seeding Python random module with supplied seed 7\n",
+                    9.0, c4o.progress.Style("plain", {}))
+            finally:
+                os.chdir(cwd)
+        self.assertEqual((kind, row), ("ok", "5 of 5 tests passed, seed 7, 9.0 s"))
 
     def test_another_command_that_fails_gets_the_end_of_its_output(self):
         with tempfile.TemporaryDirectory() as d:

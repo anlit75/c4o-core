@@ -222,7 +222,9 @@ sim:
 	@if [ -t 1 ]; then T=-t; else T=; fi; $(C4O_LEDGER) all
 	@echo
 	@echo "Next:"
-	@echo "  make gds    build the layout from this RTL (minutes; the first run also downloads the PDK, a few GB)"
+	@echo "  make gds"
+	@echo "      builds the chip layout. It takes minutes, and the first run also"
+	@echo "      downloads several GB."
 	@echo "  or change rtl/ or tb/ and run make sim again"
 
 # Two colons, so a repository can add lines for its own targets with a
@@ -346,9 +348,17 @@ gds:
 	@if $(if $(or $(FORCE),$(LIBRELANE_PARTIAL)),false,$(C4O_FLOW) fresh); then \
 		echo "🟢 LibreLane skipped: the inputs are unchanged since the last run. make gds FORCE=1 runs it again."; \
 		$(MAKE) --no-print-directory report; \
+		$(if $(filter raw,$(C4O_PROGRESS)),,if [ -f build/$(DESIGN_NAME).gds ]; then echo "  GDS         build/$(DESIGN_NAME).gds"; fi;) \
 	else \
 		$(MAKE) --no-print-directory gds-flow; \
 	fi
+	@# Say what comes after the layout, since a new user does not know. A failed
+	@# flow stops the recipe above, so this prints only after a layout.
+	@echo
+	@echo "Next:"
+	@echo "  make site"
+	@echo "      puts the results on one page: build/site/index.html"
+	@echo "  or push, and CI publishes the page when GitHub Pages is on"
 
 # The part of `make gds` that runs LibreLane.
 gds-flow:
@@ -413,11 +423,6 @@ ifneq ($(C4O_PROGRESS),raw)
 	@echo "  GDS         build/$(DESIGN_NAME).gds"
 	@$(call C4O_STAGES,)
 endif
-	@# Say what comes after the layout, since a new user does not know.
-	@echo
-	@echo "Next:"
-	@echo "  make site   put the results on one page, build/site/index.html"
-	@echo "  or push, and CI publishes the page when GitHub Pages is on"
 
 # Reads runs/<tag>/final/metrics.json, which `make gds` leaves behind.
 report:
