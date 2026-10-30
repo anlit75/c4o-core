@@ -127,7 +127,7 @@ After the flow, passed or failed, it also draws one picture of each stage with t
 
 `NO_COLOR` removes the colour and keeps the symbols. On GitHub Actions, `plain` puts the output of each tool in a collapsed group. `make sim PROGRESS=raw` runs the same four commands one after the other and prints their output.
 
-A failure ends with the reason, the path of the log and the command to run next. For `make cocotb` that is `rerun: make cocotb SEED=<n> TEST=<module>.<function>` for each failed test. For `make gds` it is a `make gds LIBRELANE_ARGS="--from ..."` that resumes at the failed step. The text of an error is not cut.
+A failure ends with the reason, the path of the log and the command to run next. For `make cocotb` that is `make cocotb SEED=<n> TEST=<module>.<function>` for each failed test, on its own line under `rerun this test:`. For `make gds` it is a `make gds LIBRELANE_ARGS="--from ..."` that resumes at the failed step. The text of an error is not cut.
 
 `make gds` skips LibreLane when the RTL, the config and the files it points at are the same as in the last full run. The LibreLane image and the c4o-core release must be the same too. It prints the report instead. `make gds FORCE=1` runs the flow anyway. A run with `--from`, `--to`, `--skip` or `--only` in `LIBRELANE_ARGS` is never skipped. [Is it the run of this RTL?](commands.md#is-it-the-run-of-this-rtl) says what is compared.
 

@@ -5223,9 +5223,12 @@ class TestCocotbFailures(unittest.TestCase):
 
     def test_the_block_has_a_rerun_line_for_each_failed_test(self):
         block, _ = self.failure_block()
-        self.assertIn("rerun: make cocotb SEED=1791475857 TEST=test_blinky_cocotb.led_toggles_with_a_full_period", block)
-        self.assertIn("rerun: make cocotb SEED=1791475857 TEST=test_blinky_random.random_resets_match_the_model", block)
-        self.assertEqual(sum(1 for l in block if l.startswith("rerun: make cocotb ")), 4)
+        self.assertIn("make cocotb SEED=1791475857 TEST=test_blinky_cocotb.led_toggles_with_a_full_period", block)
+        self.assertIn("make cocotb SEED=1791475857 TEST=test_blinky_random.random_resets_match_the_model", block)
+        commands = [i for i, l in enumerate(block) if l.startswith("make cocotb ")]
+        self.assertEqual(len(commands), 4)
+        # Each command is alone on its line, under its label.
+        self.assertTrue(all(block[i - 1] == "rerun this test:" for i in commands))
 
     def test_nothing_in_the_block_is_indented_or_cut(self):
         block, _ = self.failure_block()
