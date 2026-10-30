@@ -408,7 +408,8 @@ def verdict(design, metrics):
     if present:
         failed = [label for label, count, _, _ in present if count]
         if failed:
-            bad.append(f"signoff not clean ({', '.join(failed)})")
+            # Not "not clean": a dirty report must never contain the word clean.
+            bad.append(f"signoff failed ({', '.join(failed)})")
         else:
             good.insert(0, "signoff clean")
 

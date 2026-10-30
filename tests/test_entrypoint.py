@@ -801,7 +801,7 @@ class TestEntrypoint(unittest.TestCase):
         self.assertIn("2 DRC (Magic), 1 LVS", out)
         # The whole point: a column of zeroes with one non-zero buried in it is
         # what this replaces. The verdict line says so too.
-        self.assertNotIn("clean", out.replace("signoff not clean", ""))
+        self.assertNotIn("clean", out)
         self.assertNotIn("0 antenna", out)
 
     def test_report_omits_signoff_when_the_run_reported_none(self):
@@ -6590,7 +6590,7 @@ class TestReportVerdict(unittest.TestCase):
 
     def test_signoff_fails_and_names_the_checks(self):
         self.assertEqual(self.verdict(magic__drc_error__count=2, design__lvs_error__count=1),
-                         "blinky: signoff not clean (DRC, LVS)")
+                         "blinky: signoff failed (DRC, LVS)")
 
     def test_lint_warnings_fail(self):
         self.assertEqual(self.verdict(design__lint_warning__count=3), "blinky: 3 lint warnings")
@@ -6598,7 +6598,7 @@ class TestReportVerdict(unittest.TestCase):
 
     def test_two_failures_are_named_and_what_holds_is_not(self):
         self.assertEqual(self.verdict(magic__drc_error__count=1, design__lint_warning__count=3),
-                         "blinky: signoff not clean (DRC), 3 lint warnings")
+                         "blinky: signoff failed (DRC), 3 lint warnings")
 
     def test_a_missing_fact_is_left_out_not_guessed(self):
         self.assertEqual(self.verdict(design__lint_warning__count=None), "blinky: signoff clean, timing met")
