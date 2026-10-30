@@ -98,11 +98,35 @@ check "host: info works with a config that does not parse" 0 "c4o-core         $
 cp "$work/config.yaml.bak" "$host/config.yaml"
 check "host: gds checks the config of the physical design flow first" 0 "$image check --for gds" in_repo "$host" make -n gds
 out=$(in_repo "$host" make -n gds 2>&1)
-if [ "$(grep -n -m1 -e 'check --for gds' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -m1 -e 'make pdk' <<<"$out" | cut -d: -f1)" ]; then
+if [ "$(grep -n -m1 -e 'check --for gds' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -m1 -e 'no-print-directory pdk' <<<"$out" | cut -d: -f1)" ]; then
   ok "host: ... before the PDK is installed"
 else
   fail "host: the check of the config must come before make pdk" "$out"
 fi
+# What the first lines of make gds and make pdk say: one line for each step,
+# no echo of the commands, and c4o-core told to leave its bookkeeping out.
+out=$(in_repo "$host" make -n gds 2>&1)
+check "host: gds says what it downloads, in ledger symbols" 0 "▸ Downloading the LibreLane image, 1.5 GB, first run only..." in_repo "$host" make -n gds
+check "host: ... and that the skipped flow is skipped" 0 "▸ LibreLane skipped: the inputs are unchanged since the last run. make gds FORCE=1 runs it again." in_repo "$host" make -n gds
+check "host: ... and the PDK, with its size" 0 "▸ Installing the Sky130 PDK. The first run downloads several GB." in_repo "$host" make -n gds
+check "host: ... and sets the switch for check, pdk and report" 0 "-e C4O_QUIET_INFO=1 $image check --for gds" in_repo "$host" make -n gds
+if [ "$(grep -cF -- '-e C4O_QUIET_INFO=1' <<<"$out")" -ge 3 ] && grep -qE -- "-e C4O_QUIET_INFO=1 $image report|report C4O_QUIET=1" <<<"$out" \
+   && grep -qE -- "-e PDK_ROOT=/pdks -e C4O_QUIET_INFO=1 $image pdk" <<<"$out"; then
+  ok "host: the switch reaches the container on each of the three calls"
+else
+  fail "host: C4O_QUIET_INFO must reach check --for gds, pdk and report" "$out"
+fi
+if grep -qE '🟢 (Validating|Running)|📦' <<<"$out"; then fail "host: the old markers are gone from make gds" "$out"; else ok "host: no 🟢 or 📦 left in make gds"; fi
+if grep -qF 'Running LibreLane' <<<"$out"; then fail "host: the ledger title follows the image step at once" "$out"; else ok "host: no 'Running LibreLane' line"; fi
+check "host: make pdk on its own says what it installs" 0 "▸ Installing the Sky130 PDK." in_repo "$host" make -n pdk
+check "host: ... and sets the switch" 0 "-e C4O_QUIET_INFO=1 $image pdk" in_repo "$host" make -n pdk
+out=$(in_repo "$host" make -n pdk PROGRESS=raw 2>&1)
+if grep -qF -- 'C4O_QUIET_INFO' <<<"$out"; then fail "host: PROGRESS=raw must not set the switch on make pdk" "$out"; else ok "host: PROGRESS=raw does not set the switch on make pdk"; fi
+out=$(in_repo "$host" make -n gds PROGRESS=raw 2>&1)
+if grep -qF -- 'C4O_QUIET_INFO' <<<"$out"; then fail "host: PROGRESS=raw must not set the switch" "$out"; else ok "host: PROGRESS=raw does not set the switch"; fi
+check "host: ... and keeps the header line of the check" 0 "▸ Checking config.yaml and the RTL" in_repo "$host" make -n gds PROGRESS=raw
+out=$(in_repo "$host" make -n report 2>&1)
+if grep -qF -- 'C4O_QUIET_INFO' <<<"$out"; then fail "host: make report on its own must keep its [INFO] lines" "$out"; else ok "host: make report on its own does not set the switch"; fi
 check "host: gds starts from an empty run" 0 "--overwrite" in_repo "$host" make -n gds
 check "host: gds names the run after DESIGN_NAME" 0 "--run-tag demo_run" in_repo "$host" make -n gds
 out=$(in_repo "$host" make -n gds LIBRELANE_ARGS="--from OpenROAD.Floorplan --with-initial-state x.json" 2>&1)
@@ -421,6 +445,34 @@ if [[ "$(tail -n 1 <<<"$out")" == *'echo "  or push, and CI publishes the page w
   ok "host: the make site hint is the last thing make gds does"
 else
   fail "host: the make site hint is not last in make gds" "$out"
+fi
+# The echo of a command is what `make -n` cannot show, so run it: with the stand-in
+# docker, make gds prints its own lines and none of the commands.
+: > "$work/docker-calls"
+out=$(cd "$fake" && SHIM_FRESH=0 PATH="$shim:$PATH" make gds 2>&1)
+if grep -qE '^(docker run|mkdir|make )' <<<"$out"; then
+  fail "gds: no command is echoed" "$out"
+elif [ "$(sed -n 1p <<<"$out")" = "▸ Checking config.yaml and the RTL" ] || grep -qF "▸ LibreLane skipped" <<<"$out"; then
+  ok "gds: a skip echoes no command"
+else
+  fail "gds: a skip should start with its own lines" "$out"
+fi
+grep -qF -- "-e C4O_QUIET_INFO=1 $image check --for gds" "$work/docker-calls" \
+  && grep -qF -- "-e C4O_QUIET_INFO=1 $image report" "$work/docker-calls" \
+  && ok "gds: the skip told check and report to leave the bookkeeping out" \
+  || fail "gds: the skip must set C4O_QUIET_INFO on check and report" "$(cat "$work/docker-calls")"
+: > "$work/docker-calls"
+out=$(cd "$fake" && SHIM_FRESH=0 PATH="$shim:$PATH" make gds PROGRESS=raw 2>&1)
+if grep -qE '^docker run .* check --for gds' <<<"$out" && ! grep -qF C4O_QUIET_INFO "$work/docker-calls"; then
+  ok "gds: PROGRESS=raw keeps the echoes and does not set the switch"
+else
+  fail "gds: PROGRESS=raw should echo the commands and not set C4O_QUIET_INFO" "$out"
+fi
+out=$(cd "$fake" && PATH="$shim:$PATH" make report 2>&1)
+if ! grep -qF C4O_QUIET_INFO "$work/docker-calls" && grep -qE '^docker run .* report' <<<"$out"; then
+  ok "report: on its own it echoes and sets no switch"
+else
+  fail "report: make report on its own should be as it was" "$out"
 fi
 # The step plan hides docker's stderr, so a first pull of the LibreLane image
 # has to happen before it, in the open and only when the image is not local.

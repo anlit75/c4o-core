@@ -714,8 +714,8 @@ class TestEntrypoint(unittest.TestCase):
         # The real 3.0.14 run: its class counts add up to its 198 instances.
         out = self._report(os.path.join(self.RUN_FIXTURE, "blinky_run", "final", "metrics.json"))
 
-        self.assertIn("57 logic, 46 well taps, 35 timing-repair buffers, 27 inverters, "
-                      "26 sequential, 7 clock buffers", out)
+        self.assertIn("57 logic, 46 well taps, 35 timing-repair buffers,\n"
+                      "                     27 inverters, 26 sequential, 7 clock buffers", out)
         self.assertNotIn("235", out)  # fill
 
     def test_report_names_an_unmapped_cell_class_by_its_own_name(self):
@@ -800,8 +800,8 @@ class TestEntrypoint(unittest.TestCase):
         self.assertIn("signoff", out)
         self.assertIn("2 DRC (Magic), 1 LVS", out)
         # The whole point: a column of zeroes with one non-zero buried in it is
-        # what this replaces.
-        self.assertNotIn("clean", out)
+        # what this replaces. The verdict line says so too.
+        self.assertNotIn("clean", out.replace("signoff not clean", ""))
         self.assertNotIn("0 antenna", out)
 
     def test_report_omits_signoff_when_the_run_reported_none(self):
@@ -6472,6 +6472,204 @@ class TestInfo(unittest.TestCase):
         finally:
             os.chdir(cwd)
             shutil.rmtree(d)
+
+
+class TestQuietInfo(unittest.TestCase):
+    """C4O_QUIET_INFO drops four bookkeeping [INFO] lines, and nothing else."""
+
+    def run_with(self, switch, fn):
+        env = {"C4O_QUIET_INFO": "1"} if switch else {}
+        out = io.StringIO()
+        with patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(out):
+            if not switch:
+                os.environ.pop("C4O_QUIET_INFO", None)
+            fn()
+        return out.getvalue()
+
+    def in_design(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        with open(os.path.join(d, "config.yaml"), "w") as f:
+            f.write("DESIGN_NAME: demo\n")
+        cwd = os.getcwd()
+        os.chdir(d)
+        self.addCleanup(os.chdir, cwd)
+        return d
+
+    def test_loading_config_goes_with_the_switch_and_stays_without(self):
+        self.in_design()
+        self.assertIn("[INFO] Loading config from", self.run_with(False, c4o.common.load_config))
+        self.assertEqual(self.run_with(True, c4o.common.load_config), "")
+
+    def test_the_command_a_step_runs_goes_with_the_switch_and_stays_without(self):
+        run = lambda: c4o.common.run_command(["true"])
+        self.assertIn("[INFO] Running: true", self.run_with(False, run))
+        self.assertEqual(self.run_with(True, run), "")
+
+    def test_reading_metrics_goes_with_the_switch_and_stays_without(self):
+        read = lambda: c4o.report.read_metrics(TestEntrypoint.FIXTURE)
+        self.assertIn("[INFO] Reading metrics from", self.run_with(False, read))
+        self.assertEqual(self.run_with(True, read), "")
+
+    def test_warnings_errors_and_the_verified_line_are_not_dropped(self):
+        def lines():
+            c4o.common.log_warn("w")
+            c4o.common.log_error("e")
+            c4o.common.log_info("Configuration verified for the physical design flow.")
+        out = self.run_with(True, lines)
+        self.assertEqual(out.splitlines(), ["[WARN] w", "[ERROR] e",
+                                            "[INFO] Configuration verified for the physical design flow."])
+
+    def check_gds(self, switch):
+        d = self.in_design()
+        os.makedirs("src")
+        with open("src/top.v", "w") as f:
+            f.write("module top; endmodule")
+        config = {"PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": [0, 0, 100, 100],
+                  "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0,
+                  "DESIGN_NAME": "top", "VERILOG_FILES": ["src/*.v"]}
+        with open("config.yaml", "w") as f:
+            json.dump(config, f)
+        argv = ["entrypoint.py", "check", "--for", "gds"]
+        with patch.object(sys, "argv", argv), patch.object(c4o.common, "c4o_version", return_value="2.29.0"):
+            return self.run_with(switch, entrypoint.main)
+
+    def test_make_gds_check_opens_with_the_release_and_the_verified_line(self):
+        out = self.check_gds(True).splitlines()
+        self.assertEqual(out[0], "▸ Checking config.yaml and the RTL (c4o-core 2.29.0)")
+        self.assertEqual(out[-1], "[INFO] Configuration verified for the physical design flow.")
+        # Whatever else is there is a warning of the check, which stays.
+        self.assertTrue(all(l.startswith("[WARN]") for l in out[1:-1]))
+
+    def test_check_without_the_switch_prints_what_it_always_did(self):
+        out = self.check_gds(False)
+        self.assertNotIn("▸", out)
+        self.assertIn("[INFO] Loading config from", out)
+        self.assertIn("(c4o-core 2.29.0)", out)
+        self.assertIn("[INFO] Configuration verified for the physical design flow.", out)
+        self.assertIn("[INFO] This step builds no layout. LibreLane does that.", out)
+
+    def test_pdk_drops_its_running_line_with_the_switch_and_keeps_it_without(self):
+        self.in_design()
+        pdk = lambda: entrypoint.cmd_pdk(MagicMock(), {})
+        with patch.dict(os.environ, {"PDK_ROOT": os.path.abspath(".")}), \
+                patch.object(c4o.common.subprocess, "run"):
+            self.assertIn("[INFO] Running: ciel enable --pdk sky130", self.run_with(False, pdk))
+            self.assertEqual(self.run_with(True, pdk), "")
+
+
+class TestReportVerdict(unittest.TestCase):
+    """The line over the report rows says whether the chip is fine, in the rows' words."""
+
+    GOOD = {"design__lint_warning__count": 0,
+            "timing__setup__ws": 5.96, "timing__setup_vio__count": 0,
+            "timing__hold__ws": 0.11, "timing__hold_vio__count": 0,
+            "magic__drc_error__count": 0, "klayout__drc_error__count": 0,
+            "design__lvs_error__count": 0, "route__antenna_violation__count": 0,
+            "design__xor_difference__count": 0}
+
+    def verdict(self, **changes):
+        m = dict(self.GOOD)
+        for k, v in changes.items():
+            if v is None:
+                m.pop(k, None)
+            else:
+                m[k] = v
+        return c4o.report.verdict("blinky", m)
+
+    def test_everything_holds(self):
+        self.assertEqual(self.verdict(), "blinky: signoff clean, timing met, no lint warnings")
+
+    def test_setup_fails(self):
+        self.assertEqual(self.verdict(timing__setup__ws=-0.4, timing__setup_vio__count=2),
+                         "blinky: setup slack -0.40 ns (2 violations)")
+
+    def test_hold_fails(self):
+        self.assertEqual(self.verdict(timing__hold__ws=-0.05, timing__hold_vio__count=1),
+                         "blinky: hold slack -0.05 ns (1 violations)")
+
+    def test_signoff_fails_and_names_the_checks(self):
+        self.assertEqual(self.verdict(magic__drc_error__count=2, design__lvs_error__count=1),
+                         "blinky: signoff not clean (DRC, LVS)")
+
+    def test_lint_warnings_fail(self):
+        self.assertEqual(self.verdict(design__lint_warning__count=3), "blinky: 3 lint warnings")
+        self.assertEqual(self.verdict(design__lint_warning__count=1), "blinky: 1 lint warning")
+
+    def test_two_failures_are_named_and_what_holds_is_not(self):
+        self.assertEqual(self.verdict(magic__drc_error__count=1, design__lint_warning__count=3),
+                         "blinky: signoff not clean (DRC), 3 lint warnings")
+
+    def test_a_missing_fact_is_left_out_not_guessed(self):
+        self.assertEqual(self.verdict(design__lint_warning__count=None), "blinky: signoff clean, timing met")
+        self.assertEqual(self.verdict(timing__hold_vio__count=None), "blinky: signoff clean, no lint warnings")
+        no_signoff = {k: v for k, v in self.GOOD.items()
+                      if not k.startswith(("magic", "klayout", "design__lvs", "route__", "design__xor"))}
+        self.assertEqual(c4o.report.verdict("blinky", no_signoff), "blinky: timing met, no lint warnings")
+
+    def test_a_failure_shows_even_when_other_facts_are_missing(self):
+        self.assertEqual(self.verdict(design__lint_warning__count=None, timing__setup_vio__count=3),
+                         "blinky: setup slack +5.96 ns (3 violations)")
+
+    def test_nothing_known_is_the_name_alone(self):
+        self.assertEqual(c4o.report.verdict("blinky", {"design__die__area": 1}), "blinky")
+
+    def test_the_report_prints_the_verdict_in_place_of_the_bare_name(self):
+        args = MagicMock()
+        args.metrics = TestEntrypoint.FIXTURE
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            c4o.report.cmd_report(args, {"DESIGN_NAME": "blinky"})
+        self.assertIn("\n  blinky: 441 lint warnings\n\n  die ", out.getvalue())
+        self.assertNotIn("\n  blinky\n", out.getvalue())
+
+
+class TestReportWrap(unittest.TestCase):
+    CLASSES = ("32 logic, 27 well taps, 21 timing-repair buffers, "
+               "17 inverters, 16 sequential, 3 clock buffers")
+
+    def test_a_long_row_breaks_after_a_comma_under_the_value(self):
+        lines = c4o.report.wrap_row("instance classes", self.CLASSES, 16, 80)
+        self.assertEqual(lines, [
+            "  instance classes   32 logic, 27 well taps, 21 timing-repair buffers,",
+            "                     17 inverters, 16 sequential, 3 clock buffers"])
+        self.assertTrue(all(len(line) <= 80 for line in lines))
+
+    def test_no_word_is_ever_split(self):
+        items = ", ".join(f"{n} thing{n}" for n in range(1, 60))
+        for width in (40, 60, 80, 100):
+            lines = c4o.report.wrap_row("x", items, 16, width)
+            self.assertTrue(all(len(line) <= width for line in lines), width)
+            self.assertTrue(all(re.match(r" {21}\d", line) for line in lines[1:]), lines)
+            self.assertTrue(all(line.endswith(",") for line in lines[:-1]))
+            self.assertEqual(re.sub(r"\s+", " ", " ".join(lines)).strip(), "x " + items)
+
+    def test_a_short_row_is_one_line(self):
+        self.assertEqual(c4o.report.wrap_row("utilization", "51.7%", 16, 80), ["  utilization        51.7%"])
+
+    def test_an_item_that_cannot_fit_stays_whole(self):
+        long = "a" * 90
+        self.assertEqual(c4o.report.wrap_row("layout", long, 16, 80), [f"  layout             {long}"])
+
+    def test_columns_sets_the_width_when_it_is_a_number(self):
+        with patch.dict(os.environ, {"COLUMNS": "120"}):
+            self.assertEqual(c4o.report.line_width(), 120)
+        with patch.dict(os.environ, {"COLUMNS": "wide"}):
+            self.assertEqual(c4o.report.line_width(), 80)
+        with patch.dict(os.environ):
+            os.environ.pop("COLUMNS", None)
+            self.assertEqual(c4o.report.line_width(), 80)
+
+    def test_the_real_run_report_has_no_line_over_80_columns(self):
+        args = MagicMock()
+        args.metrics = os.path.join(TestEntrypoint.RUN_FIXTURE, "blinky_run", "final", "metrics.json")
+        out = io.StringIO()
+        with patch.dict(os.environ):
+            os.environ.pop("COLUMNS", None)
+            with contextlib.redirect_stdout(out):
+                c4o.report.cmd_report(args, {"DESIGN_NAME": "blinky"})
+        rows = [l for l in out.getvalue().splitlines() if not l.startswith("[INFO]")]
+        self.assertTrue(all(len(l) <= 80 for l in rows))
 
 
 if __name__ == '__main__':

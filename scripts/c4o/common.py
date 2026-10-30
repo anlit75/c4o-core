@@ -25,6 +25,19 @@ def _color(code):
 def log_info(msg):
     print(f"{_color(GREEN)}[INFO] {msg}{_color(RESET)}")
 
+def quiet_info():
+    """
+    True when C4O_QUIET_INFO is set. `make gds` and `make pdk` set it for the
+    calls whose bookkeeping lines their own output replaces. Without it every
+    command prints what it always did.
+    """
+    return bool(os.environ.get("C4O_QUIET_INFO"))
+
+def log_note(msg):
+    """An [INFO] line that C4O_QUIET_INFO drops: bookkeeping, not a result."""
+    if not quiet_info():
+        log_info(msg)
+
 def log_error(msg):
     print(f"{_color(RED)}[ERROR] {msg}{_color(RESET)}")
 
@@ -35,7 +48,7 @@ def run_command(cmd, shell=False, env=None):
     """Runs a command and exits if it fails."""
     # Convert list to string for logging if it's a list
     cmd_str = " ".join(cmd) if isinstance(cmd, list) else cmd
-    log_info(f"Running: {cmd_str}")
+    log_note(f"Running: {cmd_str}")
     try:
         subprocess.run(cmd, shell=shell, check=True, env=env)
     except subprocess.CalledProcessError as e:
@@ -61,7 +74,7 @@ def load_config(quiet=False):
         # says which c4o-core produced it.
         version = c4o_version()
         if not quiet:
-            log_info(f"Loading config from {config_path}" + (f" (c4o-core {version})" if version else ""))
+            log_note(f"Loading config from {config_path}" + (f" (c4o-core {version})" if version else ""))
         try:
             with open(config_path, 'r') as f:
                 if name.endswith(".json"):

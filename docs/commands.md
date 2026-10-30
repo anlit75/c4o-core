@@ -313,16 +313,19 @@ that answer *is my design any good*:
 ```console
 $ c4o-core report
 
-  blinky
+  blinky: signoff clean, timing met, no lint warnings
 
   die                56.375 x 67.095 um  (3782.48 um^2)
   utilization        56.6%
   instances          65 after synthesis, 113 after routing
-  instance classes   32 logic, 27 well taps, 18 timing-repair buffers, 17 inverters, 16 sequential, 3 clock buffers
+  instance classes   32 logic, 27 well taps, 18 timing-repair buffers,
+                     17 inverters, 16 sequential, 3 clock buffers
   drive strength     X1 0->18, X2 65->65, X16 0->3  (synthesis->routing)
   setup slack        +5.52 ns  (0 violations)
   hold slack         +0.11 ns  (0 violations)
-  limit violations   11 max slew, 0 max capacitance, 0 max fanout  (max_ss_100C_1v60, min_ss_100C_1v60, nom_ss_100C_1v60)
+  limit violations   11 max slew, 0 max capacitance,
+                     0 max fanout  (max_ss_100C_1v60, min_ss_100C_1v60,
+                     nom_ss_100C_1v60)
   power              0.143 mW  (nom_tt_025C_1v80)
   signoff            clean  (DRC, LVS, antenna, XOR)
   lint warnings      0
@@ -331,6 +334,8 @@ $ c4o-core report
 
 Those are one example design's numbers, from one PDK version. The lines are
 what to read.
+
+The first line says whether the design is fine. It says `signoff clean, timing met, no lint warnings` when signoff is clean, setup and hold have no violations and there are no lint warnings. If one of these fails, the line names only what fails, in the words of the rows below, such as `setup slack -0.40 ns (2 violations)`. A value that the run did not measure is left out of the line. A row that is longer than 80 columns breaks after a comma and continues under its value.
 
 With no argument it takes the `metrics.json` of `runs/<DESIGN_NAME>_run/`, the run that `make gds` makes. A run of another design in `runs/` is not read, however new it is. Name a file to pick a different run. It leaves out a row that it has no metric for. It does not print a blank or a zero.
 

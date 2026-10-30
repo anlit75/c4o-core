@@ -238,6 +238,11 @@ def main():
         sys.exit(1)
 
     args = parser.parse_args()
+    # `make gds` drops the "Loading config" line (see C4O_QUIET_INFO), and this
+    # line takes its place with the release, which a pasted log needs.
+    if args.command == "check" and args.scope == "gds" and common.quiet_info():
+        version = common.c4o_version()
+        print("▸ Checking config.yaml and the RTL" + (f" (c4o-core {version})" if version else ""))
     # info reads no config: a config that does not parse is what it may be asked about.
     if args.command == "info":
         args.func(args, {})
