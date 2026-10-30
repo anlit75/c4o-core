@@ -235,12 +235,12 @@ c4o sim, blinky, c4o-core 2.26.0
   ok   rtl     verilator, no warnings, yosys 0.33, 54 cells, 0.5 s
   ok   check   tests configured, 0.3 s
   skip verilog skipped: TEST_FILES is not set
-  ok   cocotb  5/5 passed, seed 1791614587, 17.8 s
+  ok   cocotb  5 of 5 tests passed, seed 1791614587, 17.8 s
 ```
 
 `c4o-core all` is what `make sim` runs. It runs `rtl`, `check --for sim`, `sim` and `cocotb`, and times them itself. The ledger and `build/log/` call `sim` `verilog`, because it runs only the Verilog testbenches. A kind of test that is not configured says so and counts as passed. The first command that fails stops the run, and the commands after it are listed as not run.
 
-A failed cocotb test gets its name, the file and line of the assertion, and the message. It also gets a command that runs only that test with the same seed. The line `[ERROR] cocotb tests failed: <names>` stays in the output. `build/cocotb-results.xml` has the verdicts.
+A failed cocotb test gets its name, the file and line of the assertion, and the message. It also gets a command that runs only that test with the same seed. The line `[ERROR] cocotb tests failed: <names>` stays in the output. When the test wrote a message, the block shows the message without cocotb's `AssertionError:` prefix and without the `assert` line under it. The block ends with the path of the log, a sentence such as `The Verilog compiles, but 4 of 5 tests failed.`, and a `Next:` line. `build/cocotb-results.xml` still has the verdicts.
 
 `make gds` starts `c4o-core progress` beside LibreLane. You do not run it yourself. It reads `runs/<tag>/`, not the text of LibreLane. A step starts when its directory appears. It ends when its `state_out.json` can be read, or when the next directory appears. A signoff check that fails with a deferred error writes no `state_out.json`, so the stage shows `FAIL` and names the check. The flow still ends, `final/` exists, and the exit status is not 0.
 
@@ -313,16 +313,19 @@ that answer *is my design any good*:
 ```console
 $ c4o-core report
 
-  blinky
+  blinky: signoff clean, timing met, no lint warnings
 
   die                56.375 x 67.095 um  (3782.48 um^2)
   utilization        56.6%
   instances          65 after synthesis, 113 after routing
-  instance classes   32 logic, 27 well taps, 18 timing-repair buffers, 17 inverters, 16 sequential, 3 clock buffers
+  instance classes   32 logic, 27 well taps, 18 timing-repair buffers,
+                     17 inverters, 16 sequential, 3 clock buffers
   drive strength     X1 0->18, X2 65->65, X16 0->3  (synthesis->routing)
   setup slack        +5.52 ns  (0 violations)
   hold slack         +0.11 ns  (0 violations)
-  limit violations   11 max slew, 0 max capacitance, 0 max fanout  (max_ss_100C_1v60, min_ss_100C_1v60, nom_ss_100C_1v60)
+  limit violations   11 max slew, 0 max capacitance,
+                     0 max fanout  (max_ss_100C_1v60, min_ss_100C_1v60,
+                     nom_ss_100C_1v60)
   power              0.143 mW  (nom_tt_025C_1v80)
   signoff            clean  (DRC, LVS, antenna, XOR)
   lint warnings      0
@@ -331,6 +334,8 @@ $ c4o-core report
 
 Those are one example design's numbers, from one PDK version. The lines are
 what to read.
+
+The first line says whether the design is fine. It says `signoff clean, timing met, no lint warnings` when signoff is clean, setup and hold have no violations and there are no lint warnings. If one of these fails, the line names only what fails, in the words of the rows below, such as `setup slack -0.40 ns (2 violations)`. A value that the run did not measure is left out of the line. A row that is longer than 80 columns breaks after a comma and continues under its value.
 
 With no argument it takes the `metrics.json` of `runs/<DESIGN_NAME>_run/`, the run that `make gds` makes. A run of another design in `runs/` is not read, however new it is. Name a file to pick a different run. It leaves out a row that it has no metric for. It does not print a blank or a zero.
 

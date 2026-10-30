@@ -154,14 +154,18 @@ def ledger_row(style, kind, name, text, name_width=7):
     return f"  {style.mark(kind)} {name.ljust(name_width)} {text}".rstrip()
 
 def stage_row(style, kind, stage, count, secs, width, extra=""):
-    """One stage of `make gds`, with its explanation when the terminal is wide."""
+    """One stage of `make gds`, with its explanation (short from 80 columns, whole from 100)."""
     name = stage.name.ljust(14)
     text = f"{count} {'step' if count == 1 else 'steps'}".ljust(10) + fmt_secs(secs).ljust(6)
     row = f"  {style.mark(kind)} {name}{text}"
     if extra:
         return (row + extra).rstrip()
+    # The mark carries colour codes that take no column; compose counts every character.
+    room = width + len(row) - vlen(row)
     if style.tty and width >= 100:
-        return compose(style, width, [(row, ), (stage.blurb, "dim")])
+        return compose(style, room, [(row, ), (stage.blurb, "dim")])
+    if style.tty and width >= 80:
+        return compose(style, room, [(row, ), (stage.short, "dim")])
     return row.rstrip()
 
 def live_rows(style, width, head, bar_done, bar_total, bar_label, last):
@@ -462,7 +466,7 @@ def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sl
 
     if failed:
         step, index, rc, text, log = failed
-        for line in failure_block(step, text, log):
+        for line in failure_block(step, text, log, rtl_passed=True, style=style):
             out.write(line + "\n")
         for later in ALL_STEPS[index + 1:]:
             out.write(ledger_row(style, "skip", LABELS.get(later, later), f"not run: {LABELS.get(step, step)} failed first") + "\n")
@@ -502,7 +506,7 @@ def summarize_step(step, text, spent, style):
         return "ok", f"testbench ran{sep}{fmt_time(spent)}"
     if step == "cocotb":
         info = summarize_cocotb(text, os.path.join("build", "cocotb-results.xml"))
-        parts = [f"{info['passed']}/{info['total']} passed" if info["total"] else "passed"]
+        parts = [f"{info['passed']} of {info['total']} tests passed" if info["total"] else "passed"]
         if info["seed"]:
             parts.append(f"seed {info['seed']}")
         parts.append(fmt_time(spent))
@@ -514,18 +518,33 @@ def failed_text(step, text, spent, style):
     if step == "cocotb":
         info = summarize_cocotb(text, os.path.join("build", "cocotb-results.xml"))
         if info["failures"]:
-            parts.append(f"{info['passed']} passed, {len(info['failures'])} failed")
+            parts.append(f"{len(info['failures'])} of {info['total']} tests failed")
             if info["seed"]:
                 parts.append(f"seed {info['seed']}")
     return style.sep.join(parts or ["failed"] ) + style.sep + fmt_time(spent)
 
-def failure_block(step, text, log):
+def trim_message(message):
+    """
+    `AssertionError: <text>` and cocotb's `assert` line under it say the same
+    twice, once in words and once as the comparison. When the test wrote the
+    words, print only those. Any other message is returned as it is.
+    """
+    m = re.match(r"AssertionError:[ \t]*(\S.*)$", message[0]) if message else None
+    if not m:
+        return message
+    cut = next((k for k, l in enumerate(message) if l.startswith("assert ")), len(message))
+    return [m.group(1)] + message[1:cut]
+
+def failure_block(step, text, log, rtl_passed=False, style=None):
     """
     Why a command failed, at the left margin: the line `[ERROR] cocotb tests
     failed: <names>` exactly as c4o-core has always printed it (a README quotes
-    it and a CI step looks for it), then one entry for each failed test, and the
-    paths. A command that is not cocotb gets the end of its own output.
+    it and a CI step looks for it), then one entry for each failed test, and
+    what to do next. A command that is not cocotb gets the end of its own
+    output. rtl_passed is true only when this run compiled the Verilog first
+    (`run_all` does, `rtl` before `cocotb`). The style bolds the conclusion.
     """
+    bold = (lambda t: style.paint(t, "bold")) if style else (lambda t: t)
     out = []
     info = summarize_cocotb(text, os.path.join("build", "cocotb-results.xml")) if step == "cocotb" else None
     if info and info["failures"]:
@@ -533,15 +552,24 @@ def failure_block(step, text, log):
         for fail in info["failures"]:
             out.append("")
             out.append(fail["name"] + (f"  {fail['where']}" if fail["where"] else ""))
-            out += fail["message"]
+            out += trim_message(fail["message"])
             if fail["module"]:
                 seed = f"SEED={info['seed']} " if info["seed"] else ""
                 # The label has a line of its own, so the command line copies whole.
                 out.append("rerun this test:")
                 out.append(f"make cocotb {seed}TEST={fail['module']}.{fail['name']}")
         out.append("")
-        out.append(f"full output: {log} ({count_lines(log)} lines)")
-        out.append("verdicts:    build/cocotb-results.xml")
+        out.append(f"full log: {log} ({count_lines(log)} lines)")
+        n = len(info["failures"])
+        # A failure comes from the results file, which also gives the total.
+        conclusion = f"{n} of {info['total']} tests failed."
+        if rtl_passed:
+            conclusion = "The Verilog compiles, but " + conclusion
+        out.append("")
+        out.append(bold(conclusion))
+        out.append("")
+        out.append(bold("Next:"))
+        out.append("  change rtl/ (or the test in tb/), then run make sim again")
     else:
         out.append("")
         out += excerpt(log)
@@ -553,10 +581,12 @@ def all_live_rows(style, width, step, index, began, clock, log, t_start):
     now = clock()
     tests = re.findall(r"running (\S+) \((\d+)/(\d+)\)", "\n".join(tail_lines(log, 400))) if step == "cocotb" else []
     detail = f"{style.sep}test {tests[-1][1]}/{tests[-1][2]} {tests[-1][0]}" if tests else ""
+    done, total, count = index, len(ALL_STEPS), f"{index + 1}/{len(ALL_STEPS)} commands"
+    if tests:
+        done, total, count = int(tests[-1][1]) - 1, int(tests[-1][2]), f"test {tests[-1][1]}/{tests[-1][2]}"
     head = [(f"  {style.mark('run')} ", ), (step, "bold"), (f"{detail}{style.sep}{fmt_secs(now - began)}", )]
     last = last_output(log)
-    return live_rows(style, width, head, index, len(ALL_STEPS),
-                     f"{index + 1}/{len(ALL_STEPS)} commands{style.sep}{fmt_clock(now - t_start)} elapsed", last)
+    return live_rows(style, width, head, done, total, f"{count}{style.sep}{fmt_clock(now - t_start)} elapsed", last)
 
 # ---------------------------------------------------------------- make gds
 
@@ -884,11 +914,11 @@ def flow_live(style, width, run, step, plan, now, t_start, log):
     n = len(run.steps)
     if width >= 100:
         head = [(f"  {style.mark('run')} ", ), (stage.name, "bold"),
-                (f"  stage {step.stage + 1}/{len(stages.STAGES)}{style.sep}{title} ", ), (f"({ident})", "dim"),
+                (f"  stage {step.stage + 1} of {len(stages.STAGES)}{style.sep}{title} ", ), (f"({ident})", "dim"),
                 (f"{style.sep}{spent} in this step", )]
     else:
         head = [(f"  {style.mark('run')} ", ), (stage.name, "bold"),
-                (f" {step.stage + 1}/{len(stages.STAGES)}{style.sep}{title}{style.sep}{spent}", )]
+                (f"{style.sep}stage {step.stage + 1} of {len(stages.STAGES)}{style.sep}{title}{style.sep}{spent}", )]
     total = plan.total if plan else None
     label = (f"{n}/{total} steps" if total else f"step {n}") + f"{style.sep}{fmt_clock(now - t_start)} elapsed"
     last = last_output(log)

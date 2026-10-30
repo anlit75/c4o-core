@@ -714,8 +714,8 @@ class TestEntrypoint(unittest.TestCase):
         # The real 3.0.14 run: its class counts add up to its 198 instances.
         out = self._report(os.path.join(self.RUN_FIXTURE, "blinky_run", "final", "metrics.json"))
 
-        self.assertIn("57 logic, 46 well taps, 35 timing-repair buffers, 27 inverters, "
-                      "26 sequential, 7 clock buffers", out)
+        self.assertIn("57 logic, 46 well taps, 35 timing-repair buffers,\n"
+                      "                     27 inverters, 26 sequential, 7 clock buffers", out)
         self.assertNotIn("235", out)  # fill
 
     def test_report_names_an_unmapped_cell_class_by_its_own_name(self):
@@ -800,7 +800,7 @@ class TestEntrypoint(unittest.TestCase):
         self.assertIn("signoff", out)
         self.assertIn("2 DRC (Magic), 1 LVS", out)
         # The whole point: a column of zeroes with one non-zero buried in it is
-        # what this replaces.
+        # what this replaces. The verdict line says so too.
         self.assertNotIn("clean", out)
         self.assertNotIn("0 antenna", out)
 
@@ -5009,13 +5009,91 @@ class TestLedgerLines(unittest.TestCase):
         row = c4o.progress.stage_row(c4o.progress.Style("plain", {}), "ok", c4o.stages.STAGES[0], 12, 4.0, 200)
         self.assertNotIn(c4o.stages.STAGES[0].blurb, row)
 
+    def test_every_stage_has_a_short_blurb_of_48_characters_or_less(self):
+        for stage in c4o.stages.STAGES:
+            self.assertTrue(stage.short, stage.name)
+            self.assertLessEqual(len(stage.short), 48, stage.name)
+
+    def test_the_short_blurb_shows_at_80_and_99_columns_and_the_row_fits(self):
+        style = c4o.progress.Style("tty", {})
+        for stage in c4o.stages.STAGES:
+            for width in (80, 99):
+                row = self.visible([c4o.progress.stage_row(style, "ok", stage, 12, 4.0, width)])[0]
+                self.assertIn(stage.short, row, (stage.name, width))
+                self.assertLessEqual(len(row), width, (stage.name, width))
+
+    def test_the_long_blurb_stays_at_100_and_there_is_none_at_79(self):
+        style = c4o.progress.Style("tty", {})
+        stage = c4o.stages.STAGES[3]
+        at_100 = self.visible([c4o.progress.stage_row(style, "ok", stage, 4, 22.0, 100)])[0]
+        self.assertIn(stage.blurb, at_100)
+        self.assertLessEqual(len(at_100), 100)
+        at_79 = self.visible([c4o.progress.stage_row(style, "ok", stage, 4, 22.0, 79)])[0]
+        self.assertNotIn(stage.short, at_79)
+        self.assertNotIn(stage.blurb, at_79)
+
+    def test_a_short_blurb_that_does_not_fit_is_cut_with_an_ellipsis(self):
+        style = c4o.progress.Style("tty", {})
+        stage = c4o.stages.STAGES[0]._replace(short="x" * 80)
+        row = self.visible([c4o.progress.stage_row(style, "ok", stage, 4, 22.0, 80)])[0]
+        self.assertEqual(len(row), 80)
+        self.assertTrue(row.endswith("…"))
+
+    def test_plain_rows_carry_no_short_blurb_either(self):
+        row = c4o.progress.stage_row(c4o.progress.Style("plain", {}), "ok", c4o.stages.STAGES[2], 12, 4.0, 90)
+        self.assertNotIn(c4o.stages.STAGES[2].short, row)
+
+    def flow_head(self, width):
+        from types import SimpleNamespace as NS
+        style = c4o.progress.Style("tty", {})
+        step = NS(stage=2, slug="openroad-ioplacement", t0=0.0)
+        run = NS(steps=[step] * 3)
+        return self.visible(c4o.progress.flow_live(style, width, run, step, None, 0.2, 0.0, os.devnull))[0]
+
+    def test_the_live_row_says_stage_k_of_n_at_every_width(self):
+        for width in (60, 80, 99, 100, 120):
+            self.assertIn("stage 3 of 7", self.flow_head(width), width)
+            self.assertNotIn("3/7", self.flow_head(width), width)
+        self.assertIn("Placement · stage 3 of 7 · ", self.flow_head(80))
+
+    def cocotb_rows(self, lines, width=80, index=3):
+        from unittest.mock import MagicMock
+        style = c4o.progress.Style("tty", {})
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "cocotb.log")
+            with open(log, "w") as f:
+                f.write(lines)
+            return self.visible(c4o.progress.all_live_rows(style, width, "cocotb", index, 0.0, lambda: 7.0, log, 0.0))
+
+    def test_the_cocotb_bar_counts_tests_not_commands(self):
+        rows = self.cocotb_rows("running a (1/5)\nok\nrunning led_toggles (3/5)\n")
+        self.assertIn("test 3/5 led_toggles", rows[0])
+        self.assertIn("test 3/5 · 0:07 elapsed", rows[1])
+        self.assertNotIn("commands", rows[1])
+        self.assertEqual(rows[1].count("━") + rows[1].count("╸"), int((80 - 1 - 2 - len("  test 3/5 · 0:07 elapsed")) * 2 / 5))
+
+    def test_the_cocotb_bar_is_empty_at_test_1(self):
+        rows = self.cocotb_rows("running a (1/5)\n")
+        self.assertIn("test 1/5", rows[1])
+        self.assertNotIn("━", rows[1])
+
+    def test_before_the_first_running_line_the_bar_counts_commands(self):
+        rows = self.cocotb_rows("make: entering\n")
+        self.assertIn("4/4 commands · 0:07 elapsed", rows[1])
+
+    def test_other_steps_keep_the_command_count(self):
+        from unittest.mock import MagicMock
+        style = c4o.progress.Style("tty", {})
+        rows = self.visible(c4o.progress.all_live_rows(style, 80, "sim", 2, 0.0, lambda: 7.0, os.devnull, 0.0))
+        self.assertIn("3/4 commands · 0:07 elapsed", rows[1])
+
     def test_one_step_is_not_steps(self):
         row = c4o.progress.stage_row(c4o.progress.Style("plain", {}), "fail", c4o.stages.STAGES[2], 1, 0.2, 80)
         self.assertIn("1 step ", row)
         self.assertNotIn("1 steps", row)
 
     def head(self, style):
-        return [("  ▸ ", ), ("Routing", "bold"), ("  stage 5/7 · Detailed Routing (OpenROAD.DetailedRouting) · 3s in this step", )]
+        return [("  ▸ ", ), ("Routing", "bold"), ("  stage 5 of 7 · Detailed Routing (OpenROAD.DetailedRouting) · 3s in this step", )]
 
     def test_the_live_rows_at_120_columns(self):
         style = c4o.progress.Style("tty", {})
@@ -5027,7 +5105,7 @@ class TestLedgerLines(unittest.TestCase):
 
     def test_the_live_rows_at_80_columns_drop_the_id_not_the_bar(self):
         style = c4o.progress.Style("tty", {})
-        head = [("  ▸ ", ), ("Routing", "bold"), (" 5/7 · Detailed Routing · 3s", )]
+        head = [("  ▸ ", ), ("Routing", "bold"), (" · stage 5 of 7 · Detailed Routing · 3s", )]
         rows = self.visible(c4o.progress.live_rows(style, 80, head, 47, 76, "47/76 steps · 0:52 elapsed", "last"))
         self.assertEqual(len(rows), 3)
         self.assertNotIn("OpenROAD", rows[0])
@@ -5200,7 +5278,7 @@ class TestCocotbFailures(unittest.TestCase):
                 os.chdir(cwd)
         self.assertEqual(text, "failed, 9.0 s")
 
-    def failure_block(self):
+    def failure_block(self, **kwargs):
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, "build", "log"))
             shutil.copy(self.xml, os.path.join(d, "build", "cocotb-results.xml"))
@@ -5209,7 +5287,7 @@ class TestCocotbFailures(unittest.TestCase):
             os.chdir(d)
             try:
                 with patch("os.getcwd", return_value="/workspace"):
-                    return c4o.progress.failure_block("cocotb", self.log, "build/log/cocotb.log"), \
+                    return c4o.progress.failure_block("cocotb", self.log, "build/log/cocotb.log", **kwargs), \
                         c4o.progress.failed_text("cocotb", self.log, 9.0, c4o.progress.Style("plain", {}))
             finally:
                 os.chdir(cwd)
@@ -5232,17 +5310,100 @@ class TestCocotbFailures(unittest.TestCase):
 
     def test_nothing_in_the_block_is_indented_or_cut(self):
         block, _ = self.failure_block()
-        self.assertTrue(all(not l.startswith(" ") for l in block), [l for l in block if l.startswith(" ")])
-        self.assertIn("AssertionError: led is 1, model says 0: cycle 16387, rst was 0, model count 16384", block)
+        # The Next: line is the one indented line, and it is ours.
+        self.assertEqual([l for l in block if l.startswith(" ")],
+                         ["  change rtl/ (or the test in tb/), then run make sim again"])
+        # This message has no assert line, and its prefix goes all the same.
+        self.assertIn("led is 1, model says 0: cycle 16387, rst was 0, model count 16384", block)
+        self.assertFalse(any(l.startswith("AssertionError") for l in block))
 
-    def test_the_block_names_the_logs(self):
+    def test_the_block_ends_with_the_log_a_conclusion_and_what_to_do_next(self):
+        block, _ = self.failure_block(rtl_passed=True)
+        self.assertEqual(block[-6:], [
+            "full log: build/log/cocotb.log (%d lines)" % len(self.log.splitlines()),
+            "",
+            "The Verilog compiles, but 4 of 5 tests failed.",
+            "",
+            "Next:",
+            "  change rtl/ (or the test in tb/), then run make sim again",
+        ])
+        self.assertEqual(block[-7], "")
+        self.assertNotIn("verdicts:", "\n".join(block))
+        self.assertNotIn("full output:", "\n".join(block))
+
+    def test_without_a_passed_rtl_the_conclusion_does_not_say_the_verilog_compiles(self):
         block, _ = self.failure_block()
-        self.assertIn("full output: build/log/cocotb.log (%d lines)" % len(self.log.splitlines()), block)
-        self.assertIn("verdicts:    build/cocotb-results.xml", block)
+        self.assertIn("4 of 5 tests failed.", block)
+        self.assertNotIn("The Verilog compiles", "\n".join(block))
+        self.assertEqual(block[-5:-3], ["", "4 of 5 tests failed."])
 
-    def test_the_row_counts_the_passed_and_the_failed(self):
+    def test_one_failed_test_reads_1_of_n(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "build", "log"))
+            with open(self.xml) as f:
+                xml = f.read()
+            # Make three of the four failed tests pass.
+            xml = re.sub(r"<failure[^>]*/>|<failure[^>]*>.*?</failure>", "", xml, count=3, flags=re.S)
+            with open(os.path.join(d, "build", "cocotb-results.xml"), "w") as f:
+                f.write(xml)
+            with open(os.path.join(d, "build", "log", "cocotb.log"), "w") as f:
+                f.write(self.log)
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                block = c4o.progress.failure_block("cocotb", self.log, "build/log/cocotb.log", rtl_passed=True)
+            finally:
+                os.chdir(cwd)
+        self.assertIn("The Verilog compiles, but 1 of 5 tests failed.", block)
+
+    def test_the_conclusion_and_next_are_bold_in_a_terminal_and_plain_otherwise(self):
+        tty = c4o.progress.Style("tty", {"NO_COLOR": "1"})
+        block, _ = self.failure_block(rtl_passed=True, style=tty)
+        self.assertIn("\x1b[1mThe Verilog compiles, but 4 of 5 tests failed.\x1b[0m", block)
+        self.assertIn("\x1b[1mNext:\x1b[0m", block)
+        self.assertTrue(block[0].startswith("[ERROR]") and "\x1b" not in block[0])
+        block, _ = self.failure_block(rtl_passed=True, style=c4o.progress.Style("plain", {}))
+        self.assertNotIn("\x1b", "\n".join(block))
+
+    def test_the_prefix_and_the_assert_line_are_dropped_when_the_test_wrote_a_message(self):
+        block, _ = self.failure_block()
+        self.assertIn("led rose before cycle 32768", block)
+        self.assertNotIn("AssertionError: led rose before cycle 32768", block)
+        self.assertNotIn("assert 1 == 0", block)
+
+    def test_trim_message(self):
+        trim = c4o.progress.trim_message
+        self.assertEqual(trim(["AssertionError: q is low", "assert 0 == 1", " +  where 0 = x", "more"]), ["q is low"])
+        self.assertEqual(trim(["AssertionError: q is low", "detail", "assert 0 == 1", "tail"]), ["q is low", "detail"])
+        # No text after the exception name: as it is.
+        self.assertEqual(trim(["AssertionError", "assert 0 == 1"]), ["AssertionError", "assert 0 == 1"])
+        self.assertEqual(trim(["AssertionError: ", "assert 0 == 1"]), ["AssertionError: ", "assert 0 == 1"])
+        # Another exception type: as it is.
+        self.assertEqual(trim(["ValueError: bad", "assert 0 == 1"]), ["ValueError: bad", "assert 0 == 1"])
+        # No assert line: the prefix still goes.
+        self.assertEqual(trim(["AssertionError: q is low"]), ["q is low"])
+        self.assertEqual(trim(["AssertionError: q is low", "detail"]), ["q is low", "detail"])
+        self.assertEqual(trim([]), [])
+
+    def test_the_row_counts_the_failed_of_the_total(self):
         _, row = self.failure_block()
-        self.assertEqual(row, "1 passed, 4 failed, seed 1791475857, 9.0 s")
+        self.assertEqual(row, "4 of 5 tests failed, seed 1791475857, 9.0 s")
+
+    def test_the_row_of_a_passing_run_counts_the_passed_of_the_total(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs("%s/build" % d)
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                with open("build/cocotb-results.xml", "w") as f:
+                    f.write('<testsuites><testsuite>' + ''.join(
+                        '<testcase name="t%d" classname="m.m" />' % n for n in range(5)) + '</testsuite></testsuites>')
+                kind, row = c4o.progress.summarize_step(
+                    "cocotb", "0.00ns INFO cocotb  Seeding Python random module with supplied seed 7\n",
+                    9.0, c4o.progress.Style("plain", {}))
+            finally:
+                os.chdir(cwd)
+        self.assertEqual((kind, row), ("ok", "5 of 5 tests passed, seed 7, 9.0 s"))
 
     def test_another_command_that_fails_gets_the_end_of_its_output(self):
         with tempfile.TemporaryDirectory() as d:
@@ -6389,6 +6550,204 @@ class TestInfo(unittest.TestCase):
         finally:
             os.chdir(cwd)
             shutil.rmtree(d)
+
+
+class TestQuietInfo(unittest.TestCase):
+    """C4O_QUIET_INFO drops four bookkeeping [INFO] lines, and nothing else."""
+
+    def run_with(self, switch, fn):
+        env = {"C4O_QUIET_INFO": "1"} if switch else {}
+        out = io.StringIO()
+        with patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(out):
+            if not switch:
+                os.environ.pop("C4O_QUIET_INFO", None)
+            fn()
+        return out.getvalue()
+
+    def in_design(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        with open(os.path.join(d, "config.yaml"), "w") as f:
+            f.write("DESIGN_NAME: demo\n")
+        cwd = os.getcwd()
+        os.chdir(d)
+        self.addCleanup(os.chdir, cwd)
+        return d
+
+    def test_loading_config_goes_with_the_switch_and_stays_without(self):
+        self.in_design()
+        self.assertIn("[INFO] Loading config from", self.run_with(False, c4o.common.load_config))
+        self.assertEqual(self.run_with(True, c4o.common.load_config), "")
+
+    def test_the_command_a_step_runs_goes_with_the_switch_and_stays_without(self):
+        run = lambda: c4o.common.run_command(["true"])
+        self.assertIn("[INFO] Running: true", self.run_with(False, run))
+        self.assertEqual(self.run_with(True, run), "")
+
+    def test_reading_metrics_goes_with_the_switch_and_stays_without(self):
+        read = lambda: c4o.report.read_metrics(TestEntrypoint.FIXTURE)
+        self.assertIn("[INFO] Reading metrics from", self.run_with(False, read))
+        self.assertEqual(self.run_with(True, read), "")
+
+    def test_warnings_errors_and_the_verified_line_are_not_dropped(self):
+        def lines():
+            c4o.common.log_warn("w")
+            c4o.common.log_error("e")
+            c4o.common.log_info("Configuration verified for the physical design flow.")
+        out = self.run_with(True, lines)
+        self.assertEqual(out.splitlines(), ["[WARN] w", "[ERROR] e",
+                                            "[INFO] Configuration verified for the physical design flow."])
+
+    def check_gds(self, switch):
+        d = self.in_design()
+        os.makedirs("src")
+        with open("src/top.v", "w") as f:
+            f.write("module top; endmodule")
+        config = {"PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd", "DIE_AREA": [0, 0, 100, 100],
+                  "FP_SIZING": "absolute", "CLOCK_PORT": "clk", "CLOCK_PERIOD": 10.0,
+                  "DESIGN_NAME": "top", "VERILOG_FILES": ["src/*.v"]}
+        with open("config.yaml", "w") as f:
+            json.dump(config, f)
+        argv = ["entrypoint.py", "check", "--for", "gds"]
+        with patch.object(sys, "argv", argv), patch.object(c4o.common, "c4o_version", return_value="2.29.0"):
+            return self.run_with(switch, entrypoint.main)
+
+    def test_make_gds_check_opens_with_the_release_and_the_verified_line(self):
+        out = self.check_gds(True).splitlines()
+        self.assertEqual(out[0], "▸ Checking config.yaml and the RTL (c4o-core 2.29.0)")
+        self.assertEqual(out[-1], "[INFO] Configuration verified for the physical design flow.")
+        # Whatever else is there is a warning of the check, which stays.
+        self.assertTrue(all(l.startswith("[WARN]") for l in out[1:-1]))
+
+    def test_check_without_the_switch_prints_what_it_always_did(self):
+        out = self.check_gds(False)
+        self.assertNotIn("▸", out)
+        self.assertIn("[INFO] Loading config from", out)
+        self.assertIn("(c4o-core 2.29.0)", out)
+        self.assertIn("[INFO] Configuration verified for the physical design flow.", out)
+        self.assertIn("[INFO] This step builds no layout. LibreLane does that.", out)
+
+    def test_pdk_drops_its_running_line_with_the_switch_and_keeps_it_without(self):
+        self.in_design()
+        pdk = lambda: entrypoint.cmd_pdk(MagicMock(), {})
+        with patch.dict(os.environ, {"PDK_ROOT": os.path.abspath(".")}), \
+                patch.object(c4o.common.subprocess, "run"):
+            self.assertIn("[INFO] Running: ciel enable --pdk sky130", self.run_with(False, pdk))
+            self.assertEqual(self.run_with(True, pdk), "")
+
+
+class TestReportVerdict(unittest.TestCase):
+    """The line over the report rows says whether the chip is fine, in the rows' words."""
+
+    GOOD = {"design__lint_warning__count": 0,
+            "timing__setup__ws": 5.96, "timing__setup_vio__count": 0,
+            "timing__hold__ws": 0.11, "timing__hold_vio__count": 0,
+            "magic__drc_error__count": 0, "klayout__drc_error__count": 0,
+            "design__lvs_error__count": 0, "route__antenna_violation__count": 0,
+            "design__xor_difference__count": 0}
+
+    def verdict(self, **changes):
+        m = dict(self.GOOD)
+        for k, v in changes.items():
+            if v is None:
+                m.pop(k, None)
+            else:
+                m[k] = v
+        return c4o.report.verdict("blinky", m)
+
+    def test_everything_holds(self):
+        self.assertEqual(self.verdict(), "blinky: signoff clean, timing met, no lint warnings")
+
+    def test_setup_fails(self):
+        self.assertEqual(self.verdict(timing__setup__ws=-0.4, timing__setup_vio__count=2),
+                         "blinky: setup slack -0.40 ns (2 violations)")
+
+    def test_hold_fails(self):
+        self.assertEqual(self.verdict(timing__hold__ws=-0.05, timing__hold_vio__count=1),
+                         "blinky: hold slack -0.05 ns (1 violations)")
+
+    def test_signoff_fails_and_names_the_checks(self):
+        self.assertEqual(self.verdict(magic__drc_error__count=2, design__lvs_error__count=1),
+                         "blinky: signoff failed (DRC, LVS)")
+
+    def test_lint_warnings_fail(self):
+        self.assertEqual(self.verdict(design__lint_warning__count=3), "blinky: 3 lint warnings")
+        self.assertEqual(self.verdict(design__lint_warning__count=1), "blinky: 1 lint warning")
+
+    def test_two_failures_are_named_and_what_holds_is_not(self):
+        self.assertEqual(self.verdict(magic__drc_error__count=1, design__lint_warning__count=3),
+                         "blinky: signoff failed (DRC), 3 lint warnings")
+
+    def test_a_missing_fact_is_left_out_not_guessed(self):
+        self.assertEqual(self.verdict(design__lint_warning__count=None), "blinky: signoff clean, timing met")
+        self.assertEqual(self.verdict(timing__hold_vio__count=None), "blinky: signoff clean, no lint warnings")
+        no_signoff = {k: v for k, v in self.GOOD.items()
+                      if not k.startswith(("magic", "klayout", "design__lvs", "route__", "design__xor"))}
+        self.assertEqual(c4o.report.verdict("blinky", no_signoff), "blinky: timing met, no lint warnings")
+
+    def test_a_failure_shows_even_when_other_facts_are_missing(self):
+        self.assertEqual(self.verdict(design__lint_warning__count=None, timing__setup_vio__count=3),
+                         "blinky: setup slack +5.96 ns (3 violations)")
+
+    def test_nothing_known_is_the_name_alone(self):
+        self.assertEqual(c4o.report.verdict("blinky", {"design__die__area": 1}), "blinky")
+
+    def test_the_report_prints_the_verdict_in_place_of_the_bare_name(self):
+        args = MagicMock()
+        args.metrics = TestEntrypoint.FIXTURE
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            c4o.report.cmd_report(args, {"DESIGN_NAME": "blinky"})
+        self.assertIn("\n  blinky: 441 lint warnings\n\n  die ", out.getvalue())
+        self.assertNotIn("\n  blinky\n", out.getvalue())
+
+
+class TestReportWrap(unittest.TestCase):
+    CLASSES = ("32 logic, 27 well taps, 21 timing-repair buffers, "
+               "17 inverters, 16 sequential, 3 clock buffers")
+
+    def test_a_long_row_breaks_after_a_comma_under_the_value(self):
+        lines = c4o.report.wrap_row("instance classes", self.CLASSES, 16, 80)
+        self.assertEqual(lines, [
+            "  instance classes   32 logic, 27 well taps, 21 timing-repair buffers,",
+            "                     17 inverters, 16 sequential, 3 clock buffers"])
+        self.assertTrue(all(len(line) <= 80 for line in lines))
+
+    def test_no_word_is_ever_split(self):
+        items = ", ".join(f"{n} thing{n}" for n in range(1, 60))
+        for width in (40, 60, 80, 100):
+            lines = c4o.report.wrap_row("x", items, 16, width)
+            self.assertTrue(all(len(line) <= width for line in lines), width)
+            self.assertTrue(all(re.match(r" {21}\d", line) for line in lines[1:]), lines)
+            self.assertTrue(all(line.endswith(",") for line in lines[:-1]))
+            self.assertEqual(re.sub(r"\s+", " ", " ".join(lines)).strip(), "x " + items)
+
+    def test_a_short_row_is_one_line(self):
+        self.assertEqual(c4o.report.wrap_row("utilization", "51.7%", 16, 80), ["  utilization        51.7%"])
+
+    def test_an_item_that_cannot_fit_stays_whole(self):
+        long = "a" * 90
+        self.assertEqual(c4o.report.wrap_row("layout", long, 16, 80), [f"  layout             {long}"])
+
+    def test_columns_sets_the_width_when_it_is_a_number(self):
+        with patch.dict(os.environ, {"COLUMNS": "120"}):
+            self.assertEqual(c4o.report.line_width(), 120)
+        with patch.dict(os.environ, {"COLUMNS": "wide"}):
+            self.assertEqual(c4o.report.line_width(), 80)
+        with patch.dict(os.environ):
+            os.environ.pop("COLUMNS", None)
+            self.assertEqual(c4o.report.line_width(), 80)
+
+    def test_the_real_run_report_has_no_line_over_80_columns(self):
+        args = MagicMock()
+        args.metrics = os.path.join(TestEntrypoint.RUN_FIXTURE, "blinky_run", "final", "metrics.json")
+        out = io.StringIO()
+        with patch.dict(os.environ):
+            os.environ.pop("COLUMNS", None)
+            with contextlib.redirect_stdout(out):
+                c4o.report.cmd_report(args, {"DESIGN_NAME": "blinky"})
+        rows = [l for l in out.getvalue().splitlines() if not l.startswith("[INFO]")]
+        self.assertTrue(all(len(l) <= 80 for l in rows))
 
 
 if __name__ == '__main__':

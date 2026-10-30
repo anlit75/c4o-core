@@ -125,6 +125,8 @@ After the flow, passed or failed, it also draws one picture of each stage with t
 | `plain` | The lines as text, with `ok`, `FAIL` and `skip`. No colour and no redrawing. `make gds` adds a `still running:` line every 30 seconds. |
 | `raw` | The output of the tools as it is. Nothing goes to `build/log/`. |
 
+Before the ledger, `make gds` prints one `▸` line for each of its first steps: the check, the PDK and, on a first run, the LibreLane image. It does not print the commands it runs. The tools print their own lines, such as the download of the PDK or of the image. `make pdk` prints its `▸` line the same way. It sets `C4O_QUIET_INFO=1` for c4o-core, which then leaves out four `[INFO]` lines: `Loading config`, `This step builds no layout`, `Running: ciel` and `Reading metrics`. `PROGRESS=raw` prints the commands and every `[INFO]` line again.
+
 `NO_COLOR` removes the colour and keeps the symbols. On GitHub Actions, `plain` puts the output of each tool in a collapsed group. `make sim PROGRESS=raw` runs the same four commands one after the other and prints their output.
 
 A failure ends with the reason, the path of the log and the command to run next. For `make cocotb` that is `make cocotb SEED=<n> TEST=<module>.<function>` for each failed test, on its own line under `rerun this test:`. For `make gds` it is a `make gds LIBRELANE_ARGS="--from ..."` that resumes at the failed step. The text of an error is not cut.

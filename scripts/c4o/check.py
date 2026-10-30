@@ -235,4 +235,4 @@ def cmd_check(args, config):
     for name in asked:
         common.log_info(f"Configuration verified for {SCOPES[name][0]}.")
     if "gds" in asked:
-        common.log_info("This step builds no layout. LibreLane does that.")
+        common.log_note("This step builds no layout. LibreLane does that.")

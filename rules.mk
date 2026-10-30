@@ -169,7 +169,9 @@ C4O_CMD := python3 $(ENTRYPOINT_SCRIPT)
 C4O_COCOTB = $(if $(or $(SEED),$(WAVES),$(TEST)),env $(strip $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)) $(if $(TEST),TEST=$(TEST)))) $(C4O_CMD)
 C4O_GATES = env $(strip PDK_ROOT=$(PDK_ROOT) $(if $(SEED),RANDOM_SEED=$(SEED)) $(if $(WAVES),WAVES=$(WAVES)) $(if $(TEST),TEST=$(TEST))) $(C4O_CMD)
 C4O_SITE := $(C4O_CMD)
-C4O_PDK := env PDK_ROOT=$(PDK_ROOT) $(C4O_CMD)
+C4O_PDK = env PDK_ROOT=$(PDK_ROOT) $(C4O_QUIET_ENV)$(C4O_CMD)
+C4O_QUIET_ENV = $(if $(C4O_QUIET),C4O_QUIET_INFO=1 )
+C4O_CMDQ = $(if $(C4O_QUIET),env C4O_QUIET_INFO=1 )$(C4O_CMD)
 C4O_FLOW := env LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) $(C4O_CMD)
 c4o_tool = $(1)
 C4O_INFO = env C4O_IMAGE=$(C4O_IMAGE) LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) C4O_RUNS_IN=image \
@@ -181,7 +183,9 @@ C4O_CMD := $(DOCKER_RUN) $(C4O_IMAGE)
 C4O_COCOTB = $(DOCKER_RUN) $(if $(wildcard $(PDK_ROOT)),-v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
 C4O_GATES = $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
 C4O_SITE := $(DOCKER_RUN) $(SITE_ENV) $(C4O_IMAGE)
-C4O_PDK := $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(C4O_IMAGE)
+C4O_PDK = $(DOCKER_RUN) -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks $(C4O_QUIET_ENV)$(C4O_IMAGE)
+C4O_QUIET_ENV = $(if $(C4O_QUIET),-e C4O_QUIET_INFO=1 )
+C4O_CMDQ = $(DOCKER_RUN) $(C4O_QUIET_ENV)$(C4O_IMAGE)
 C4O_FLOW := $(DOCKER_RUN) -e LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) $(C4O_IMAGE)
 c4o_tool = $(DOCKER_RUN) --entrypoint $(1) $(C4O_IMAGE)
 C4O_INFO = $(DOCKER_RUN) -e C4O_IMAGE=$(C4O_IMAGE) -e LIBRELANE_IMAGE=$(LIBRELANE_IMAGE) -e C4O_RUNS_IN=host \
@@ -191,6 +195,20 @@ C4O_INFO = $(DOCKER_RUN) -e C4O_IMAGE=$(C4O_IMAGE) -e LIBRELANE_IMAGE=$(LIBRELAN
 # recipe's own shell, where $(shell) would be asking about a pipe.
 C4O_LEDGER = $(DOCKER_RUN) $$T $(PROGRESS_ENV) $(strip $(if $(SEED),-e RANDOM_SEED=$(SEED)) $(if $(WAVES),-e WAVES=$(WAVES)) $(if $(TEST),-e TEST=$(TEST))) $(C4O_IMAGE)
 endif
+# What `make gds` and `make pdk` print is their own lines and the tools'. The
+# [INFO] lines of c4o-core that say what it is about to do -- the config it
+# loaded, the command it runs, the file it reads -- would be a second voice
+# above the progress ledger, so these targets set C4O_QUIET and c4o-core is
+# called with C4O_QUIET_INFO=1 (common.py). Warnings, errors and everything a
+# tool prints stay. They also stop echoing their commands. PROGRESS=raw is for
+# debugging and sets neither: it shows the commands and the whole [INFO] output.
+#
+# Set for the targets that use it, not here, so that `make report` and
+# `make check` on their own print what they always did. `make gds` hands it to
+# the `report` it runs, which is a make of its own and does not inherit it.
+pdk gds gds-flow: C4O_QUIET := $(if $(filter raw,$(C4O_PROGRESS)),,1)
+C4O_Q = $(if $(C4O_QUIET),@)
+
 # What `make info` cannot see from inside the image: the system make runs on and
 # its Docker. `=`, not `:=`, so that only `make info` asks Docker.
 INFO_OS = $(shell uname -sm)
@@ -222,7 +240,9 @@ sim:
 	@if [ -t 1 ]; then T=-t; else T=; fi; $(C4O_LEDGER) all
 	@echo
 	@echo "Next:"
-	@echo "  make gds    build the layout from this RTL (minutes; the first run also downloads the PDK, a few GB)"
+	@echo "  make gds"
+	@echo "      builds the chip layout. It takes minutes, and the first run also"
+	@echo "      downloads several GB."
 	@echo "  or change rtl/ or tb/ and run make sim again"
 
 # Two colons, so a repository can add lines for its own targets with a
@@ -304,12 +324,12 @@ schematic:
 	$(C4O_CMD) schematic
 
 pdk:
-	@echo "📦 Installing PDK (Sky130)..."
+	@echo "▸ Installing the Sky130 PDK. The first run downloads several GB."
 	@# Created here, not by the mount below: a bind mount of a path that does
 	@# not exist yet is made by the daemon and owned by root, which the
 	@# --user container then cannot write into.
-	mkdir -p $(PDK_ROOT)
-	$(C4O_PDK) pdk
+	$(C4O_Q)mkdir -p $(PDK_ROOT)
+	$(C4O_Q)$(C4O_PDK) pdk
 
 # --- Physical design, LibreLane as a sidecar container ---
 # 1. Stop unless a Docker daemon answers.
@@ -335,8 +355,9 @@ gds:
 		exit 1; \
 	fi
 
-	@echo "🟢 Validating config with c4o-core..."
-	$(C4O_CMD) check --for gds
+	@# Quiet: c4o-core prints this line itself, with its release.
+	@$(if $(C4O_QUIET),:,echo "▸ Checking config.yaml and the RTL")
+	$(C4O_Q)$(C4O_CMDQ) check --for gds
 
 	@# A run made from these inputs by this LibreLane image has nothing to redo: print its
 	@# report instead of waiting minutes for the same numbers. FORCE=1 reruns it,
@@ -344,17 +365,24 @@ gds:
 	@# What the run was made from is written by `stamp` below, after a whole
 	@# flow succeeded and not before.
 	@if $(if $(or $(FORCE),$(LIBRELANE_PARTIAL)),false,$(C4O_FLOW) fresh); then \
-		echo "🟢 LibreLane skipped: the inputs are unchanged since the last run. make gds FORCE=1 runs it again."; \
-		$(MAKE) --no-print-directory report; \
+		echo "▸ LibreLane skipped: the inputs are unchanged since the last run. make gds FORCE=1 runs it again."; \
+		$(MAKE) --no-print-directory report C4O_QUIET=$(C4O_QUIET); \
+		$(if $(filter raw,$(C4O_PROGRESS)),,if [ -f build/$(DESIGN_NAME).gds ]; then echo "  GDS         build/$(DESIGN_NAME).gds"; fi;) \
 	else \
 		$(MAKE) --no-print-directory gds-flow; \
 	fi
+	@# Say what comes after the layout, since a new user does not know. A failed
+	@# flow stops the recipe above, so this prints only after a layout.
+	@echo
+	@echo "Next:"
+	@echo "  make site"
+	@echo "      puts the results on one page: build/site/index.html"
+	@echo "  or push, and CI publishes the page when GitHub Pages is on"
 
 # The part of `make gds` that runs LibreLane.
 gds-flow:
-	$(MAKE) pdk
-	@echo "🟢 Running LibreLane..."
-	mkdir -p build
+	$(C4O_Q)$(MAKE) --no-print-directory pdk
+	$(C4O_Q)mkdir -p build
 	@# The run about to start is not the one that was stamped. A partial run or a
 	@# failed one leaves no stamp, so the next command says it cannot be checked.
 	@rm -f $(STAGES_RUN)/$(INPUTS_FILE)
@@ -362,7 +390,7 @@ gds-flow:
 	@# pull of a missing image (1.5 GB) would be minutes of silence. Pull it here,
 	@# in the open. A failed pull stops make.
 	@if ! docker image inspect $(LIBRELANE_IMAGE) >/dev/null 2>&1; then \
-		echo "🟢 Downloading the LibreLane image, 1.5 GB, first run only..."; \
+		echo "▸ Downloading the LibreLane image, 1.5 GB, first run only..."; \
 		docker pull $(LIBRELANE_IMAGE); \
 	fi
 ifeq ($(C4O_PROGRESS),raw)
@@ -408,20 +436,15 @@ endif
 
 	@# The flow just measured area, timing and power. Show them rather than
 	@# leaving them in a 300-key metrics.json under runs/.
-	@$(MAKE) --no-print-directory report
+	@$(MAKE) --no-print-directory report C4O_QUIET=$(C4O_QUIET)
 ifneq ($(C4O_PROGRESS),raw)
 	@echo "  GDS         build/$(DESIGN_NAME).gds"
 	@$(call C4O_STAGES,)
 endif
-	@# Say what comes after the layout, since a new user does not know.
-	@echo
-	@echo "Next:"
-	@echo "  make site   put the results on one page, build/site/index.html"
-	@echo "  or push, and CI publishes the page when GitHub Pages is on"
 
 # Reads runs/<tag>/final/metrics.json, which `make gds` leaves behind.
 report:
-	$(C4O_CMD) report
+	$(C4O_Q)$(C4O_CMDQ) report
 
 # build/site/index.html: the cocotb verdicts, timing, area, power, signoff and the
 # layout render, on one page. Shows whatever has been run so far.

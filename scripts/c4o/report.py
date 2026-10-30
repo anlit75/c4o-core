@@ -316,7 +316,7 @@ def report_rows(metrics, path):
     return rows
 
 def read_metrics(path):
-    common.log_info(f"Reading metrics from {path}")
+    common.log_note(f"Reading metrics from {path}")
     try:
         with open(path) as f:
             return json.load(f)
@@ -334,19 +334,94 @@ def cmd_report(args, config):
     is iterative, and LibreLane does not treat it as fatal either.
     """
     path = runs.find_metrics(getattr(args, "metrics", None), config)
-    rows = report_rows(read_metrics(path), path)
+    metrics = read_metrics(path)
+    rows = report_rows(metrics, path)
 
     if not rows:
         common.log_error(f"{path} carried none of the metrics this report reads.")
         sys.exit(1)
 
     label_width = max(len(label) for label, _ in rows)
+    design = common.config_get(config, 'DESIGN_NAME', 'design')
+    # Plain, not bold: the report runs in a container that has no terminal, and
+    # nothing else in it is styled, so bold would show on some paths and not others.
     print()
-    print(f"  {common.config_get(config, 'DESIGN_NAME', 'design')}")
+    print(f"  {verdict(design, metrics)}")
     print()
     for label, value in rows:
-        print(f"  {label.ljust(label_width)}   {value}")
+        for line in wrap_row(label, value, label_width, line_width()):
+            print(line)
     print()
+
+def line_width():
+    """80, or COLUMNS when the caller passed a usable one: the container has no terminal to ask."""
+    try:
+        return max(40, int(os.environ.get("COLUMNS", "")))
+    except ValueError:
+        return 80
+
+def wrap_row(label, value, label_width, width):
+    """
+    The lines of one report row. A value that does not fit breaks after a comma,
+    never inside a word, and the lines after the first start under the value.
+    A single item longer than the line stays whole.
+    """
+    indent = " " * (2 + label_width + 3)
+    items = value.split(", ")
+    lines = []
+    line = f"  {label.ljust(label_width)}   {items[0]}"
+    for item in items[1:]:
+        if len(line) + 2 + len(item) > width:
+            lines.append(line + ",")
+            line = indent + item
+        else:
+            line += ", " + item
+    lines.append(line)
+    return lines
+
+def verdict(design, metrics):
+    """
+    The line over the rows: the design's name and what matters about it. The
+    facts are the ones the rows below show, in their words, and only these
+    three: signoff, timing, lint warnings.
+
+    When all three are known and good it says so. When one fails it names the
+    ones that fail and nothing else. A value the metrics lack is left out and
+    never guessed; with nothing known it is the name alone.
+    """
+    bad, good = [], []
+
+    timing = []
+    for kind, slack_key, violation_key in (("setup", "timing__setup__ws", "timing__setup_vio__count"),
+                                           ("hold", "timing__hold__ws", "timing__hold_vio__count")):
+        slack, violations = metrics.get(slack_key), metrics.get(violation_key)
+        if not isinstance(violations, (int, float)):
+            continue
+        timing.append(violations == 0)
+        if violations:
+            bad.append(f"{kind} slack {slack:+.2f} ns ({violations} violations)"
+                       if isinstance(slack, (int, float)) else f"{violations} {kind} violations")
+    if len(timing) == 2 and all(timing):
+        good.append("timing met")
+
+    present = signoff_checks(metrics)
+    if present:
+        failed = [label for label, count, _, _ in present if count]
+        if failed:
+            # Not "not clean": a dirty report must never contain the word clean.
+            bad.append(f"signoff failed ({', '.join(failed)})")
+        else:
+            good.insert(0, "signoff clean")
+
+    warnings = metrics.get("design__lint_warning__count")
+    if isinstance(warnings, (int, float)):
+        if warnings:
+            bad.append(f"{warnings} lint warning" + ("" if warnings == 1 else "s"))
+        else:
+            good.append("no lint warnings")
+
+    facts = bad or good
+    return f"{design}: {', '.join(facts)}" if facts else design
 
 # Violations of the cell library's limits after routing. The bare key is the
 # worst over every corner; each corner has its own key with a suffix.
