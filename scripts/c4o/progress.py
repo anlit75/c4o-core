@@ -536,7 +536,7 @@ def failure_block(step, text, log):
             out += fail["message"]
             if fail["module"]:
                 seed = f"SEED={info['seed']} " if info["seed"] else ""
-                out.append(f"make cocotb {seed}TEST={fail['module']}.{fail['name']}")
+                out.append(f"rerun: make cocotb {seed}TEST={fail['module']}.{fail['name']}")
         out.append("")
         out.append(f"full output: {log} ({count_lines(log)} lines)")
         out.append("verdicts:    build/cocotb-results.xml")
