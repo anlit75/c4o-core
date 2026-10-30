@@ -5009,13 +5009,91 @@ class TestLedgerLines(unittest.TestCase):
         row = c4o.progress.stage_row(c4o.progress.Style("plain", {}), "ok", c4o.stages.STAGES[0], 12, 4.0, 200)
         self.assertNotIn(c4o.stages.STAGES[0].blurb, row)
 
+    def test_every_stage_has_a_short_blurb_of_48_characters_or_less(self):
+        for stage in c4o.stages.STAGES:
+            self.assertTrue(stage.short, stage.name)
+            self.assertLessEqual(len(stage.short), 48, stage.name)
+
+    def test_the_short_blurb_shows_at_80_and_99_columns_and_the_row_fits(self):
+        style = c4o.progress.Style("tty", {})
+        for stage in c4o.stages.STAGES:
+            for width in (80, 99):
+                row = self.visible([c4o.progress.stage_row(style, "ok", stage, 12, 4.0, width)])[0]
+                self.assertIn(stage.short, row, (stage.name, width))
+                self.assertLessEqual(len(row), width, (stage.name, width))
+
+    def test_the_long_blurb_stays_at_100_and_there_is_none_at_79(self):
+        style = c4o.progress.Style("tty", {})
+        stage = c4o.stages.STAGES[3]
+        at_100 = self.visible([c4o.progress.stage_row(style, "ok", stage, 4, 22.0, 100)])[0]
+        self.assertIn(stage.blurb, at_100)
+        self.assertLessEqual(len(at_100), 100)
+        at_79 = self.visible([c4o.progress.stage_row(style, "ok", stage, 4, 22.0, 79)])[0]
+        self.assertNotIn(stage.short, at_79)
+        self.assertNotIn(stage.blurb, at_79)
+
+    def test_a_short_blurb_that_does_not_fit_is_cut_with_an_ellipsis(self):
+        style = c4o.progress.Style("tty", {})
+        stage = c4o.stages.STAGES[0]._replace(short="x" * 80)
+        row = self.visible([c4o.progress.stage_row(style, "ok", stage, 4, 22.0, 80)])[0]
+        self.assertEqual(len(row), 80)
+        self.assertTrue(row.endswith("…"))
+
+    def test_plain_rows_carry_no_short_blurb_either(self):
+        row = c4o.progress.stage_row(c4o.progress.Style("plain", {}), "ok", c4o.stages.STAGES[2], 12, 4.0, 90)
+        self.assertNotIn(c4o.stages.STAGES[2].short, row)
+
+    def flow_head(self, width):
+        from types import SimpleNamespace as NS
+        style = c4o.progress.Style("tty", {})
+        step = NS(stage=2, slug="openroad-ioplacement", t0=0.0)
+        run = NS(steps=[step] * 3)
+        return self.visible(c4o.progress.flow_live(style, width, run, step, None, 0.2, 0.0, os.devnull))[0]
+
+    def test_the_live_row_says_stage_k_of_n_at_every_width(self):
+        for width in (60, 80, 99, 100, 120):
+            self.assertIn("stage 3 of 7", self.flow_head(width), width)
+            self.assertNotIn("3/7", self.flow_head(width), width)
+        self.assertIn("Placement · stage 3 of 7 · ", self.flow_head(80))
+
+    def cocotb_rows(self, lines, width=80, index=3):
+        from unittest.mock import MagicMock
+        style = c4o.progress.Style("tty", {})
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "cocotb.log")
+            with open(log, "w") as f:
+                f.write(lines)
+            return self.visible(c4o.progress.all_live_rows(style, width, "cocotb", index, 0.0, lambda: 7.0, log, 0.0))
+
+    def test_the_cocotb_bar_counts_tests_not_commands(self):
+        rows = self.cocotb_rows("running a (1/5)\nok\nrunning led_toggles (3/5)\n")
+        self.assertIn("test 3/5 led_toggles", rows[0])
+        self.assertIn("test 3/5 · 0:07 elapsed", rows[1])
+        self.assertNotIn("commands", rows[1])
+        self.assertEqual(rows[1].count("━") + rows[1].count("╸"), int((80 - 1 - 2 - len("  test 3/5 · 0:07 elapsed")) * 2 / 5))
+
+    def test_the_cocotb_bar_is_empty_at_test_1(self):
+        rows = self.cocotb_rows("running a (1/5)\n")
+        self.assertIn("test 1/5", rows[1])
+        self.assertNotIn("━", rows[1])
+
+    def test_before_the_first_running_line_the_bar_counts_commands(self):
+        rows = self.cocotb_rows("make: entering\n")
+        self.assertIn("4/4 commands · 0:07 elapsed", rows[1])
+
+    def test_other_steps_keep_the_command_count(self):
+        from unittest.mock import MagicMock
+        style = c4o.progress.Style("tty", {})
+        rows = self.visible(c4o.progress.all_live_rows(style, 80, "sim", 2, 0.0, lambda: 7.0, os.devnull, 0.0))
+        self.assertIn("3/4 commands · 0:07 elapsed", rows[1])
+
     def test_one_step_is_not_steps(self):
         row = c4o.progress.stage_row(c4o.progress.Style("plain", {}), "fail", c4o.stages.STAGES[2], 1, 0.2, 80)
         self.assertIn("1 step ", row)
         self.assertNotIn("1 steps", row)
 
     def head(self, style):
-        return [("  ▸ ", ), ("Routing", "bold"), ("  stage 5/7 · Detailed Routing (OpenROAD.DetailedRouting) · 3s in this step", )]
+        return [("  ▸ ", ), ("Routing", "bold"), ("  stage 5 of 7 · Detailed Routing (OpenROAD.DetailedRouting) · 3s in this step", )]
 
     def test_the_live_rows_at_120_columns(self):
         style = c4o.progress.Style("tty", {})
@@ -5027,7 +5105,7 @@ class TestLedgerLines(unittest.TestCase):
 
     def test_the_live_rows_at_80_columns_drop_the_id_not_the_bar(self):
         style = c4o.progress.Style("tty", {})
-        head = [("  ▸ ", ), ("Routing", "bold"), (" 5/7 · Detailed Routing · 3s", )]
+        head = [("  ▸ ", ), ("Routing", "bold"), (" · stage 5 of 7 · Detailed Routing · 3s", )]
         rows = self.visible(c4o.progress.live_rows(style, 80, head, 47, 76, "47/76 steps · 0:52 elapsed", "last"))
         self.assertEqual(len(rows), 3)
         self.assertNotIn("OpenROAD", rows[0])

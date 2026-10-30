@@ -154,14 +154,18 @@ def ledger_row(style, kind, name, text, name_width=7):
     return f"  {style.mark(kind)} {name.ljust(name_width)} {text}".rstrip()
 
 def stage_row(style, kind, stage, count, secs, width, extra=""):
-    """One stage of `make gds`, with its explanation when the terminal is wide."""
+    """One stage of `make gds`, with its explanation (short from 80 columns, whole from 100)."""
     name = stage.name.ljust(14)
     text = f"{count} {'step' if count == 1 else 'steps'}".ljust(10) + fmt_secs(secs).ljust(6)
     row = f"  {style.mark(kind)} {name}{text}"
     if extra:
         return (row + extra).rstrip()
+    # The mark carries colour codes that take no column; compose counts every character.
+    room = width + len(row) - vlen(row)
     if style.tty and width >= 100:
-        return compose(style, width, [(row, ), (stage.blurb, "dim")])
+        return compose(style, room, [(row, ), (stage.blurb, "dim")])
+    if style.tty and width >= 80:
+        return compose(style, room, [(row, ), (stage.short, "dim")])
     return row.rstrip()
 
 def live_rows(style, width, head, bar_done, bar_total, bar_label, last):
@@ -577,10 +581,12 @@ def all_live_rows(style, width, step, index, began, clock, log, t_start):
     now = clock()
     tests = re.findall(r"running (\S+) \((\d+)/(\d+)\)", "\n".join(tail_lines(log, 400))) if step == "cocotb" else []
     detail = f"{style.sep}test {tests[-1][1]}/{tests[-1][2]} {tests[-1][0]}" if tests else ""
+    done, total, count = index, len(ALL_STEPS), f"{index + 1}/{len(ALL_STEPS)} commands"
+    if tests:
+        done, total, count = int(tests[-1][1]) - 1, int(tests[-1][2]), f"test {tests[-1][1]}/{tests[-1][2]}"
     head = [(f"  {style.mark('run')} ", ), (step, "bold"), (f"{detail}{style.sep}{fmt_secs(now - began)}", )]
     last = last_output(log)
-    return live_rows(style, width, head, index, len(ALL_STEPS),
-                     f"{index + 1}/{len(ALL_STEPS)} commands{style.sep}{fmt_clock(now - t_start)} elapsed", last)
+    return live_rows(style, width, head, done, total, f"{count}{style.sep}{fmt_clock(now - t_start)} elapsed", last)
 
 # ---------------------------------------------------------------- make gds
 
@@ -908,11 +914,11 @@ def flow_live(style, width, run, step, plan, now, t_start, log):
     n = len(run.steps)
     if width >= 100:
         head = [(f"  {style.mark('run')} ", ), (stage.name, "bold"),
-                (f"  stage {step.stage + 1}/{len(stages.STAGES)}{style.sep}{title} ", ), (f"({ident})", "dim"),
+                (f"  stage {step.stage + 1} of {len(stages.STAGES)}{style.sep}{title} ", ), (f"({ident})", "dim"),
                 (f"{style.sep}{spent} in this step", )]
     else:
         head = [(f"  {style.mark('run')} ", ), (stage.name, "bold"),
-                (f" {step.stage + 1}/{len(stages.STAGES)}{style.sep}{title}{style.sep}{spent}", )]
+                (f"{style.sep}stage {step.stage + 1} of {len(stages.STAGES)}{style.sep}{title}{style.sep}{spent}", )]
     total = plan.total if plan else None
     label = (f"{n}/{total} steps" if total else f"step {n}") + f"{style.sep}{fmt_clock(now - t_start)} elapsed"
     last = last_output(log)
