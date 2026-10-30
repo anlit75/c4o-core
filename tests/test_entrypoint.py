@@ -5235,8 +5235,9 @@ class TestCocotbFailures(unittest.TestCase):
         # The Next: line is the one indented line, and it is ours.
         self.assertEqual([l for l in block if l.startswith(" ")],
                          ["  change rtl/ (or the test in tb/), then run make sim again"])
-        # This message has no assert line, so it is printed as it is.
-        self.assertIn("AssertionError: led is 1, model says 0: cycle 16387, rst was 0, model count 16384", block)
+        # This message has no assert line, and its prefix goes all the same.
+        self.assertIn("led is 1, model says 0: cycle 16387, rst was 0, model count 16384", block)
+        self.assertFalse(any(l.startswith("AssertionError") for l in block))
 
     def test_the_block_ends_with_the_log_a_conclusion_and_what_to_do_next(self):
         block, _ = self.failure_block(rtl_passed=True)
@@ -5301,8 +5302,9 @@ class TestCocotbFailures(unittest.TestCase):
         self.assertEqual(trim(["AssertionError: ", "assert 0 == 1"]), ["AssertionError: ", "assert 0 == 1"])
         # Another exception type: as it is.
         self.assertEqual(trim(["ValueError: bad", "assert 0 == 1"]), ["ValueError: bad", "assert 0 == 1"])
-        # No assert line: as it is.
-        self.assertEqual(trim(["AssertionError: q is low"]), ["AssertionError: q is low"])
+        # No assert line: the prefix still goes.
+        self.assertEqual(trim(["AssertionError: q is low"]), ["q is low"])
+        self.assertEqual(trim(["AssertionError: q is low", "detail"]), ["q is low", "detail"])
         self.assertEqual(trim([]), [])
 
     def test_the_row_counts_the_failed_of_the_total(self):

@@ -525,12 +525,11 @@ def trim_message(message):
     twice, once in words and once as the comparison. When the test wrote the
     words, print only those. Any other message is returned as it is.
     """
-    if message:
-        m = re.match(r"AssertionError:[ \t]*(\S.*)$", message[0])
-        cut = next((k for k, l in enumerate(message) if l.startswith("assert ")), None)
-        if m and cut is not None and cut > 0:
-            return [m.group(1)] + message[1:cut]
-    return message
+    m = re.match(r"AssertionError:[ \t]*(\S.*)$", message[0]) if message else None
+    if not m:
+        return message
+    cut = next((k for k, l in enumerate(message) if l.startswith("assert ")), len(message))
+    return [m.group(1)] + message[1:cut]
 
 def failure_block(step, text, log, rtl_passed=False, style=None):
     """
@@ -558,9 +557,8 @@ def failure_block(step, text, log, rtl_passed=False, style=None):
         out.append("")
         out.append(f"full log: {log} ({count_lines(log)} lines)")
         n = len(info["failures"])
-        conclusion = f"{n} of {info['total']} tests failed." if info["total"] else f"{n} tests failed."
-        if info["total"] == 0 and n == 1:
-            conclusion = "1 test failed."
+        # A failure comes from the results file, which also gives the total.
+        conclusion = f"{n} of {info['total']} tests failed."
         if rtl_passed:
             conclusion = "The Verilog compiles, but " + conclusion
         out.append("")
