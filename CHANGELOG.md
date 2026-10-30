@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.28.1](https://github.com/anlit75/c4o-core/compare/v2.28.0...v2.28.1) (2026-10-30)
+
+
+### Fixes
+
+* label the command under a failed test as rerun ([#120](https://github.com/anlit75/c4o-core/issues/120)) ([4d25d59](https://github.com/anlit75/c4o-core/commit/4d25d59cb0a7de2c1e49f0ab29791682f752901b))
+* set the Next: hint apart so a new user sees it ([#117](https://github.com/anlit75/c4o-core/issues/117)) ([f4b0880](https://github.com/anlit75/c4o-core/commit/f4b08802aac7325d9a2277fb9ed72f636a1311c5))
+* show the LibreLane image download on a first make gds ([#118](https://github.com/anlit75/c4o-core/issues/118)) ([a5833a5](https://github.com/anlit75/c4o-core/commit/a5833a59ffa8aa9251e94f7a7d62a260b3514b4f))
+
 ## [2.28.0](https://github.com/anlit75/c4o-core/compare/v2.27.2...v2.28.0) (2026-10-25)
 
 
