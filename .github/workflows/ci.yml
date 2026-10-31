@@ -1091,6 +1091,76 @@ jobs:
       - name: Physical design
         uses: ./c4o-core/actions/gds
 
+      # The caller is the ChipForAll template, so its guide is what these check.
+      # docs/guide.zh-TW.md tells a reader with negative slack to cat this exact
+      # glob. The path it used to give (runs/*/final/*.rpt) matched nothing,
+      # and the reader who needed it most got silence back. A documented path
+      # that nothing checks is a path that rots, so check it here.
+      - name: The timing report the guide tells you to read is where it says
+        run: |
+          shopt -s nullglob
+          rpts=(runs/*/*-openroad-stapostpnr/*ss_*/checks.rpt)
+          if [ ${#rpts[@]} -eq 0 ]; then
+            echo "Error: the guide points at runs/*/*-openroad-stapostpnr/*ss_*/checks.rpt,"
+            echo "and nothing is there. What the flow did write:"
+            find runs -name '*.rpt' 2>/dev/null | head -20
+            exit 1
+          fi
+          # Not just present: it has to be a timing report. Otherwise the guide sends
+          # the reader to the wrong file rather than to no file.
+          rpt="${rpts[0]}"
+          echo "--- $rpt ---"
+          grep -qF "slack" "$rpt" || {
+            echo "Error: $rpt names no slack -- that is not the timing report."
+            exit 1
+          }
+          head -30 "$rpt"
+
+          # Hold fails in the fast corner, so the guide gives a second command
+          # for it. That path is documented, so it is checked too. The run that
+          # added the listing below is where its name came from.
+          holds=(runs/*/*-openroad-stapostpnr/*ff_*/checks.rpt)
+          if [ ${#holds[@]} -eq 0 ]; then
+            echo "Error: the guide points a hold failure at"
+            echo "  runs/*/*-openroad-stapostpnr/*ff_*/checks.rpt"
+            echo "and nothing is there. The corners this run did produce:"
+            ls -d runs/*/*-openroad-stapostpnr/*/ 2>/dev/null
+            exit 1
+          fi
+          grep -qF "slack" "${holds[0]}" || {
+            echo "Error: ${holds[0]} names no slack -- that is not the timing report."
+            exit 1
+          }
+          echo "--- ${holds[0]} ---"
+          head -10 "${holds[0]}"
+
+          # And print every corner. The guide tells the reader that these globs match
+          # more than one file. It also says that picking the worst is up to the reader.
+          # So the count here is the evidence for that sentence.
+          corners=(runs/*/*-openroad-stapostpnr/*/)
+          echo "--- timing corners this run produced (${#corners[@]}) ---"
+          printf '%s\n' "${corners[@]}"
+
+      # The caller is the ChipForAll template, so its guide is what these check.
+      # docs/guide.md says reset timing is unanswered here. It also says that
+      # whether the flow checks recovery and removal at all depends on arcs in the cell
+      # library. blinky is an async-reset design, the corner reports are right
+      # here, and nobody has looked. Printed rather than asserted: this is how
+      # the next edit to that paragraph gets a fact instead of a hedge.
+      - name: What the corner reports say about reset timing
+        run: |
+          shopt -s nullglob
+          rpts=(runs/*/*-openroad-stapostpnr/*/checks.rpt)
+          echo "${#rpts[@]} corner report(s)"
+          hits=$(grep -ril -e recovery -e removal "${rpts[@]}" 2>/dev/null | wc -l)
+          echo "naming recovery or removal: $hits"
+          if [ "$hits" -gt 0 ]; then
+            grep -rih -A2 -e recovery -e removal "${rpts[@]}" | head -30
+          else
+            echo "None of them mention either check. Section headings present:"
+            grep -rhoE '^[a-z ]+(check|checks|slack)' "${rpts[0]}" | sort -u | head -20
+          fi
+
       # Coverage is asked for by name, as a caller's verify.yml does: this image
       # has the target, so the page has to have the section.
       - name: Report
@@ -1263,6 +1333,48 @@ jobs:
           # Not asserted: whether the real run wrote ir__drop__worst. The
           # line is printed so the log says what a real run gives.
           grep -o 'Static IR drop[^<]*' "$page" || echo "the page has no IR drop line: the run reported no ir__drop__worst"
+
+      # The caller is the ChipForAll template, so its guide is what this checks.
+      # docs/guide.md, "Iterating without re-running the whole flow", gives one
+      # command for resuming from floorplan. Nothing ran the command it used to
+      # give, and it had stopped working three separate ways with every other
+      # step here green. So run it. Then check what that section says:
+      #   - the resume needs the state file it names
+      #   - synthesis is not redone
+      #   - the resumed steps are added after the old ones
+      #
+      # Last among the flow steps, so a failure here does not hide theirs. It is
+      # also last so that the steps above read a run directory with one of each step.
+      #
+      # It runs on pull requests here too. The command is resolved by rules.mk,
+      # which is what a pull request to this repository changes.
+      - name: Resuming from floorplan works, as the guide says it does
+        run: |
+          shopt -s nullglob
+          netlists=(runs/*/*-yosys-synthesis/*.nl.v)
+          states=(runs/*/*-openroad-floorplan/state_in.json)
+          if [ ${#netlists[@]} -ne 1 ] || [ ${#states[@]} -ne 1 ]; then
+            echo "::error::Expected one synthesis step and one floorplan step under runs/ before resuming, found ${#netlists[@]} and ${#states[@]}. make gds did not start from an empty run."
+            exit 1
+          fi
+          before=$(stat -c %Y "${netlists[0]}")
+
+          make gds LIBRELANE_ARGS="--from OpenROAD.Floorplan --with-initial-state ${states[0]}"
+
+          after=$(stat -c %Y "${netlists[0]}")
+          synth=(runs/*/*-yosys-synthesis)
+          if [ "$before" != "$after" ] || [ ${#synth[@]} -ne 1 ]; then
+            echo "::error::The guide says resuming from floorplan does not redo synthesis. It was redone:"
+            ls -ld --time-style=full-iso "${synth[@]}" "${netlists[0]}"
+            exit 1
+          fi
+          floorplans=(runs/*/*-openroad-floorplan)
+          if [ ${#floorplans[@]} -ne 2 ]; then
+            echo "::error::The guide says the resumed steps are added after the old ones. Expected two floorplan directories, found ${#floorplans[@]}:"
+            printf '  %s\n' "${floorplans[@]}"
+            exit 1
+          fi
+          echo "  resumed from floorplan: synthesis kept, resumed steps added after the old ones"
 
       # Its schematic and layout artifact names are fixed; the other job here
       # uploads artifacts-docker-build, so nothing collides.
