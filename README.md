@@ -58,7 +58,7 @@ The Python entrypoint of the engine has these commands:
 | `gatesim` | Simulates the **synthesised netlist** with the PDK cell models, on `GATE_TESTS`. Without `GATE_TESTS`, it runs the `COCOTB_TESTS` on the netlist. |
 | `synth` | Runs logic synthesis with Yosys on `VERILOG_FILES` only. Writes `build/synthesis.json`. The script is fixed: see [docs/commands.md](docs/commands.md#synth-and-systemverilog-in-every-command). |
 | `schematic` | Draws the circuit as `build/schematic.svg`. It shows the RTL as written, not the synthesised netlist. |
-| `pdk` | Installs and enables the Sky130 PDK with Ciel, into `$PDK_ROOT`. Without `$PDK_ROOT`, it uses `./pdks`. |
+| `pdk` | Installs and enables the Sky130 PDK with Ciel, into `$PDK_ROOT`. Without `$PDK_ROOT`, it uses `./pdks`. It fetches only `sky130_fd_sc_hd`, the library the flow uses: 173 MB, not 376 MB. A PDK that is already complete is left as it is. |
 | `rtl` | Checks the RTL. It runs `check --for rtl`, an Icarus compile, `lint` and `synth`, in that order. Writes `build/rtl.vvp` and `build/synthesis.json`. |
 | `check` | Checks the configuration, values included. It builds nothing and runs no tool. `--for rtl`, `sim`, `regress`, `gatesim` or `gds` checks one part. Without `--for`, it checks every part that the config asks for. |
 | `report` | Prints a summary of the last LibreLane run: area, timing, power and the signoff result. |
@@ -126,6 +126,35 @@ Icarus makes each module that no other module instantiates a separate root, and 
 With only one testbench file, `//SIM_TOP` is optional.
 
 All other keys in the file belong to LibreLane. See its documentation for the full list.
+
+### The LibreLane workarounds
+
+The `config.yaml` of the ChipForAll template sets two LibreLane keys because of the tools in the LibreLane image. Keep both keys. Each one has a condition for its removal.
+
+**`LINTER_DISABLE_WARNINGS_BLACKBOX`**
+
+```yaml
+LINTER_DISABLE_WARNINGS_BLACKBOX: [UNDRIVEN, UNUSEDSIGNAL, TIMESCALEMOD]
+```
+
+LibreLane generates blackbox stubs for the PDK cells. The stubs have no timescale, so `TIMESCALEMOD` fires once for each cell. That is hundreds of warnings, and none of them come from your design. `UNDRIVEN` and `UNUSEDSIGNAL` are in LibreLane's default list for the same reason. The key replaces the default list, so it repeats them. Remove the key when the image no longer needs it.
+
+**`EXTRA_EXCLUDED_CELLS`**
+
+```yaml
+EXTRA_EXCLUDED_CELLS:
+  - sky130_fd_sc_hd__clkdlybuf4s*
+  - sky130_fd_sc_hd__dlygate4sd*
+  - sky130_fd_sc_hd__buf_1
+```
+
+The physical flow may not use the weakest buffers. When OpenROAD buffers a port or splits a net with too many loads, it takes the weakest buffer it finds and does not resize it. In `sky130_fd_sc_hd` that is a delay cell (`clkdlybuf4s25_1` or `dlygate4sd*`), because the PDK gives those the same footprint as `buf_1`, or `buf_1` itself. The repair step checks the slew against the wire load it estimates after placement. After routing, the wire load is about twice that, so in the `ss` corners the slew goes past the 0.75 ns limit. Without these cells, the weakest buffer is `buf_2`.
+
+With LibreLane 3.0.14, the `c4o-pyuvm` design went from 297 max slew violations to 9. The 16-bit blinky went from 11 to 0. Setup and hold still pass. Hold repair then uses plain buffers, so it adds more of them.
+
+The patterns are those of `sky130_fd_sc_hd`. LibreLane takes them as wildcards over the cells of the library in use, so another library matches none and nothing is excluded. Remove the key when OpenROAD closes [issue 10622](https://github.com/The-OpenROAD-Project/OpenROAD/issues/10622).
+
+A key in your `config.yaml` replaces the same key of LibreLane. A list is replaced whole. A list that you change has to repeat what you want to keep.
 
 ## 📦 Included Tools
 

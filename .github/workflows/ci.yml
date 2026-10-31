@@ -382,7 +382,7 @@ jobs:
       # testbench. The negative case matters more than the positive one: vvp
       # exits 0 even when every cocotb test failed, so without reading the
       # results file this would be green no matter what the tests did.
-      # gatesim needs a netlist and a 3GB PDK, neither of which this job has,
+      # gatesim needs a netlist and a PDK, neither of which this job has,
       # so what is checkable here is the interface: that it refuses clearly
       # rather than running something meaningless. ChipForAll exercises the
       # real thing, where a LibreLane run and the PDK both exist.
