@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.30.0](https://github.com/anlit75/c4o-core/compare/v2.29.0...v2.30.0) (2026-10-31)
+
+
+### Features
+
+* download only sky130_fd_sc_hd with the PDK ([#125](https://github.com/anlit75/c4o-core/issues/125)) ([02f6370](https://github.com/anlit75/c4o-core/commit/02f6370b65b28f72fbc4d9e6460f0f99a83cda99))
+
+
+### CI
+
+* check the ChipForAll guide's flow claims in actions-end-to-end ([#123](https://github.com/anlit75/c4o-core/issues/123)) ([78a4aa0](https://github.com/anlit75/c4o-core/commit/78a4aa0a38036a25891eca41b251e09fe10120d9))
+
 ## [2.29.0](https://github.com/anlit75/c4o-core/compare/v2.28.1...v2.29.0) (2026-10-30)
 
 
