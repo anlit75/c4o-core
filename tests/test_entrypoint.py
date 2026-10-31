@@ -2223,6 +2223,18 @@ class TestEntrypoint(unittest.TestCase):
         self.assertEqual(page.count("<svg"), 2 + 2 + 2)  # timing, area and instances, power
         self.assertEqual(self._section(page, "area").count("<svg"), 2)
 
+    def test_the_page_is_usable_without_a_pointer_or_with_reduced_motion(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site(self._rows(3))
+        self.assertIn("@media (prefers-reduced-motion: reduce)", page)
+        self.assertIn(":focus-visible", page)
+        # Every chart has its values as a table a screen reader reads, one row per commit.
+        self.assertEqual(page.count('<table class="sr-only">'), page.count("<svg"))
+        self.assertIn('<th scope="row">', self._section(page, "timing"))
+        # The nav marks where the reader is, and fades only while there is more to scroll to.
+        self.assertIn("aria-current", page)
+        self.assertNotIn("\nnav .wrap { mask-image", page)
+
     def test_a_chart_of_one_point_draws_without_dividing_by_zero(self):
         self.cwd_before = os.getcwd()
         page = self._history_site(self._rows(1))

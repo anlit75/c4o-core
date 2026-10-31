@@ -469,7 +469,8 @@ SH
 chmod +x "$work/bin/curl"
 pages_answer() {  # pages_answer <http code> <body>
   : > "$work/github-output"
-  (cd "$work" && PATH="$work/bin:$PATH" STUB_CODE="$1" STUB_BODY="$2" RUNNER_TEMP="$work" GH_TOKEN=x \
+  : > "$work/summary"
+  (cd "$work" && PATH="$work/bin:$PATH" STUB_CODE="$1" STUB_BODY="$2" RUNNER_TEMP="$work" GH_TOKEN=x GITHUB_STEP_SUMMARY="$work/summary" \
     GITHUB_API_URL=https://api.example GITHUB_REPOSITORY=o/r GITHUB_OUTPUT="$work/github-output" \
     bash "$actions/report/pages-setting.sh")
 }
@@ -482,6 +483,12 @@ expect 0 "pages setting: ... and publish=true" output_has "publish=true"
 expect 0 "pages setting: a branch build is a notice" pages_answer 200 '{"build_type": "legacy", "html_url": "https://o.github.io/r/"}'
 expect 1 "pages setting: ... that does not publish" output_has "publish=true"
 expect 1 "pages setting: ... and gives no address" output_has "url=https://o.github.io/r/"
+pages_notice() {  # pages_notice <http code>: the notice line the run prints
+  pages_answer "$1" '{}' | grep -qxF "::notice::GitHub Pages is off for this repository, so the results page was not published. Open https://github.com/o/r/settings/pages and set Source to GitHub Actions to publish it."
+}
+expect 0 "pages setting: Pages off prints the notice with the Settings > Pages link" pages_notice 404
+expect 0 "pages setting: ... and the job summary has the link" grep -qF "(https://github.com/o/r/settings/pages)" "$work/summary"
+expect 0 "pages setting: ... and a 404 does not fail the step" pages_answer 404 '{}'
 
 # --- report/history-fetch.sh ---------------------------------------------------
 # Against a real HTTP server, since the script is the way it calls curl: -L, the
