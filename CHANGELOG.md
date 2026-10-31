@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.31.0](https://github.com/anlit75/c4o-core/compare/v2.30.0...v2.31.0) (2026-10-31)
+
+
+### Features
+
+* quieter make sim, fixed rules file name, fewer aliases, download heartbeat, accessible results page ([#126](https://github.com/anlit75/c4o-core/issues/126)) ([8f6b2cf](https://github.com/anlit75/c4o-core/commit/8f6b2cf7c6862e06513c8f58e58a0c327d4f756c))
+
 ## [2.30.0](https://github.com/anlit75/c4o-core/compare/v2.29.0...v2.30.0) (2026-10-31)
 
 
