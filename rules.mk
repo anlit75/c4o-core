@@ -209,6 +209,23 @@ endif
 pdk gds gds-flow: C4O_QUIET := $(if $(filter raw,$(C4O_PROGRESS)),,1)
 C4O_Q = $(if $(C4O_QUIET),@)
 
+# `docker pull` and ciel print nothing while they download when their output is
+# not a terminal, and ciel's is never one here: rich draws its bars only on a
+# terminal. The first `make gds` would be minutes of silence. c4o_beat runs a
+# command and, every C4O_BEAT_EVERY seconds until it ends, prints a line saying
+# what is still going on. Elapsed time only: neither tool reports bytes in a
+# pipe, and the tarballs ciel fetches land in the container's /tmp.
+#
+#   $(C4O_BEAT) c4o_beat "what it is doing" <command...>
+#
+# The command runs in the foreground, so its status and Ctrl-C work as they did.
+# The ticker is the background part, and it is stopped when the command ends.
+C4O_BEAT_EVERY ?= 30
+C4O_BEAT = c4o_beat() { what=$$1; shift; \
+	( t=0; while sleep $(C4O_BEAT_EVERY); do t=$$((t + $(C4O_BEAT_EVERY))); echo "  ... still $$what ($$t s)"; done ) & tick=$$!; \
+	trap 'kill $$tick 2>/dev/null; exit 130' INT TERM; \
+	"$$@"; rc=$$?; kill $$tick 2>/dev/null; wait $$tick 2>/dev/null; return $$rc; }; \
+
 # What `make info` cannot see from inside the image: the system make runs on and
 # its Docker. `=`, not `:=`, so that only `make info` asks Docker.
 INFO_OS = $(shell uname -sm)
@@ -217,7 +234,7 @@ INFO_DOCKER = $(shell docker version --format '{{.Server.Version}}' 2>/dev/null)
 # What the ledger decides its mode from, passed on as the host has it.
 PROGRESS_ENV := -e C4O_PROGRESS=$(C4O_PROGRESS) -e NO_COLOR -e CI -e TERM -e GITHUB_ACTIONS
 
-.PHONY: check rtl sim regress gatesim schematic gds gds-flow pdk report site info clean distclean shell help all lint synth cocotb coverage
+.PHONY: check rtl sim regress gatesim schematic gds gds-flow pdk report site info clean distclean shell help cocotb coverage
 
 # The config and the files it names, for every part of the flow the config
 # asks for. No tool runs, so it takes a second. `make rtl`, `make sim` and
@@ -275,11 +292,10 @@ help::
 	@echo "  Re-run part of the flow after the first full one:"
 	@echo "    make gds LIBRELANE_ARGS=\"--from OpenROAD.Floorplan --with-initial-state <state_in.json>\""
 
-# The names these commands had. They stay, and each does what its new name
-# does. `cocotb` and `coverage` below are the exceptions: they keep their old
-# meaning, because the report action calls `make coverage`.
-all: sim
-lint synth: rtl
+# `cocotb` and `coverage` are not in `make help`, and they stay: a failed run
+# prints `make cocotb SEED=<n> TEST=<entry>` as the command that replays it,
+# and the report action calls `make coverage`. `all`, `lint` and `synth`, the
+# old names of `sim` and `rtl`, are gone.
 
 # The Python (cocotb) tests alone, without rtl and the Verilog testbenches. A
 # failed `make regress` run is replayed with it.
@@ -329,7 +345,7 @@ pdk:
 	@# not exist yet is made by the daemon and owned by root, which the
 	@# --user container then cannot write into.
 	$(C4O_Q)mkdir -p $(PDK_ROOT)
-	$(C4O_Q)$(C4O_PDK) pdk
+	$(C4O_Q)$(C4O_BEAT) c4o_beat "installing the Sky130 PDK" $(C4O_PDK) pdk
 
 # --- Physical design, LibreLane as a sidecar container ---
 # 1. Stop unless a Docker daemon answers.
@@ -388,10 +404,11 @@ gds-flow:
 	@rm -f $(STAGES_RUN)/$(INPUTS_FILE)
 	@# The plan below runs in the LibreLane image with stderr hidden, so docker's
 	@# pull of a missing image (1.5 GB) would be minutes of silence. Pull it here,
-	@# in the open. A failed pull stops make.
+	@# in the open, with a line every 30 s: docker pull -q prints nothing until it
+	@# is done, and its own bars would be a mess in a CI log. A failed pull stops make.
 	@if ! docker image inspect $(LIBRELANE_IMAGE) >/dev/null 2>&1; then \
 		echo "▸ Downloading the LibreLane image, 1.5 GB, first run only..."; \
-		docker pull $(LIBRELANE_IMAGE); \
+		$(C4O_BEAT) c4o_beat "downloading the LibreLane image" sh -c 'docker pull -q "$$0" >/dev/null' $(LIBRELANE_IMAGE) || exit 1; \
 	fi
 ifeq ($(C4O_PROGRESS),raw)
 	$(LIBRELANE_RUN) || { code=$$?; $(call C4O_STAGES,--quiet); exit $$code; }

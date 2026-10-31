@@ -410,14 +410,25 @@ def skip_reason(log_text, command):
     return f"skipped: {m.group(1)}" if m else None
 
 def error_lines(log_text):
-    return [l for l in log_text.splitlines() if l.startswith("[ERROR]")]
+    """The [ERROR] lines, each with the indented lines right under it (the failed tests)."""
+    out, under = [], False
+    for l in log_text.splitlines():
+        if l.startswith("[ERROR]"):
+            out.append(l)
+            under = True
+        elif under and l.startswith("  ") and l.strip():
+            out.append(l)
+        else:
+            under = False
+    return out
 
 def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sleep=time.sleep):
     """
     rtl, check, sim and cocotb in this order, each as the command it is on its
     own, with its output in build/log/<command>.log. Returns the exit status of
     the first that failed, or 0. A kind of test that is not configured says so
-    and counts as passed. Neither kind configured is `check`'s error.
+    and counts as passed, with no row of its own. Neither kind configured is
+    `check`'s error.
     """
     env = dict(os.environ if env is None else env)
     out = out or sys.stdout
@@ -458,7 +469,10 @@ def run_all(entry, design, version, env=None, out=None, clock=time.monotonic, sl
                 failed = (step, index, proc.returncode, text, log)
                 break
             kind, line = summarize_step(step, text, spent, style)
-            live.commit(ledger_row(style, kind, name, line))
+            # A kind of test the config does not list is not news: the user
+            # never asked for it, so there is no row to say it did not run.
+            if kind != "skip":
+                live.commit(ledger_row(style, kind, name, line))
         live.close()
     except BaseException:
         live.close()

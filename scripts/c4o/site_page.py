@@ -29,6 +29,15 @@ CSS = """
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; scroll-padding-top: 64px; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A link inside a line of grey text is told apart by colour alone otherwise, at 1.2:1 against the text. */
+.files a, .hint a, section > p a, footer a { text-decoration: underline; text-underline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+           clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 body { background: var(--bg); color: var(--fg); margin: 0;
        font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
 .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
@@ -50,6 +59,8 @@ nav { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom
 nav .wrap { display: flex; gap: 4px; overflow-x: auto; padding-top: 8px; padding-bottom: 8px; }
 nav a { flex: none; padding: 4px 10px; border-radius: 6px; color: var(--muted); font-size: 14px; }
 nav a:hover { background: var(--card); color: var(--fg); text-decoration: none; }
+nav a:focus-visible { outline-offset: -2px; background: var(--card); color: var(--fg); }
+nav a[aria-current] { background: var(--card); color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent); }
 main.wrap { padding-top: 32px; padding-bottom: 8px; }
 section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
           padding: 24px 28px; margin: 0 0 20px; }
@@ -135,7 +146,8 @@ header.has-art .hero { grid-template-columns: minmax(0, 1fr) minmax(280px, 400px
 .hero-art img { display: block; width: 100%; height: auto; max-height: min(70vh, 560px); object-fit: contain; }
 .hero-art figcaption { margin-top: 8px; font-size: 13px; color: var(--muted); text-align: center;
                        font-variant-numeric: tabular-nums; }
-nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
+/* The fade says "more this way", so NAV_JS adds it only while there is more: otherwise it dims the last item. */
+nav .wrap.more { mask-image: linear-gradient(90deg, #000 88%, transparent); }
 @media (prefers-color-scheme: dark) {
   .hero-art a { filter: brightness(.88); }
 }
@@ -153,7 +165,7 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
   table.power td:nth-child(3), table.power th:nth-child(3),
   table.power td:nth-child(4), table.power th:nth-child(4) { display: none; }
   table.tests th:not(:first-child), table.tests td:not(:first-child) { width: 56px; }
-  th { letter-spacing: .02em; font-size: 11px; } th, td { padding-right: 8px; }
+  th { letter-spacing: .02em; font-size: 12px; } th, td { padding-right: 8px; }
   td.bar, th.bar { width: 60px; } }
 @media (max-width: 360px) { .kpi.coverage .stat .value { font-size: 17px; } }
 /* History: small charts, two to a row. A lone chart fills one column, as wide as one of two. */
@@ -189,6 +201,7 @@ nav .wrap { mask-image: linear-gradient(90deg, #000 88%, transparent); }
 .hist svg polygon, .hist svg rect.seg-ff, .hist svg rect.seg-logic, .hist svg rect.seg-flow,
 .hist svg rect.seg-synthesis { stroke: var(--card); stroke-width: .6; }
 .hist svg rect.hit { fill: transparent; }
+.hist svg[data-hover]:focus-visible { outline-offset: 4px; border-radius: 4px; }
 .files .of { font-variant-numeric: tabular-nums; }
 /* How it was built: one picture, and a list of the stages: the seconds it took, the open one explained. */
 .built { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 24px; align-items: start; }
@@ -293,10 +306,14 @@ document.querySelectorAll('.hist svg[data-hover]').forEach(function (svg) {
   guide.style.display = 'none'; svg.appendChild(guide);
   tip.className = 'hist-tip'; tip.hidden = true; card.appendChild(tip);
   function hide() { guide.style.display = 'none'; tip.hidden = true; }
+  var now = points.length - 1;
   function show(e) {
     var p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
     var at = p.matrixTransform(svg.getScreenCTM().inverse()).x, best = points[0];
     points.forEach(function (q) { if (Math.abs(q.x - at) < Math.abs(best.x - at)) best = q; });
+    now = points.indexOf(best); showPoint(best);
+  }
+  function showPoint(best) {
     guide.setAttribute('x1', best.x); guide.setAttribute('x2', best.x); guide.style.display = '';
     tip.textContent = '';
     var head = document.createElement('div'); head.className = 'h'; head.textContent = best.head; tip.appendChild(head);
@@ -309,10 +326,35 @@ document.querySelectorAll('.hist svg[data-hover]').forEach(function (svg) {
     tip.style.left = Math.max(0, Math.min(gx - tip.offsetWidth / 2, card.clientWidth - tip.offsetWidth)) + 'px';
     tip.style.top = Math.max(0, box.top - from.top - tip.offsetHeight - 4) + 'px';
   }
+  // The keyboard: Tab to the chart, then the arrows walk the commits. The values are also in a table for a reader.
+  svg.tabIndex = 0;
+  svg.addEventListener('focus', function () { showPoint(points[now]); });
+  svg.addEventListener('blur', hide);
+  svg.addEventListener('keydown', function (e) {
+    var to = {ArrowLeft: now - 1, ArrowRight: now + 1, Home: 0, End: points.length - 1}[e.key];
+    if (to === undefined || e.altKey || e.ctrlKey || e.metaKey) return;
+    e.preventDefault();
+    now = Math.max(0, Math.min(points.length - 1, to)); showPoint(points[now]);
+  });
   svg.addEventListener('pointermove', show);
   svg.addEventListener('pointerdown', show);
   svg.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') hide(); });
   document.addEventListener('pointerdown', function (e) { if (!svg.contains(e.target)) hide(); });
+});
+"""
+
+NAV_JS = """
+document.querySelectorAll('nav').forEach(function (nav) {
+  var box = nav.querySelector('.wrap'), links = [].slice.call(nav.querySelectorAll('a')),
+      sections = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); });
+  function update() {
+    var at = 0;
+    sections.forEach(function (s, i) { if (s && s.getBoundingClientRect().top <= 96) at = i; });
+    links.forEach(function (a, i) { if (i === at) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); });
+    box.classList.toggle('more', box.scrollLeft + box.clientWidth < box.scrollWidth - 1);
+  }
+  addEventListener('scroll', update, {passive: true}); addEventListener('resize', update);
+  box.addEventListener('scroll', update, {passive: true}); update();
 });
 """
 
@@ -835,7 +877,7 @@ def coverage_section(coverage, cocotb_runs=(), regression=None):
     out = ("<h2>Coverage</h2>" + source
            +
            '<div class="scroll"><table class="coverage"><tr><th>kind</th><th class="num">covered</th>'
-           f'<th class="num">share</th><th class="bar"></th></tr>{rows}</table></div>')
+           f'<th class="num">share</th><th class="bar"><span class="sr-only">bar</span></th></tr>{rows}</table></div>')
     out += ('<p class="hint">Not measured: expression and FSM coverage. '
             "The Verilator in the image does not support them.</p>")
 
@@ -993,6 +1035,16 @@ def hist_hover(svg_tag, rows, x, entries):
     return (svg_tag[:4] + f' data-hover="{data}" data-plot="{HIST_TOP - 4},{HIST_H - HIST_BOTTOM}"'
             + svg_tag[4:])
 
+def hist_table(rows, entries, label):
+    """
+    The chart's values as a table only a screen reader sees: the chart is one
+    image to it, and a keyboard cannot reach the <title> of a point.
+    """
+    body = "".join(f"<tr><th scope=\"row\">{html.escape(hist_head(rows[i]))}</th><td>{html.escape('; '.join(lines))}</td></tr>"
+                   for i, lines in entries)
+    return (f'<table class="sr-only"><caption>{html.escape(label)} by commit</caption>'
+            f'<thead><tr><th scope="col">Commit</th><th scope="col">Value</th></tr></thead><tbody>{body}</tbody></table>')
+
 def hist_scale(columns, floor=None, ceil=None, include_zero=False):
     """
     Where a value lands in a chart of one or more columns, as
@@ -1119,7 +1171,7 @@ def hist_line_chart(rows, series, hover, axis, label, floor=None, ceil=None, zer
                 said = f"{name} {hover(v)}" if len(series) > 1 else hover(v)
                 out.append(f'<circle cx="{x(i):.1f}" cy="{y(v):.1f}" r="2.2" class="{cls}">'
                            f'<title>{html.escape(hist_sha(rows[i]))}: {html.escape(said)}</title></circle>')
-    out.append(hist_ends(rows, scale) + "</svg>")
+    out.append(hist_ends(rows, scale) + "</svg>" + hist_table(rows, entries, label))
     return "".join(out)
 
 def hist_stack_chart(rows, layers, hover, axis, label):
@@ -1151,9 +1203,9 @@ def hist_stack_chart(rows, layers, hover, axis, label):
                 out.append(f'<rect x="{x(i) - 3:.1f}" y="{y(above[i]):.1f}" width="6" '
                            f'height="{y(below[i]) - y(above[i]):.1f}" class="{cls}"/>')
         below = [b if a is None else a for a, b in zip(above, below)]
-    out[0] = hist_hover(out[0], rows, x, [
-        (i, [f"{name} {hover(values[i])}" for _, name, values in layers] + [f"total {hover(totals[i])}"])
-        for i in range(count) if totals[i] is not None])
+    entries = [(i, [f"{name} {hover(values[i])}" for _, name, values in layers] + [f"total {hover(totals[i])}"])
+               for i in range(count) if totals[i] is not None]
+    out[0] = hist_hover(out[0], rows, x, entries)
     width = max(2.0, min(8.0, (HIST_W - HIST_LEFT - HIST_RIGHT) / max(last - first, 1)))
     for i in range(count):
         if totals[i] is not None:
@@ -1162,7 +1214,7 @@ def hist_stack_chart(rows, layers, hover, axis, label):
                        f'height="{HIST_H - HIST_TOP - HIST_BOTTOM}" class="hit"><title>'
                        f'{html.escape(hist_sha(rows[i]))}: {html.escape(parts)} (total {html.escape(hover(totals[i]))})'
                        "</title></rect>")
-    out.append(hist_ends(rows, scale) + "</svg>")
+    out.append(hist_ends(rows, scale) + "</svg>" + hist_table(rows, entries, label))
     return "".join(out)
 
 def hist_card(title, unit, items, svg):
@@ -1440,7 +1492,7 @@ def render(design, numbers, layout, cocotb_runs, env,
             "It does not measure a workload.</p>"
             '<div class="scroll"><table class="power"><tr><th>group</th><th class="num">internal</th>'
             '<th class="num">switching</th><th class="num">leakage</th>'
-            '<th class="num">total</th><th class="num">share</th><th class="bar"></th></tr>' + "".join(
+            '<th class="num">total</th><th class="num">share</th><th class="bar"><span class="sr-only">bar</span></th></tr>' + "".join(
                 ('<tr class="total">' if group == "Total" else "<tr>") + f'<td>{esc(group)}</td>'
                 f'<td class="num">{uw(i)}</td><td class="num">{uw(sw)}</td>'
                 f'<td class="num">{uw(lk)}</td><td class="num">{uw(t)}</td>'
@@ -1559,5 +1611,6 @@ def render(design, numbers, layout, cocotb_runs, env,
         + (f"<script>{GDS_VIEWER_JS}</script>" if "data-viewer=" in actions else "")
         + (f"<script>{STAGES_JS}</script>" if how_built else "")
         + (f"<script>{HIST_JS}</script>" if any("data-hover=" in markup for _, _, markup in parts) else "")
+        + (f"<script>{NAV_JS}</script>" if len(parts) > 1 else "")
         + "</body></html>\n"
     )

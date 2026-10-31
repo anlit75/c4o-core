@@ -60,15 +60,17 @@ else
 fi
 copied=$(ls "$host"/.c4o/*.mk 2>/dev/null | wc -l)
 [ "$copied" -eq 1 ] && ok "host: one rules file in .c4o/" || fail "host: $copied rules files in .c4o/, expected 1"
-id=$(docker image inspect -f '{{.Id}}' "$image" | sed 's/sha256://')
-[ -f "$host/.c4o/$id.mk" ] && ok "host: named after the image id" || fail "host: no .c4o/$id.mk" "$(ls "$host/.c4o")"
-cmp -s "$host/.c4o/$id.mk" "$repo/rules.mk" && ok "host: it is this checkout's rules.mk" \
+id=$(docker image inspect -f '{{.Id}}' "$image")
+[ -f "$host/.c4o/rules.mk" ] && ok "host: the rules file has a fixed name" || fail "host: no .c4o/rules.mk" "$(ls "$host/.c4o")"
+[ "$(cat "$host/.c4o/image-id" 2>/dev/null)" = "$id" ] && ok "host: .c4o/image-id is the image's id" \
+  || fail "host: .c4o/image-id is not the image's id" "$(cat "$host/.c4o/image-id" 2>/dev/null)"
+cmp -s "$host/.c4o/rules.mk" "$repo/rules.mk" && ok "host: it is this checkout's rules.mk" \
   || fail "host: the copied rules differ from rules.mk. Does '$image' carry this checkout?"
 
-before=$(stat -c %Y "$host/.c4o/$id.mk")
+before=$(stat -c %Y "$host/.c4o/rules.mk")
 sleep 1
 check "host: a second make" 0 "$image rtl" in_repo "$host" make -n rtl
-[ "$(stat -c %Y "$host/.c4o/$id.mk")" = "$before" ] && ok "host: ... does not copy the rules again" \
+[ "$(stat -c %Y "$host/.c4o/rules.mk")" = "$before" ] && ok "host: ... does not copy the rules again" \
   || fail "host: the rules were copied again on the second make"
 
 check "host: make help" 0 "Available targets:" in_repo "$host" make help
@@ -76,7 +78,7 @@ check "host: make help" 0 "Available targets:" in_repo "$host" make help
 for t in check rtl sim regress gatesim gds; do
   check "host: make help lists $t" 0 "make $t " in_repo "$host" make help
 done
-for t in all lint synth coverage cocotb; do
+for t in coverage cocotb; do
   out=$(in_repo "$host" make help 2>&1)
   if grep -qE "^  make $t( |$)" <<<"$out"; then fail "host: make help lists the alias $t" "$out"; else ok "host: make help leaves out the alias $t"; fi
 done
@@ -171,13 +173,11 @@ rmdir "$host/pdks"
 # sim is the ledger: rtl, the config of the tests, then each kind the config lists.
 # The kinds that are not configured are skipped inside it, so make passes no flag.
 check "host: sim is one container that prints the ledger" 0 "$image all" in_repo "$host" make -n sim
-check "host: all is sim" 0 "$image all" in_repo "$host" make -n all
+for t in all lint synth; do
+  check "host: make $t is gone" fail "No rule to make target" in_repo "$host" make -n $t
+done
 out=$(in_repo "$host" make -n sim 2>&1)
 if grep -qF -- "--if-configured" <<<"$out"; then fail "host: make sim passes no --if-configured" "$out"; else ok "host: make sim passes no --if-configured"; fi
-check "host: lint is rtl" 0 "$image rtl" in_repo "$host" make -n lint
-check "host: synth is rtl" 0 "$image rtl" in_repo "$host" make -n synth
-out=$(in_repo "$host" make -n lint synth 2>&1)
-if [ "$(grep -c "$image rtl" <<<"$out")" -eq 1 ]; then ok "host: lint and synth together run rtl once"; else fail "host: make lint synth should run rtl once" "$out"; fi
 check "host: rtl runs the rtl command" 0 "$image rtl" in_repo "$host" make -n rtl
 check "host: check runs the check command" 0 "$image check" in_repo "$host" make -n check
 out=$(in_repo "$host" make -n cocotb 2>&1)
@@ -187,7 +187,7 @@ else
   fail "host: make cocotb should run '$image cocotb' and not pass --if-configured" "$out"
 fi
 
-# The progress ledger: make all and make gds print one line for each command or
+# The progress ledger: make sim and make gds print one line for each command or
 # stage, with the tools' own output in build/log/. Only those two.
 out=$(in_repo "$host" make -n sim 2>&1)
 if grep -qF "$image all" <<<"$out" && ! grep -qE "$image (rtl|check|sim|cocotb)" <<<"$out"; then
@@ -199,13 +199,13 @@ check "host: PROGRESS=raw reaches the ledger, which streams the tools" 0 "-e C4O
 out=$(C4O_PROGRESS=raw in_repo "$host" make -n sim 2>&1)
 if grep -qF -- "-e C4O_PROGRESS=raw" <<<"$out"; then ok "host: C4O_PROGRESS=raw in the environment is PROGRESS=raw"
 else fail "host: C4O_PROGRESS=raw in the environment did not reach the ledger" "$out"; fi
-check "host: PROGRESS reaches the container as C4O_PROGRESS" 0 "-e C4O_PROGRESS=plain" in_repo "$host" make -n all PROGRESS=plain
+check "host: PROGRESS reaches the container as C4O_PROGRESS" 0 "-e C4O_PROGRESS=plain" in_repo "$host" make -n sim PROGRESS=plain
 check "host: the terminal's own variables reach the container" 0 "-e NO_COLOR -e CI -e TERM -e GITHUB_ACTIONS" in_repo "$host" make -n sim
 check "host: the container gets -t when make's output is a terminal" 0 'if [ -t 1 ]; then T=-t; else T=; fi' in_repo "$host" make -n sim
 check "host: SEED reaches the ledger run" 0 "-e RANDOM_SEED=7" in_repo "$host" make -n sim SEED=7
 check "host: TEST reaches the ledger run" 0 "-e TEST=test_a" in_repo "$host" make -n sim TEST=test_a
 check "host: WAVES reaches the ledger run" 0 "-e WAVES=1" in_repo "$host" make -n sim WAVES=1
-for t in check rtl lint synth cocotb regress coverage gatesim; do
+for t in check rtl cocotb regress coverage gatesim; do
   out=$(in_repo "$host" make -n $t 2>&1)
   if grep -qF "C4O_PROGRESS" <<<"$out"; then fail "host: make $t must not start the ledger" "$out"; else ok "host: make $t prints what it always did"; fi
 done
@@ -302,7 +302,7 @@ SHIM
 chmod +x "$shim/docker"
 fake="$work/fake"
 new_repo "$fake" "$image"
-in_repo "$fake" make -n lint >/dev/null 2>&1      # the rules are copied out of the image before the stand-in is used
+in_repo "$fake" make -n rtl >/dev/null 2>&1      # the rules are copied out of the image before the stand-in is used
 : > "$work/docker-calls"
 out=$(cd "$fake" && PATH="$shim:$PATH" make gds 2>&1)
 got=$?
@@ -396,9 +396,9 @@ for mode in plain raw; do
     fi
   done
 done
-# make all: a terminal for the container exactly when make's output is one.
+# make sim: a terminal for the container exactly when make's output is one.
 : > "$work/docker-calls"
-(cd "$fake" && PATH="$shim:$PATH" make all >/dev/null 2>&1)
+(cd "$fake" && PATH="$shim:$PATH" make sim >/dev/null 2>&1)
 if grep -qE "$image all" "$work/docker-calls" && ! grep -E "$image all" "$work/docker-calls" | grep -qE " -t "; then
   ok "all: not a terminal, no -t"
 else
@@ -406,7 +406,7 @@ else
 fi
 if command -v script >/dev/null 2>&1; then
   : > "$work/docker-calls"
-  (cd "$fake" && PATH="$shim:$PATH" script -qec "make all" /dev/null >/dev/null 2>&1)
+  (cd "$fake" && PATH="$shim:$PATH" script -qec "make sim" /dev/null >/dev/null 2>&1)
   if grep -E "$image all" "$work/docker-calls" | grep -qE " -t "; then
     ok "all: a terminal gets -t"
   else
@@ -436,9 +436,8 @@ fi
 # The last line of a target says what to run next. -n prints the echo, so the
 # hint shows without running anything.
 check "host: make sim points to make gds" 0 "      builds the chip layout" in_repo "$host" make -n sim
-check "host: make all points to make gds" 0 "      builds the chip layout" in_repo "$host" make -n all
-out=$(in_repo "$host" make -n all 2>&1)
-if [ "$(grep -c 'Next:' <<<"$out")" -eq 1 ]; then ok "host: make all says what comes next once"; else fail "host: make all should print one Next: hint" "$out"; fi
+out=$(in_repo "$host" make -n sim 2>&1)
+if [ "$(grep -c 'Next:' <<<"$out")" -eq 1 ]; then ok "host: make sim says what comes next once"; else fail "host: make sim should print one Next: hint" "$out"; fi
 check "host: make gds points to make site" 0 "  make site" in_repo "$host" make -n gds
 out=$(in_repo "$host" make -n gds 2>&1)
 if [[ "$(tail -n 1 <<<"$out")" == *'echo "  or push, and CI publishes the page when GitHub Pages is on"'* ]]; then
@@ -479,7 +478,7 @@ fi
 out=$(in_repo "$host" make -n gds-flow 2>&1)
 pull_line=$(grep -n 'docker image inspect' <<<"$out" | head -1 | cut -d: -f1)
 plan_line=$(grep -n 'gating_config_vars' <<<"$out" | head -1 | cut -d: -f1)
-if grep -qE 'docker pull ghcr\.io/' <<<"$out"; then
+if grep -qE 'docker pull -q "\$0"' <<<"$out" && grep -qE "c4o_beat \"downloading the LibreLane image\" sh -c .* ghcr\.io/librelane" <<<"$out"; then
   ok "host: make gds-flow pulls the LibreLane image when it is missing"
 else
   fail "host: make gds-flow should docker pull the LibreLane image when it is missing" "$out"
@@ -558,7 +557,7 @@ inside="$work/inside"
 new_repo "$inside" "$image"
 chmod -R a+rwX "$inside"
 dmake() { docker run --rm -v "$inside:/w" -w /w --entrypoint make "$image" "$@"; }
-check "inside: commands call the entrypoint directly" 0 "python3 /opt/c4o-core/scripts/entrypoint.py rtl" dmake -n lint
+check "inside: commands call the entrypoint directly" 0 "python3 /opt/c4o-core/scripts/entrypoint.py rtl" dmake -n rtl
 check "inside: check is the entrypoint's check" 0 "python3 /opt/c4o-core/scripts/entrypoint.py check" dmake -n check
 check "inside: gds checks its own scope first" 0 "python3 /opt/c4o-core/scripts/entrypoint.py check --for gds" dmake -n gds
 check "inside: gatesim gets the PDK_ROOT of make" 0 "env PDK_ROOT=/w/pdks RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py gatesim" dmake -n gatesim SEED=7
@@ -570,9 +569,9 @@ check "inside: TEST reaches the entrypoint" 0 "env TEST=test_a.f python3 /opt/c4
 check "inside: SEED, WAVES and TEST reach the entrypoint" 0 "env RANDOM_SEED=7 WAVES=1 TEST=test_a python3 /opt/c4o-core/scripts/entrypoint.py cocotb" \
   dmake -n cocotb SEED=7 WAVES=1 TEST=test_a
 check "inside: SEED reaches regress" 0 "env RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py regress --coverage" dmake -n regress SEED=7
-check "inside: all is the ledger, called directly" 0 "env C4O_PROGRESS= python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all
-check "inside: PROGRESS reaches the entrypoint" 0 "env C4O_PROGRESS=plain python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all PROGRESS=plain
-check "inside: SEED reaches the ledger run" 0 "env C4O_PROGRESS= RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n all SEED=7
+check "inside: all is the ledger, called directly" 0 "env C4O_PROGRESS= python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n sim
+check "inside: PROGRESS reaches the entrypoint" 0 "env C4O_PROGRESS=plain python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n sim PROGRESS=plain
+check "inside: SEED reaches the ledger run" 0 "env C4O_PROGRESS= RANDOM_SEED=7 python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n sim SEED=7
 check "inside: PROGRESS=raw reaches the ledger" 0 "env C4O_PROGRESS=raw python3 /opt/c4o-core/scripts/entrypoint.py all" dmake -n sim PROGRESS=raw
 check "inside: gds follows the run with the entrypoint, not a second container" 0 "python3 /opt/c4o-core/scripts/entrypoint.py progress --run-dir runs/demo_run" dmake -n gds
 check "inside: coverage calls the entrypoint's coverage" 0 "python3 /opt/c4o-core/scripts/entrypoint.py coverage" dmake -n coverage
@@ -588,29 +587,55 @@ out=$(dmake -n ral 2>&1)
 if grep -qxF "peakrdl pyuvm regs/x.rdl" <<<"$out"; then ok "inside: c4o_tool is the tool itself"
 else fail "inside: c4o_tool should be the bare tool" "$out"; fi
 
+# --- a line while a long download runs -----------------------------------------
+# c4o_beat is what the first make gds uses around docker pull and ciel.
+beat="$work/beat"
+new_repo "$beat" "$image"
+cat >> "$beat/Makefile" <<'MAKEFILE'
+slow:
+	@$(C4O_BEAT) c4o_beat "waiting" sh -c 'sleep 3; exit $$0' 5
+MAKEFILE
+out=$(cd "$beat" && make slow C4O_BEAT_EVERY=1 2>&1); code=$?
+if [ "$code" -ne 0 ] && grep -qF "Error 5" <<<"$out"; then ok "beat: the command's exit status comes through"; else fail "beat: expected make to fail with Error 5" "$out"; fi
+if [ "$(grep -c '^  \.\.\. still waiting (' <<<"$out")" -ge 2 ]; then ok "beat: a line for each interval while it runs"; else fail "beat: expected two lines or more" "$out"; fi
+out=$(cd "$beat" && make slow C4O_BEAT_EVERY=60 2>&1)
+if grep -q 'still waiting' <<<"$out"; then fail "beat: a command that ends early prints nothing" "$out"; else ok "beat: a command that ends early prints nothing"; fi
+
 # --- the image changes behind the same name -----------------------------------
 moving="$work/moving"
 tag="c4o-rules-test:moving-$$"
 docker tag "$image" "$tag"
 new_repo "$moving" "$tag"
 in_repo "$moving" make -n rtl >/dev/null 2>&1
-first=$(ls "$moving"/.c4o/*.mk)
+first=$(cat "$moving/.c4o/image-id")
 # Another image under the same name: the first one plus a marker in its rules.
 printf 'FROM %s\nRUN echo "# marker-of-the-newer-image" >> /opt/c4o-core/rules.mk\n' "$image" \
   | docker build -q -t "$tag" - >/dev/null
 check "moving: make still works after the image changed" 0 "$tag rtl" in_repo "$moving" make -n rtl
-now=$(ls "$moving"/.c4o/*.mk)
-if [ "$(wc -l <<<"$now")" -eq 1 ] && [ "$now" != "$first" ] && grep -q "marker-of-the-newer-image" $now; then
+now=$(cat "$moving/.c4o/image-id")
+if [ "$(ls "$moving"/.c4o/*.mk | wc -l)" -eq 1 ] && [ "$now" != "$first" ] && grep -q "marker-of-the-newer-image" "$moving/.c4o/rules.mk"; then
   ok "moving: the rules are the newer image's, and the old copy is gone"
 else
   fail "moving: expected one rules file, from the newer image" "before: $first"$'\n'"after: $now"
+fi
+
+# A checkout that an older stub filled: .c4o/<image id>.mk and no .c4o/image-id.
+legacy="$work/legacy"
+new_repo "$legacy" "$image"
+mkdir -p "$legacy/.c4o"
+printf '# the rules of an older stub\nthis is not valid make\n' > "$legacy/.c4o/$(printf 'a%.0s' $(seq 64)).mk"
+check "legacy: make works with the old, hash-named copy lying there" 0 "$image rtl" in_repo "$legacy" make -n rtl
+if [ "$(ls "$legacy"/.c4o/*.mk | wc -l)" -eq 1 ] && [ -f "$legacy/.c4o/rules.mk" ]; then
+  ok "legacy: the old copy is replaced by .c4o/rules.mk"
+else
+  fail "legacy: expected only .c4o/rules.mk" "$(ls "$legacy/.c4o")"
 fi
 docker rmi -f "$tag" >/dev/null 2>&1
 
 # --- an image that cannot be had ----------------------------------------------
 bad="$work/bad"
 new_repo "$bad" "c4o-rules-test.invalid/nope:0"
-check "bad image: make fails" fail "Cannot get c4o-rules-test.invalid/nope:0" in_repo "$bad" make -n lint
+check "bad image: make fails" fail "Cannot get c4o-rules-test.invalid/nope:0" in_repo "$bad" make -n rtl
 leftover=$(ls -A "$bad/.c4o" 2>/dev/null | wc -l)
 [ "$leftover" -eq 0 ] && ok "bad image: nothing is left in .c4o/" || fail "bad image: $leftover file(s) left in .c4o/" "$(ls -A "$bad/.c4o")"
 
@@ -619,7 +644,7 @@ old="$work/old"
 oldtag="c4o-rules-test:old-$$"
 printf 'FROM %s\nRUN rm /opt/c4o-core/rules.mk\n' "$image" | docker build -q -t "$oldtag" - >/dev/null
 new_repo "$old" "$oldtag"
-check "old image: make fails and says which version it needs" fail "needs c4o-core 2.17 or newer" in_repo "$old" make -n lint
+check "old image: make fails and says which version it needs" fail "needs c4o-core 2.17 or newer" in_repo "$old" make -n rtl
 leftover=$(ls -A "$old/.c4o" 2>/dev/null | wc -l)
 [ "$leftover" -eq 0 ] && ok "old image: no empty rules file is left" || fail "old image: $leftover file(s) left in .c4o/" "$(ls -lA "$old/.c4o")"
 docker rmi -f "$oldtag" >/dev/null 2>&1
@@ -636,7 +661,7 @@ bare="$work/bare"
 mkdir -p "$bare"
 echo 'DESIGN_NAME: demo' > "$bare/config.yaml"
 echo "include $repo/rules.mk" > "$bare/Makefile"
-check "rules.mk: no C4O_IMAGE is an error" fail "C4O_IMAGE is not set" in_repo "$bare" make -n lint
+check "rules.mk: no C4O_IMAGE is an error" fail "C4O_IMAGE is not set" in_repo "$bare" make -n rtl
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures case(s) failed."

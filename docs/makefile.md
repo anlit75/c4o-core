@@ -22,10 +22,10 @@ LIBRELANE_IMAGE := ghcr.io/librelane/librelane:3.0.14
 | Where `make` runs | The rules |
 |---|---|
 | Inside the image (the Dev Container) | `/opt/c4o-core/rules.mk`, read directly. |
-| On a host | Copied out of the image into `.c4o/<image id>.mk`, one time for each image. |
+| On a host | Copied out of the image into `.c4o/rules.mk`, again when the image changes. |
 | With `C4O_RULES=<file>` | That file. No Docker is necessary. |
 
-The file name is the id of the image on your machine. Thus the rules are always the rules of the image that runs. When `docker pull` gets a newer image for the same tag, the next `make` copies its rules and removes the old copy.
+`.c4o/image-id` holds the id of the image that the copy came from. Thus the rules are always the rules of the image that runs. When `docker pull` gets a newer image for the same tag, the next `make` copies its rules over the old copy. The file has a fixed name, so that a failure reads `make: *** [.c4o/rules.mk:312: sim] Error 1`. A checkout that an older stub filled has `.c4o/<image id>.mk`, which the next `make` removes.
 
 Put `.c4o/` in `.gitignore`. `make distclean` removes it.
 
@@ -95,7 +95,7 @@ Some names are older than these commands. They still work and `make help` does n
 
 | Target | With its key | Without its key |
 |---|---|---|
-| `make sim` | Runs the tests of each key that is set. | Prints a skip message for the kind that is not set. |
+| `make sim` | Runs the tests of each key that is set. | Prints nothing for the kind that is not set. |
 | `make cocotb` | Runs the Python tests. | Fails. |
 
 `make sim` and `make check` fail when neither key is set. A repository with no test does not pass.
@@ -122,7 +122,7 @@ After the flow, passed or failed, it also draws one picture of each stage with t
 |---|---|
 | `auto` | `tty` on a terminal, `plain` anywhere else and when `CI` is set. This is the default. |
 | `tty` | The lines, and under them up to three rows that show what runs now. The rows are gone when the run ends. |
-| `plain` | The lines as text, with `ok`, `FAIL` and `skip`. No colour and no redrawing. `make gds` adds a `still running:` line every 30 seconds. |
+| `plain` | The lines as text, with `ok`, `FAIL` and `skip`. No colour and no redrawing. `make gds` adds a `still running:` line every 30 seconds. While the first `make gds` downloads the Sky130 PDK or the LibreLane image, it prints `... still installing the Sky130 PDK (60 s)` or `... still downloading the LibreLane image (60 s)` every 30 seconds. |
 | `raw` | The output of the tools as it is. Nothing goes to `build/log/`. |
 
 Before the ledger, `make gds` prints one `▸` line for each of its first steps: the check, the PDK and, on a first run, the LibreLane image. It does not print the commands it runs. The tools print their own lines, such as the download of the PDK or of the image. `make pdk` prints its `▸` line the same way. It sets `C4O_QUIET_INFO=1` for c4o-core, which then leaves out four `[INFO]` lines: `Loading config`, `This step builds no layout`, `Running: ciel` and `Reading metrics`. `PROGRESS=raw` prints the commands and every `[INFO]` line again.
