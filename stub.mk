@@ -1,6 +1,6 @@
 # --- From here down this file is c4o-core's stub.mk. Do not edit it. ---
 #
-# The commands -- make all, make gds, make report and the rest -- are in the
+# The commands -- make sim, make gds, make report and the rest -- are in the
 # c4o-core image named above, in /opt/c4o-core/rules.mk, so a fix to them
 # arrives with the image. `make help` lists them. Targets of your own go below
 # the include; docs/makefile.md in c4o-core says what they may use.
