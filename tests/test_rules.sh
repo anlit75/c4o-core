@@ -215,11 +215,15 @@ check "host: ... and its exit status in another" 0 "echo \$? > build/log/status.
 check "host: ... and Ctrl-C does not end make before LibreLane stops" 0 "trap '' INT" in_repo "$host" make -n gds
 check "host: a full run deletes the previous run first" 0 "rm -rf runs/demo_run" in_repo "$host" make -n gds
 check "host: ... and counts its steps beforehand" 0 "gating_config_vars" in_repo "$host" make -n gds
+check "host: LibreLane reads the merged config, not config.yaml" 0 "--run-tag demo_run build/librelane-config.yaml" in_repo "$host" make -n gds
+check "host: ... and still takes its paths from the workspace" 0 "--design-dir /workspace" in_repo "$host" make -n gds
+check "host: ... which c4o-core writes first, in its own image" 0 "$image flow-config" in_repo "$host" make -n gds
+check "host: ... and the step count reads the same file" 0 'C("build/librelane-config.yaml"' in_repo "$host" make -n gds
 check "host: PROGRESS reaches the gds ledger" 0 "-e C4O_PROGRESS=plain" in_repo "$host" make -n gds PROGRESS=plain
 out=$(in_repo "$host" make -n gds PROGRESS=raw 2>&1)
 if grep -qE "progress --run-dir|build/log" <<<"$out"; then
   fail "host: PROGRESS=raw must run LibreLane in the foreground, as it did" "$out"
-elif grep -qF -- "--run-tag demo_run config.yaml" <<<"$out" && grep -qF -- "cp runs/demo_run/final/gds/demo.gds build/demo.gds" <<<"$out"; then
+elif grep -qF -- "--run-tag demo_run build/librelane-config.yaml" <<<"$out" && grep -qF -- "cp runs/demo_run/final/gds/demo.gds build/demo.gds" <<<"$out"; then
   ok "host: PROGRESS=raw runs LibreLane in the foreground, as it did"
 else
   fail "host: PROGRESS=raw lost the LibreLane run or the copy of the GDS" "$out"

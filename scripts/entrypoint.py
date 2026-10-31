@@ -6,6 +6,7 @@ import sys
 from c4o import progress
 from c4o import check
 from c4o import common
+from c4o import flowconfig
 from c4o import info
 from c4o import regress
 from c4o import report
@@ -129,6 +130,11 @@ def build_parser():
         "fresh", help="Exit 0 when the run was made from this RTL and config (started by make gds)"
     )
     fresh_parser.set_defaults(func=runs.cmd_fresh)
+
+    flow_config_parser = subparsers.add_parser(
+        "flow-config", help="Write build/librelane-config.yaml: c4o-core's defaults under config.yaml (started by make gds)"
+    )
+    flow_config_parser.set_defaults(func=flowconfig.cmd_flow_config)
 
     # Cocotb command
     cocotb_parser = subparsers.add_parser(
@@ -257,7 +263,7 @@ def main():
         return
     # The ledger opens with the release and the design, so it does not need the
     # line that says which config was read.
-    args.func(args, common.load_config(quiet=args.command in ("all", "progress", "stages", "fresh", "stamp")))
+    args.func(args, common.load_config(quiet=args.command in ("all", "progress", "stages", "fresh", "stamp", "flow-config")))
 
 if __name__ == "__main__":
     main()

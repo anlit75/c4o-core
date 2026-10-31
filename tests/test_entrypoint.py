@@ -10,6 +10,7 @@ import tempfile
 import shutil
 import calendar
 import html
+import yaml
 from unittest.mock import patch, MagicMock
 
 # Add scripts/ to path
@@ -28,6 +29,7 @@ import c4o.site
 import c4o.site_page
 import c4o.stage_renders
 import c4o.stages
+import c4o.flowconfig
 
 class TestEntrypoint(unittest.TestCase):
     def setUp(self):
@@ -4924,6 +4926,58 @@ class TestLoadConfigVersion(unittest.TestCase):
         out = self.load(None)
         self.assertIn("config.yaml\n", out)
         self.assertNotIn("c4o-core", out)
+
+
+class TestFlowConfig(unittest.TestCase):
+    """`flow-config`: the file LibreLane reads is c4o-core's defaults with config.yaml over them."""
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.cwd = os.getcwd()
+        os.chdir(self.test_dir)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.test_dir)
+
+    def write(self, config):
+        c4o.flowconfig.cmd_flow_config(MagicMock(), config)
+        with open("build/librelane-config.yaml") as f:
+            return yaml.safe_load(f)
+
+    def test_a_config_without_the_keys_gets_the_defaults(self):
+        got = self.write({"DESIGN_NAME": "demo", "PDK": "sky130A"})
+        self.assertEqual(got["DESIGN_NAME"], "demo")
+        self.assertEqual(got["PDK"], "sky130A")
+        self.assertEqual(got["LINTER_DISABLE_WARNINGS_BLACKBOX"], ["UNDRIVEN", "UNUSEDSIGNAL", "TIMESCALEMOD"])
+        self.assertIn("sky130_fd_sc_hd__buf_1", got["EXTRA_EXCLUDED_CELLS"])
+
+    def test_a_key_of_the_config_replaces_its_default_whole(self):
+        # LibreLane's lists replace, they do not add. The user's list is the list.
+        got = self.write({"DESIGN_NAME": "demo", "EXTRA_EXCLUDED_CELLS": ["x__y*"],
+                          "LINTER_DISABLE_WARNINGS_BLACKBOX": []})
+        self.assertEqual(got["EXTRA_EXCLUDED_CELLS"], ["x__y*"])
+        self.assertEqual(got["LINTER_DISABLE_WARNINGS_BLACKBOX"], [])
+
+    def test_the_keys_and_values_of_the_config_come_through_as_they_were(self):
+        config = {"DESIGN_NAME": "demo", "VERILOG_FILES": ["dir::rtl/a.v"], "CLOCK_PERIOD": 10.0,
+                  "FP_CORE_UTIL": 40, "//COCOTB_TESTS": ["dir::tb/*.py"], "//DESCRIPTION": "a: b"}
+        got = self.write(config)
+        for key, value in config.items():
+            self.assertEqual(got[key], value, key)
+        self.assertIsInstance(got["CLOCK_PERIOD"], float)
+
+    def test_the_file_says_it_is_written_and_where_to_edit(self):
+        self.write({"DESIGN_NAME": "demo"})
+        with open("build/librelane-config.yaml") as f:
+            self.assertIn("Edit config.yaml", f.readline() + f.readline())
+
+    def test_no_config_is_an_error_and_writes_nothing(self):
+        with self.assertRaises(SystemExit) as cm, contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            c4o.flowconfig.cmd_flow_config(MagicMock(), {})
+        self.assertEqual(cm.exception.code, 1)
+        self.assertFalse(os.path.exists("build/librelane-config.yaml"))
 
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "progress")
