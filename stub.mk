@@ -6,9 +6,11 @@
 # the include; docs/makefile.md in c4o-core says what they may use.
 #
 # Inside the image (the Dev Container) the rules are a local file. On a host
-# they are copied out of the image into .c4o/, once for each image: the file is
-# named after the image's id, so the rules are always the ones of the image
-# that runs, and a `docker pull` that brings a newer image brings its rules.
+# they are copied out of the image into .c4o/rules.mk, again whenever the image
+# changes: .c4o/image-id keeps the id of the image the copy came from, so the
+# rules are always the ones of the image that runs, and a `docker pull` that
+# brings a newer image brings its rules. The file has a fixed name so that
+# make's own messages, `.c4o/rules.mk:312: sim`, stay short.
 #
 # C4O_RULES=<file> uses that file and no Docker at all.
 ifndef C4O_RULES
@@ -23,13 +25,19 @@ endif
 ifeq ($(C4O_IMAGE_ID),)
 $(error Cannot get $(C4O_IMAGE). The commands of this Makefile come out of that image, so it needs Docker running and the image name to be right. Check 'docker info' and 'docker pull $(C4O_IMAGE)')
 endif
-C4O_RULES := .c4o/$(subst sha256:,,$(C4O_IMAGE_ID)).mk
+C4O_RULES := .c4o/rules.mk
+# A copy made from another image, or by an older stub (.c4o/<image id>.mk), goes
+# before make looks for the file, and the rule below makes it again.
+ifneq ($(shell cat .c4o/image-id 2>/dev/null),$(C4O_IMAGE_ID))
+$(shell rm -f .c4o/rules.mk .c4o/image-id)
+endif
 $(C4O_RULES):
 	@mkdir -p .c4o
 	@rm -f .c4o/*.mk .c4o/*.tmp
 	@docker run --rm --entrypoint cat $(C4O_IMAGE) /opt/c4o-core/rules.mk > $@.tmp \
 		|| { rm -f $@.tmp; echo "❌ [ERROR] $(C4O_IMAGE) has no /opt/c4o-core/rules.mk. This Makefile needs c4o-core 2.17 or newer."; exit 1; }
 	@mv $@.tmp $@
+	@echo '$(C4O_IMAGE_ID)' > .c4o/image-id
 endif
 endif
 include $(C4O_RULES)

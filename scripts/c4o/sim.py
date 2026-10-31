@@ -431,6 +431,9 @@ def check_cocotb_results(path):
         if case.find("failure") is not None or case.find("error") is not None
     ]
     if failed:
-        common.log_error(f"cocotb tests failed: {', '.join(failed)}")
+        # One test to a line, so that four long names do not wrap into a wall.
+        # The first line stays what it was: README.md files and CI steps look
+        # for it.
+        common.log_error("cocotb tests failed:" + "".join(f"\n  {name}" for name in failed))
         sys.exit(1)
     common.log_info("All cocotb tests passed.")

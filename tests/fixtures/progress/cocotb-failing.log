@@ -53,4 +53,8 @@
 [INFO] Loading config from /workspace/config.yaml (c4o-core 2.24.0)
 [INFO] Running: iverilog -g2012 -s blinky -o build/cocotb.vvp rtl/blinky.v
 [INFO] Running: vvp -M /opt/venv/lib/python3.12/site-packages/cocotb/libs -m libcocotbvpi_icarus build/cocotb.vvp
-[ERROR] cocotb tests failed: led_rises_half_a_period_after_reset, led_toggles_with_a_full_period, reset_in_the_middle_restarts_the_count, random_resets_match_the_model
+[ERROR] cocotb tests failed:
+  led_rises_half_a_period_after_reset
+  led_toggles_with_a_full_period
+  reset_in_the_middle_restarts_the_count
+  random_resets_match_the_model

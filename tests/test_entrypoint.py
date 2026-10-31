@@ -1191,6 +1191,19 @@ class TestEntrypoint(unittest.TestCase):
             c4o.sim.check_cocotb_results(path)
         self.assertEqual(cm.exception.code, 1)
 
+    def test_cocotb_results_failure_lists_one_test_per_line(self):
+        path = self._results(
+            '<testsuites><testsuite>'
+            '<testcase name="a"><failure message="x"/></testcase>'
+            '<testcase name="ok"/>'
+            '<testcase name="b"><error message="y"/></testcase>'
+            '</testsuite></testsuites>'
+        )
+        out = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stdout(out):
+            c4o.sim.check_cocotb_results(path)
+        self.assertEqual(out.getvalue(), "[ERROR] cocotb tests failed:\n  a\n  b\n")
+
     def test_cocotb_results_error_element_also_fails(self):
         path = self._results(
             '<testsuites><testsuite>'
@@ -5306,10 +5319,12 @@ class TestCocotbFailures(unittest.TestCase):
 
     def test_the_block_keeps_the_error_line_the_readme_quotes(self):
         block, _ = self.failure_block()
-        self.assertEqual(
-            block[0],
-            "[ERROR] cocotb tests failed: led_rises_half_a_period_after_reset, led_toggles_with_a_full_period, "
-            "reset_in_the_middle_restarts_the_count, random_resets_match_the_model")
+        self.assertEqual(block[0], "[ERROR] cocotb tests failed:")
+        # One failed test to a line under it, in the order cocotb ran them.
+        self.assertEqual(block[1:5], [
+            "  led_rises_half_a_period_after_reset", "  led_toggles_with_a_full_period",
+            "  reset_in_the_middle_restarts_the_count", "  random_resets_match_the_model"])
+        self.assertEqual(block[5], "")
 
     def test_the_block_has_a_rerun_line_for_each_failed_test(self):
         block, _ = self.failure_block()
@@ -5322,8 +5337,8 @@ class TestCocotbFailures(unittest.TestCase):
 
     def test_nothing_in_the_block_is_indented_or_cut(self):
         block, _ = self.failure_block()
-        # The Next: line is the one indented line, and it is ours.
-        self.assertEqual([l for l in block if l.startswith(" ")],
+        # The names under the [ERROR] line and the Next: line are the indented ones.
+        self.assertEqual([l for l in block if l.startswith(" ")], block[1:5] +
                          ["  change rtl/ (or the test in tb/), then run make sim again"])
         # This message has no assert line, and its prefix goes all the same.
         self.assertIn("led is 1, model says 0: cycle 16387, rst was 0, model count 16384", block)
@@ -5972,9 +5987,20 @@ class TestRunAll(unittest.TestCase):
         self.assertEqual(lines[0], "c4o sim, demo, c4o-core 9.9.9")
         self.assertRegex(lines[1], r"^  ok +rtl +verilator, no warnings, yosys 0\.33, 54 cells, \d+\.\d s$")
         self.assertRegex(lines[2], r"^  ok +check +tests configured, \d+\.\d s$")
-        self.assertEqual(lines[3].split(None, 2)[0:2], ["skip", "verilog"])
-        self.assertIn("skipped: TEST_FILES is not set", lines[3])
-        self.assertRegex(lines[4], r"^  ok +cocotb +passed, seed 5, \d+\.\d s$")
+        self.assertRegex(lines[3], r"^  ok +cocotb +passed, seed 5, \d+\.\d s$")
+
+    def test_a_kind_of_test_the_config_does_not_list_gets_no_row(self):
+        code, out = self.run_all(self.GOOD)
+        self.assertEqual(code, 0)
+        self.assertNotIn("verilog", out)
+        self.assertNotIn("skipped", out)
+        cocotb_off = dict(self.GOOD, cocotb=("[INFO] cocotb skipped: COCOTB_TESTS is not set.\n", 0),
+                          sim=("[INFO] All tests passed.\n", 0))
+        code, out = self.run_all(cocotb_off)
+        self.assertEqual(code, 0)
+        self.assertRegex(out, r"ok +verilog +testbench ran")
+        self.assertNotIn("cocotb", out)
+        self.assertNotIn("skipped", out)
 
     def test_each_commands_output_goes_to_its_own_log_unchanged(self):
         self.run_all(self.GOOD)
@@ -6006,11 +6032,11 @@ class TestRunAll(unittest.TestCase):
             self.assertRegex(out, rf"skip +{later} +not run: rtl failed first")
 
     def test_a_failed_cocotb_test_names_the_tests(self):
-        behaviour = dict(self.GOOD, cocotb=("[ERROR] cocotb tests failed: a, b\n", 1))
+        behaviour = dict(self.GOOD, cocotb=("[ERROR] cocotb tests failed:\n  a\n  b\n", 1))
         code, out = self.run_all(behaviour)
         self.assertEqual(code, 1)
         self.assertRegex(out, r"FAIL +cocotb +failed, \d+\.\d s")
-        self.assertIn("\n[ERROR] cocotb tests failed: a, b\n", out)
+        self.assertIn("\n[ERROR] cocotb tests failed:\n  a\n  b\n", out)
 
     def test_a_command_that_exits_with_another_status_returns_that(self):
         code, _ = self.run_all(dict(self.GOOD, rtl=("%Error: x\n", 7)))
