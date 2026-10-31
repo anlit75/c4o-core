@@ -76,11 +76,6 @@ endif
 # reads from there. Default is this checkout's own pdks/.
 PDK_ROOT ?= $(PWD)/pdks
 
-# The config LibreLane reads: c4o-core's defaults for the tools of the LibreLane
-# image, with config.yaml over them, written by `flow-config` at the start of
-# the flow. flowconfig.py says why it is one file and not two.
-LIBRELANE_CONFIG := build/librelane-config.yaml
-
 # The current directory is mounted at /workspace, so what the tools write lands
 # in build/ and runs/ here, owned by the user who ran make.
 DOCKER_RUN := docker run --rm -v $(PWD):/workspace -w /workspace -u $(shell id -u):$(shell id -g)
@@ -93,9 +88,9 @@ LIBRELANE_RUN = docker run --rm \
 		-e HOME=/tmp \
 		-u $(shell id -u):$(shell id -g) \
 		$(LIBRELANE_IMAGE) \
-		python3 -m librelane --manual-pdk --pdk-root /pdks --design-dir /workspace \
+		python3 -m librelane --manual-pdk --pdk-root /pdks \
 			$(LIBRELANE_OVERWRITE) $(LIBRELANE_ARGS) \
-			--run-tag $(DESIGN_NAME)_run $(LIBRELANE_CONFIG)
+			--run-tag $(DESIGN_NAME)_run config.yaml
 
 # Which steps this config will run, before it does: the steps of the Classic
 # flow, less those a switch of the config turns off. It is how the ledger can
@@ -103,7 +98,7 @@ LIBRELANE_RUN = docker run --rm \
 # gating_config_vars, an attribute of LibreLane's that is not a documented
 # interface: when it fails, or after an upgrade changed it, the ledger counts
 # steps without a total. Check it again when LIBRELANE_IMAGE moves.
-LIBRELANE_PLAN_PY := import json,librelane;from librelane.flows import Flow;C=Flow.factory.get("Classic");f=C("build/librelane-config.yaml",pdk_root="/pdks",design_dir="/workspace");g={s for s,v in f.gating_config_vars.items() if any(not f.config[x] for x in v)};print(json.dumps({"version":librelane.__version__,"all":len(C.Steps),"steps":[[s.id,s.name] for s in C.Steps if s.id not in g]}))
+LIBRELANE_PLAN_PY := import json,librelane;from librelane.flows import Flow;C=Flow.factory.get("Classic");f=C("config.yaml",pdk_root="/pdks");g={s for s,v in f.gating_config_vars.items() if any(not f.config[x] for x in v)};print(json.dumps({"version":librelane.__version__,"all":len(C.Steps),"steps":[[s.id,s.name] for s in C.Steps if s.id not in g]}))
 LIBRELANE_PLAN = docker run --rm -v $(PWD):/workspace -w /workspace -v $(PDK_ROOT):/pdks -e PDK_ROOT=/pdks -e HOME=/tmp \
 		-u $(shell id -u):$(shell id -g) $(LIBRELANE_IMAGE) python3 -c '$(LIBRELANE_PLAN_PY)'
 
@@ -388,7 +383,6 @@ gds:
 gds-flow:
 	$(C4O_Q)$(MAKE) --no-print-directory pdk
 	$(C4O_Q)mkdir -p build
-	$(C4O_Q)$(C4O_CMDQ) flow-config
 	@# The run about to start is not the one that was stamped. A partial run or a
 	@# failed one leaves no stamp, so the next command says it cannot be checked.
 	@rm -f $(STAGES_RUN)/$(INPUTS_FILE)

@@ -109,10 +109,6 @@ Write one source file on each line. The `//` keys belong to this engine, so `dir
 | `LINTER_DISABLE_WARNINGS` | A list of Verilator warning codes that `lint` does not report. It is a LibreLane key with the same meaning there. |
 | `"//DESCRIPTION"` | One line that tells what the design is. It appears below the title of the `site` page and in its link preview. |
 
-### What LibreLane gets besides config.yaml
-
-`make gds` gives LibreLane `build/librelane-config.yaml`: the defaults in [`scripts/c4o/librelane-defaults.yaml`](scripts/c4o/librelane-defaults.yaml) with the keys of `config.yaml` over them. The defaults are settings the tools of the LibreLane image need whatever the design is: `LINTER_DISABLE_WARNINGS_BLACKBOX` and `EXTRA_EXCLUDED_CELLS`. A key you put in `config.yaml` replaces its default as a whole, since LibreLane replaces a list and does not add to it. Nothing else in `config.yaml` changes on the way.
-
 ### A pattern that matches nothing is an error
 
 Each configured pattern must match one file or more. `sim` does not run without a testbench. Without these two rules, a renamed directory or a typing error has a bad result: `sim` compiles only the RTL and exits 0. CI is then green, and nothing was verified.
