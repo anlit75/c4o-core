@@ -1537,6 +1537,18 @@ class TestEntrypoint(unittest.TestCase):
         self.assertEqual(cm.exception.code, 1)
 
     @patch('c4o.common.run_command')
+    def test_pdk_fetches_only_the_library_the_flow_uses(self, mock_run):
+        # Ciel's default set for sky130 is six libraries, 376MB of downloads.
+        # The flow reads sky130_fd_sc_hd and the tech files in ciel's `common`
+        # archive, which come with any -l. Without the flag the I/O, device and
+        # SRAM libraries come down for nothing.
+        with patch.dict(os.environ, {"PDK_ROOT": os.path.join(self.test_dir, "p")}):
+            entrypoint.cmd_pdk(MagicMock(), {})
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[cmd.index("--include-libraries") + 1], "sky130_fd_sc_hd")
+        self.assertEqual(cmd.count("--include-libraries"), 1)
+
+    @patch('c4o.common.run_command')
     def test_pdk_installs_where_the_readers_look(self, mock_run):
         # The install path used to be a fixed ./pdks while every reader honoured
         # PDK_ROOT, so PDK_ROOT could only ever name a PDK this command had not

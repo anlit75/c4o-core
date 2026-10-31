@@ -108,7 +108,7 @@ fi
 out=$(in_repo "$host" make -n gds 2>&1)
 check "host: gds says what it downloads, in ledger symbols" 0 "▸ Downloading the LibreLane image, 1.5 GB, first run only..." in_repo "$host" make -n gds
 check "host: ... and that the skipped flow is skipped" 0 "▸ LibreLane skipped: the inputs are unchanged since the last run. make gds FORCE=1 runs it again." in_repo "$host" make -n gds
-check "host: ... and the PDK, with its size" 0 "▸ Installing the Sky130 PDK. The first run downloads several GB." in_repo "$host" make -n gds
+check "host: ... and the PDK, with its size" 0 "▸ Installing the Sky130 PDK. The first run downloads about 170 MB." in_repo "$host" make -n gds
 check "host: ... and sets the switch for check, pdk and report" 0 "-e C4O_QUIET_INFO=1 $image check --for gds" in_repo "$host" make -n gds
 if [ "$(grep -cF -- '-e C4O_QUIET_INFO=1' <<<"$out")" -ge 3 ] && grep -qE -- "-e C4O_QUIET_INFO=1 $image report|report C4O_QUIET=1" <<<"$out" \
    && grep -qE -- "-e PDK_ROOT=/pdks -e C4O_QUIET_INFO=1 $image pdk" <<<"$out"; then

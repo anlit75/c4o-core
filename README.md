@@ -58,7 +58,7 @@ The Python entrypoint of the engine has these commands:
 | `gatesim` | Simulates the **synthesised netlist** with the PDK cell models, on `GATE_TESTS`. Without `GATE_TESTS`, it runs the `COCOTB_TESTS` on the netlist. |
 | `synth` | Runs logic synthesis with Yosys on `VERILOG_FILES` only. Writes `build/synthesis.json`. The script is fixed: see [docs/commands.md](docs/commands.md#synth-and-systemverilog-in-every-command). |
 | `schematic` | Draws the circuit as `build/schematic.svg`. It shows the RTL as written, not the synthesised netlist. |
-| `pdk` | Installs and enables the Sky130 PDK with Ciel, into `$PDK_ROOT`. Without `$PDK_ROOT`, it uses `./pdks`. |
+| `pdk` | Installs and enables the Sky130 PDK with Ciel, into `$PDK_ROOT`. Without `$PDK_ROOT`, it uses `./pdks`. It fetches only `sky130_fd_sc_hd`, the library the flow uses: 173 MB, not 376 MB. A PDK that is already complete is left as it is. |
 | `rtl` | Checks the RTL. It runs `check --for rtl`, an Icarus compile, `lint` and `synth`, in that order. Writes `build/rtl.vvp` and `build/synthesis.json`. |
 | `check` | Checks the configuration, values included. It builds nothing and runs no tool. `--for rtl`, `sim`, `regress`, `gatesim` or `gds` checks one part. Without `--for`, it checks every part that the config asks for. |
 | `report` | Prints a summary of the last LibreLane run: area, timing, power and the signoff result. |

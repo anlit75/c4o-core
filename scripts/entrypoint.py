@@ -52,10 +52,18 @@ def cmd_pdk(args, config):
     commit_hash = "bdc9412b3e468c102d01b7cf6337be06ec6e9c9a"
 
     # Ciel is Volare's successor and takes the same arguments.
+    # Without -l it fetches its default set for sky130: the I/O, primitive
+    # device, high-voltage and SRAM libraries as well as sky130_fd_sc_hd, 376MB
+    # of downloads and 2.4GB on disk. Nothing here reads those: the flow
+    # synthesises, places and signs off with sky130_fd_sc_hd alone. -l narrows
+    # the download to it plus ciel's `common` archive (the tech files for
+    # Magic, KLayout and netgen), 173MB and 1GB. A PDK_ROOT that already holds
+    # the full set is left as it is: ciel downloads only what is missing.
     cmd = [
         "ciel", "enable",
         "--pdk", "sky130",
         "--pdk-root", pdk_root,
+        "--include-libraries", "sky130_fd_sc_hd",
         commit_hash
     ]
     common.run_command(cmd)

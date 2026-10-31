@@ -66,7 +66,7 @@ ifneq ($(filter --from --from=% -F --to --to=% -T --skip --skip=% --only --only=
 LIBRELANE_PARTIAL := 1
 endif
 
-# Where the Sky130 PDK lives on the host. One copy is 3GB and every checkout
+# Where the Sky130 PDK lives on the host. One copy is 1GB and every checkout
 # needs the same one, so a machine with several -- a lab, a teaching account --
 # can point them all at one directory instead of paying for it again each time:
 #
@@ -242,7 +242,7 @@ sim:
 	@echo "Next:"
 	@echo "  make gds"
 	@echo "      builds the chip layout. It takes minutes, and the first run also"
-	@echo "      downloads several GB."
+	@echo "      downloads about 2 GB."
 	@echo "  or change rtl/ or tb/ and run make sim again"
 
 # Two colons, so a repository can add lines for its own targets with a
@@ -324,7 +324,7 @@ schematic:
 	$(C4O_CMD) schematic
 
 pdk:
-	@echo "▸ Installing the Sky130 PDK. The first run downloads several GB."
+	@echo "▸ Installing the Sky130 PDK. The first run downloads about 170 MB."
 	@# Created here, not by the mount below: a bind mount of a path that does
 	@# not exist yet is made by the daemon and owned by root, which the
 	@# --user container then cannot write into.
@@ -335,7 +335,7 @@ pdk:
 # 1. Stop unless a Docker daemon answers.
 # 2. c4o-core validates the config. Before the PDK, not after: `check --for gds`
 #    reads config.yaml and the RTL and needs no PDK, so a DESIGN_NAME that names
-#    no module costs a second instead of arriving behind a 3GB download.
+#    no module costs a second instead of arriving behind a download.
 # 3. The PDK.
 # 4. LibreLane, on the PDK the step before installed.
 #
