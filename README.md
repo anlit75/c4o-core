@@ -9,7 +9,7 @@
 
 > **Note**: This is a component of [ChipForAll](https://github.com/anlit75/ChipForAll). To use it, start from the ChipForAll template. This page is for when you must know what a command or a configuration key does, or what an error from the engine means.
 
-## 🚀 Quick Start
+## Quick Start
 
 You can run `c4o-core` directly with Docker. Mount your current directory at `/workspace` (or a different workspace path) to keep the files that it writes. Run it as yourself, so that root does not own those files:
 
@@ -32,7 +32,7 @@ Each release publishes four tags:
 
 The current numbers are on the [releases page](https://github.com/anlit75/c4o-core/releases).
 
-### Check where an image came from
+### Check Where an Image Came From
 
 Each release image carries signed build provenance and an SBOM. To check that an image was built from this repository by its release workflow, log in to the registry and verify it with the [GitHub CLI](https://cli.github.com/manual/gh_attestation_verify):
 
@@ -44,7 +44,7 @@ gh attestation verify oci://ghcr.io/anlit75/c4o-core:<version> --repo anlit75/c4
 
 The first command checks the provenance. The second checks the SBOM. **Only images from the release after 2.27.0 carry attestations.** Earlier images fail both checks.
 
-## 🛠 Command Reference
+## Command Reference
 
 The Python entrypoint of the engine has these commands:
 
@@ -71,7 +71,7 @@ A repository made from the template calls them through `make`: `make check`, `ma
 
 The CI of a repository made from the ChipForAll template is here too, as actions that its workflow calls: [docs/actions.md](docs/actions.md). The rules of its Makefile are here too: [docs/makefile.md](docs/makefile.md).
 
-## ⚙️ Configuration
+## Configuration
 
 `c4o-core` looks for `config.yaml`, `config.yml` or `config.json` in your workspace, in that sequence.
 
@@ -90,7 +90,7 @@ ERROR  Path provided for variable 'VERILOG_FILES[0]' is invalid:
 
 Write one source file on each line. The `//` keys belong to this engine, so `dir::test/*.v` and `dir::test/**/*.py` are correct there.
 
-### The keys this engine reads
+### The Keys This Engine Reads
 
 | Key | What it is |
 |---|---|
@@ -109,11 +109,11 @@ Write one source file on each line. The `//` keys belong to this engine, so `dir
 | `LINTER_DISABLE_WARNINGS` | A list of Verilator warning codes that `lint` does not report. It is a LibreLane key with the same meaning there. |
 | `"//DESCRIPTION"` | One line that tells what the design is. It appears below the title of the `site` page and in its link preview. |
 
-### A pattern that matches nothing is an error
+### A Pattern That Matches Nothing Is an Error
 
 Each configured pattern must match one file or more. `sim` does not run without a testbench. Without these two rules, a renamed directory or a typing error has a bad result: `sim` compiles only the RTL and exits 0. CI is then green, and nothing was verified.
 
-### More than one testbench
+### More Than One Testbench
 
 Icarus makes each module that no other module instantiates a separate root, and the first `$finish` stops the full simulation. Thus `sim` runs one testbench module. When `"//TEST_FILES"` matches more than one file, give the name of the module to run. Without the name, `sim` stops with an error. The engine passes the name to `iverilog -s`:
 
@@ -127,7 +127,7 @@ With only one testbench file, `//SIM_TOP` is optional.
 
 All other keys in the file belong to LibreLane. See its documentation for the full list.
 
-### The LibreLane workarounds
+### The LibreLane Workarounds
 
 The `config.yaml` of the ChipForAll template sets two LibreLane keys because of the tools in the LibreLane image. Keep both keys. Each one has a condition for its removal.
 
@@ -156,7 +156,7 @@ The patterns are those of `sky130_fd_sc_hd`. LibreLane takes them as wildcards o
 
 A key in your `config.yaml` replaces the same key of LibreLane. A list is replaced whole. A list that you change has to repeat what you want to keep.
 
-## 📦 Included Tools
+## Included Tools
 
 *   **Yosys**: Open Synthesis Suite
 *   **Verilator**: High-performance Verilog simulator and linter
