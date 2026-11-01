@@ -45,7 +45,7 @@ a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: un
 code { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
 header { padding: 40px 0 24px; }
 .eyebrow { margin: 0; color: var(--muted); font-size: 14px; letter-spacing: .04em;
-           text-transform: uppercase; font-weight: 600; }
+           font-weight: 600; }
 h1 { margin: 4px 0 8px; font-size: 40px; line-height: 1.15; overflow-wrap: anywhere; }
 .meta { margin: 0; color: var(--muted); font-size: 14px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
@@ -234,6 +234,14 @@ nav .wrap.more { mask-image: linear-gradient(90deg, #000 88%, transparent); }
 @media (prefers-color-scheme: dark) { .built .pic a, .built .thumb { filter: brightness(.88); } }
 @media (max-width: 760px) { .built { grid-template-columns: 1fr; } }
 """
+
+# Chip glyph in the --accent light-theme colour, which reads on light and dark tabs.
+FAVICON = (
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
+    "%3Crect x='8' y='8' width='16' height='16' rx='3' fill='%230969da'/%3E"
+    "%3Cpath d='M12 4v4M16 4v4M20 4v4M12 24v4M16 24v4M20 24v4M4 12h4M4 16h4M4 20h4"
+    "M24 12h4M24 16h4M24 20h4' stroke='%230969da' stroke-width='2'/%3E%3C/svg%3E"
+)
 
 def cocotb_cases(path):
     """
@@ -1579,11 +1587,12 @@ def render(design, numbers, layout, cocotb_runs, env,
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f'<meta name="description" content="{esc(summary)}">{og}'
+        f'<link rel="icon" href="{FAVICON}">'
         f"<title>{esc(design)} · chip design</title><style>{CSS}</style></head><body>"
         
         + (f'<header class="has-art">' if layout else "<header>")
         + '<div class="wrap hero"><div class="hero-text">'
-        '<p class="eyebrow">Chip design · open-source flow</p>'
+        '<p class="eyebrow">Write Verilog. Prove It Works. Get a Chip Layout.</p>'
         f"<h1>{esc(design)}</h1>"
         + byline
         + (f'<p class="lede">{esc(description)}</p>' if description else "")

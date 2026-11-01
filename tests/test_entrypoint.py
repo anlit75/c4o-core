@@ -2102,6 +2102,19 @@ class TestEntrypoint(unittest.TestCase):
     def _section(self, page, name):
         return re.search(rf'<section id="{name}">.*?</section>', page, re.S).group(0)
 
+    def test_site_hero_shows_the_tagline_uncased_and_the_head_has_a_svg_favicon(self):
+        self.cwd_before = os.getcwd()
+        page = self._history_site()
+        self.assertIn('<p class="eyebrow">Write Verilog. Prove It Works. Get a Chip Layout.</p>', page)
+        self.assertNotIn("open-source flow", page)
+        # The tagline keeps its casing on screen: the eyebrow is not upper-cased.
+        self.assertNotRegex(c4o.site_page.CSS, r"\.eyebrow \{[^}]*text-transform")
+        head = page.split("</head>")[0]
+        icon = re.search(r'<link rel="icon" href="(data:image/svg\+xml,[^"]+)"', head)
+        self.assertIsNotNone(icon)
+        self.assertLess(len(icon.group(1)), 600)
+        self.assertNotRegex(icon.group(1), r"[<>#]")
+
     def test_site_adds_this_runs_row_on_actions_and_none_locally(self):
         self.cwd_before = os.getcwd()
         page = self._history_site()
