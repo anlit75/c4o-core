@@ -1,6 +1,6 @@
 # c4o-core commands in detail
 
-What each command does beyond the one-line table in the [README](../README.md#-command-reference), and why. `c4o-core <command>` is shorthand for the `docker run` line in the README's Quick Start.
+What each command does beyond the one-line table in the [README](../README.md#command-reference), and why. `c4o-core <command>` is shorthand for the `docker run` line in the README's Quick Start.
 
 ## synth, and SystemVerilog in every command
 
