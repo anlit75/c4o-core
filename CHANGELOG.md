@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.32.0](https://github.com/anlit75/c4o-core/compare/v2.31.0...v2.32.0) (2026-11-01)
+
+
+### Features
+
+* show the tagline on the results page and give it a favicon ([#130](https://github.com/anlit75/c4o-core/issues/130)) ([e50463d](https://github.com/anlit75/c4o-core/commit/e50463d687c00d00c97ddc794351c60ffdd16694))
+
+
+### Documentation
+
+* use title case and no emoji in README headings ([#128](https://github.com/anlit75/c4o-core/issues/128)) ([12dd556](https://github.com/anlit75/c4o-core/commit/12dd5565aad5741aa3ea6cb4355fc23ec8eadca9))
+
 ## [2.31.0](https://github.com/anlit75/c4o-core/compare/v2.30.0...v2.31.0) (2026-10-31)
 
 
